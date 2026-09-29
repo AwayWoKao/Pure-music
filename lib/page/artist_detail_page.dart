@@ -32,12 +32,11 @@ class ArtistDetailPage extends StatelessWidget {
       title: artist.name,
       subtitle: '${artist.works.length} 首作品',
       secondaryContent: secondaryContent,
-      secondaryContentBuilder: (context, audio, i, multiSelectController, view) =>
+      secondaryContentBuilder: (context, audio, i, multiSelectController, _) =>
           AudioTile(
             audioIndex: i,
             playlist: secondaryContent,
             multiSelectController: multiSelectController,
-            view: view,
           ),
       tertiaryContentTitle: '专辑',
       tertiaryContent: artist.albumsMap.values.toList(),

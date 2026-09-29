@@ -5,6 +5,7 @@ import 'package:pure_music/core/preference.dart';
 import 'package:pure_music/component/list_locate_buttons.dart';
 import 'package:pure_music/component/motion.dart';
 import 'package:pure_music/component/quiet_empty_state.dart';
+import 'package:pure_music/component/sidebar_grid_transition.dart';
 import 'package:pure_music/component/stacked_list_view.dart';
 import 'package:pure_music/core/enums.dart';
 import 'package:pure_music/core/list_action_state.dart';
@@ -270,8 +271,6 @@ class MultiSelectPointerRegion<T> extends StatelessWidget {
   }
 }
 
-enum LayoutMode { frozen, realtime }
-
 /// `AudiosPage`, `ArtistsPage`, `AlbumsPage`, `FoldersPage`, `FolderDetailPage` 页面的主要组件，
 /// 提供随机播放以及更改排序方式、排序顺序、内容视图的支持。
 ///
@@ -304,7 +303,7 @@ class UniPage<T> extends StatefulWidget {
     this.contentRevision,
     this.contentIsPrepared = false,
     this.enableStackedEffect = true,
-    this.layoutMode = LayoutMode.realtime,
+    this.actionPlacement = PageActionPlacement.besideTitle,
   });
 
   final PagePreference pref;
@@ -335,7 +334,7 @@ class UniPage<T> extends StatefulWidget {
 
   /// 是否启用堆叠滚动效果（平滑滚轮始终启用）。
   final bool enableStackedEffect;
-  final LayoutMode layoutMode;
+  final PageActionPlacement actionPlacement;
 
   @override
   State<UniPage<T>> createState() => _UniPageState<T>();
@@ -840,11 +839,12 @@ class _UniPageState<T> extends State<UniPage<T>> {
                 ContentView.table,
               ),
             )
-          : GridView.builder(
+          : SidebarGridTransition(
               controller: tableScrollController,
               physics: enableListMotion ? const SmoothScrollPhysics() : null,
               padding: const EdgeInsets.only(bottom: 96.0, right: 20),
               gridDelegate: widget.gridDelegate ?? gridDelegate,
+              revision: (widget.contentRevision, currSortMethod, currSortOrder),
               itemCount: widget.contentList.length,
               itemBuilder: (context, i) => widget.contentBuilder(
                 context,
@@ -854,8 +854,8 @@ class _UniPageState<T> extends State<UniPage<T>> {
                 ContentView.table,
               ),
             );
-      final tableMotionView = widget.layoutMode == LayoutMode.frozen
-          ? SidebarLayoutTransform(child: tableView)
+      final tableMotionView = enableStackedEffect
+          ? SidebarFrozenViewport(child: tableView)
           : tableView;
 
       return LayoutBuilder(
@@ -877,16 +877,13 @@ class _UniPageState<T> extends State<UniPage<T>> {
                 ),
               ),
               if (showAlphabetIndex)
-                SidebarGlue(
-                  anchor: SidebarGlueAnchor.right,
-                  child: AlphabetIndexBar(
-                    controller: scrollController,
-                    sectionIndexes: _alphabetSectionIndexes,
-                    indexForOffset: _indexForOffset,
-                    onSelectIndex: _jumpToIndex,
-                    onWheel: _forwardWheelToList,
-                    descending: currSortOrder == SortOrder.decending,
-                  ),
+                AlphabetIndexBar(
+                  controller: scrollController,
+                  sectionIndexes: _alphabetSectionIndexes,
+                  indexForOffset: _indexForOffset,
+                  onSelectIndex: _jumpToIndex,
+                  onWheel: _forwardWheelToList,
+                  descending: currSortOrder == SortOrder.decending,
                 ),
             ],
           );
@@ -907,6 +904,7 @@ class _UniPageState<T> extends State<UniPage<T>> {
     return PageScaffold(
       title: widget.title,
       subtitle: widget.subtitle,
+      actionPlacement: widget.actionPlacement,
       actions: multiSelectController == null
           ? actions
           : multiSelectController.enableMultiSelectView

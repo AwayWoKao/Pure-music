@@ -69,7 +69,6 @@ class AlbumDetailPage extends StatelessWidget {
               audioIndex: i,
               playlist: secondaryContent,
               multiSelectController: multiSelectController,
-              view: view,
             );
           },
       secondaryContentSectionBuilder: showDiscSections

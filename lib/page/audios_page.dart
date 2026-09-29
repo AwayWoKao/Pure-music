@@ -7,6 +7,7 @@ import 'package:pure_music/core/utils.dart';
 import 'package:pure_music/library/audio_library.dart';
 import 'package:pure_music/page/uni_page.dart';
 import 'package:pure_music/page/uni_page_components.dart';
+import 'package:pure_music/page/page_scaffold.dart';
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
@@ -58,19 +59,18 @@ class _AudiosPageState extends State<AudiosPage> {
           contentList: contentList,
           contentRevision: version,
           contentIsPrepared: _contentIsPrepared,
-          contentBuilder: (context, item, i, multiSelectController, view) =>
+          contentBuilder: (context, item, i, multiSelectController, _) =>
               AudioTile(
                 audioIndex: i,
                 playlist: contentList,
                 focus: item == widget.locateTo,
                 multiSelectController: _multiSelectController,
-                view: view,
               ),
           enableShufflePlay: hasSongs,
           enableSortMethod: canSortSongs,
           enableSortOrder: canSortSongs,
           enableContentViewSwitch: hasSongs,
-          layoutMode: LayoutMode.realtime,
+          actionPlacement: PageActionPlacement.belowSubtitle,
           locateTo: widget.locateTo,
           multiSelectController: _multiSelectController,
           multiSelectViewActions: [

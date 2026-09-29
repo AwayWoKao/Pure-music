@@ -536,15 +536,13 @@ class _ConcertPageState extends State<ConcertPage> {
       title: '演出模式',
       subtitle: _subtitle,
       actions: actions,
-      body: SidebarLayoutTransform(
-        child: ListenableBuilder(
-          listenable: AppSettings.listMotionNotifier,
-          builder: (context, _) => switch (_phase) {
-            _ConcertPhase.select => _buildSelectBody(context),
-            _ConcertPhase.analyzing => _buildAnalyzingBody(context),
-            _ConcertPhase.result => _buildResultBody(context),
-          },
-        ),
+      body: ListenableBuilder(
+        listenable: AppSettings.listMotionNotifier,
+        builder: (context, _) => switch (_phase) {
+          _ConcertPhase.select => _buildSelectBody(context),
+          _ConcertPhase.analyzing => _buildAnalyzingBody(context),
+          _ConcertPhase.result => _buildResultBody(context),
+        },
       ),
     );
   }

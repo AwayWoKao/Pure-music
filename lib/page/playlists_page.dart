@@ -658,7 +658,6 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
       enableSortMethod: canSortPlaylists,
       enableSortOrder: canSortPlaylists,
       enableContentViewSwitch: canSwitchContentView,
-      layoutMode: LayoutMode.frozen,
       multiSelectController: multiSelectController,
       multiSelectViewActions: [
         ListenableBuilder(

@@ -1,5 +1,6 @@
 import 'dart:ui';
 
+import 'package:pure_music/component/adaptive_action_layout.dart';
 import 'package:pure_music/component/alphabet_index_bar.dart';
 import 'package:pure_music/component/list_locate_buttons.dart';
 import 'package:pure_music/component/motion.dart';
@@ -528,21 +529,17 @@ class _UniDetailPageState<P, S, T> extends State<UniDetailPage<P, S, T>> {
                                             ),
                                           ),
                                           if (showAlphabetIndex)
-                                            SidebarGlue(
-                                              anchor:
-                                                  SidebarGlueAnchor.right,
-                                              child: AlphabetIndexBar(
-                                                controller:
-                                                    _activeScrollController,
-                                                sectionIndexes:
-                                                    _alphabetSectionIndexes,
-                                                indexForOffset: _indexForOffset,
-                                                onSelectIndex: _jumpToIndex,
-                                                onWheel: _forwardWheelToList,
-                                                descending:
-                                                    currSortOrder ==
-                                                    SortOrder.decending,
-                                              ),
+                                            AlphabetIndexBar(
+                                              controller:
+                                                  _activeScrollController,
+                                              sectionIndexes:
+                                                  _alphabetSectionIndexes,
+                                              indexForOffset: _indexForOffset,
+                                              onSelectIndex: _jumpToIndex,
+                                              onWheel: _forwardWheelToList,
+                                              descending:
+                                                  currSortOrder ==
+                                                  SortOrder.decending,
                                             ),
                                         ],
                                       );
@@ -637,7 +634,7 @@ class _UniDetailPageState<P, S, T> extends State<UniDetailPage<P, S, T>> {
             maxCrossAxisExtent: maxCrossAxisExtent,
             crossAxisSpacing: gridDelegate.crossAxisSpacing,
           );
-          return CustomScrollView(
+          final content = CustomScrollView(
             controller: _secondaryScrollController,
             physics: enableSmoothScrolling ? const SmoothScrollPhysics() : null,
             slivers: [
@@ -711,6 +708,10 @@ class _UniDetailPageState<P, S, T> extends State<UniDetailPage<P, S, T>> {
               const SliverPadding(padding: EdgeInsets.only(bottom: 96.0)),
             ],
           );
+          return SidebarFrozenViewport(
+            enabled: currContentView == ContentView.table,
+            child: content,
+          );
         },
       ),
     );
@@ -735,7 +736,7 @@ class _UniDetailPageState<P, S, T> extends State<UniDetailPage<P, S, T>> {
             maxCrossAxisExtent: 300,
             crossAxisSpacing: 8,
           );
-          return CustomScrollView(
+          final content = CustomScrollView(
             controller: _tertiaryScrollController,
             physics: enableSmoothScrolling ? const SmoothScrollPhysics() : null,
             slivers: [
@@ -764,6 +765,7 @@ class _UniDetailPageState<P, S, T> extends State<UniDetailPage<P, S, T>> {
               const SliverPadding(padding: EdgeInsets.only(bottom: 96.0)),
             ],
           );
+          return SidebarFrozenViewport(child: content);
         },
       ),
     );
@@ -786,7 +788,7 @@ class _UniDetailPageState<P, S, T> extends State<UniDetailPage<P, S, T>> {
             maxCrossAxisExtent: 300,
             crossAxisSpacing: 8,
           );
-          return CustomScrollView(
+          final content = CustomScrollView(
             controller: _combinedScrollController,
             physics: enableSmoothScrolling ? const SmoothScrollPhysics() : null,
             slivers: [
@@ -899,6 +901,10 @@ class _UniDetailPageState<P, S, T> extends State<UniDetailPage<P, S, T>> {
               const SliverPadding(padding: EdgeInsets.only(bottom: 96.0)),
             ],
           );
+          return SidebarFrozenViewport(
+            enabled: currContentView == ContentView.table,
+            child: content,
+          );
         },
       ),
     );
@@ -925,39 +931,21 @@ class _ActionsRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final showSearch = searchController != null;
-
-    if (!showSearch) {
-      return Wrap(spacing: 8.0, runSpacing: 8.0, children: actions);
-    }
-
-    final searchField = _CompactSearchBar(
-      controller: searchController!,
-      query: searchQuery,
-      onChanged: onSearchChanged,
-      scheme: scheme,
-    );
+    final searchField = showSearch
+        ? _CompactSearchBar(
+            controller: searchController!,
+            query: searchQuery,
+            onChanged: onSearchChanged,
+            scheme: scheme,
+          )
+        : null;
 
     return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 600;
-        if (compact) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Wrap(spacing: 8.0, runSpacing: 8.0, children: actions),
-              const SizedBox(height: 8.0),
-              searchField,
-            ],
-          );
-        }
-
-        return Wrap(
-          spacing: 8.0,
-          runSpacing: 8.0,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [...actions, SizedBox(width: 220, child: searchField)],
-        );
-      },
+      builder: (context, constraints) => AdaptiveActionLayout(
+        compact: constraints.maxWidth < 600,
+        actions: actions,
+        trailing: searchField,
+      ),
     );
   }
 }
@@ -1135,9 +1123,7 @@ class _UniDetailPageHeader extends StatelessWidget {
         // Scroll-scrubbed layout stays 1:1 with pixels. Easing the scrub
         // front-loads the collapse (easeOutCubic(0.5) ≈ 0.875) so the first
         // ticks read as a snap and the rest crawls.
-        final progress = compact
-            ? 0.0
-            : MotionCurve.scrub(collapseProgress);
+        final progress = compact ? 0.0 : MotionCurve.scrub(collapseProgress);
         final coverSize = lerpDouble(expandedCoverSize, 72.0, progress)!;
         final gap = lerpDouble(compact ? 12.0 : 16.0, 12.0, progress)!;
         final titleSize = lerpDouble(

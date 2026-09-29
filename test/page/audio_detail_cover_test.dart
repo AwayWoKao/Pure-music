@@ -11,10 +11,9 @@ void main() {
     tester,
   ) async {
     final audio = _CoverAudio('song.flac');
-    Widget build({required bool expanded, required double progress}) {
+    Widget build({required double progress}) {
       return MaterialApp(
         home: SpringRailScaffold(
-          expanded: expanded,
           progress: progress,
           collapsedWidth: 80,
           expandedWidth: 240,
@@ -40,7 +39,7 @@ void main() {
       );
     }
 
-    await tester.pumpWidget(build(expanded: false, progress: 0));
+    await tester.pumpWidget(build(progress: 0));
     expect(audio.loads, 1);
     final state = tester.state(find.byType(AudioDetailCover));
     final future = tester
@@ -50,15 +49,8 @@ void main() {
         .future;
     audio.result.complete(null);
     await tester.pump();
-    for (final step in [
-      (true, 0.0),
-      (true, 0.4),
-      (true, 1.0),
-      (false, 1.0),
-      (false, 0.4),
-      (false, 0.0),
-    ]) {
-      await tester.pumpWidget(build(expanded: step.$1, progress: step.$2));
+    for (final progress in [0.0, 0.4, 1.0, 0.4, 0.0]) {
+      await tester.pumpWidget(build(progress: progress));
       expect(audio.loads, 1);
       expect(tester.state(find.byType(AudioDetailCover)), same(state));
       expect(

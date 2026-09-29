@@ -126,7 +126,6 @@ class _FoldersPageState extends State<FoldersPage> {
       enableSortMethod: true,
       enableSortOrder: true,
       enableContentViewSwitch: true,
-      layoutMode: LayoutMode.realtime,
       sortMethods: [
         SortMethodDesc<AudioFolder>(
           icon: Symbols.title,

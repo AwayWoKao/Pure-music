@@ -375,7 +375,7 @@ class _AppShell_LargeState extends State<_AppShell_Large> {
             builder: (context, t, child) {
               return SpringRailScaffold(
                 progress: t,
-                expanded: _sidebarExpanded,
+                targetProgress: _sidebarExpanded ? 1.0 : 0.0,
                 collapsedWidth: SideNav.collapsedWidth,
                 expandedWidth: SideNav.expandedWidth,
                 rail: ClipRect(

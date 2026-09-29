@@ -256,46 +256,7 @@ void main() {
     expect(_springReadout(tester), closeTo(1, 0.0001));
   });
 
-  testWidgets('sidebar spring clips a wide body instead of stretching it', (
-    tester,
-  ) async {
-    final harnessKey = GlobalKey<_LayoutSpringHarnessState>();
-    await tester.pumpWidget(
-      MaterialApp(home: _LayoutSpringHarness(key: harnessKey)),
-    );
-    expect(tester.getSize(find.byKey(const ValueKey('rail'))).width, 80);
-    expect(tester.getSize(find.byKey(const ValueKey('body'))).width, 320);
-
-    harnessKey.currentState!.setExpanded(true);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 48));
-    final railWidth = tester.getSize(find.byKey(const ValueKey('rail'))).width;
-    expect(railWidth, greaterThan(80));
-    expect(railWidth, lessThan(240));
-    // Album grids stay on the wide column count while the rail moves.
-    expect(tester.getSize(find.byKey(const ValueKey('body'))).width, 320);
-    expect(find.byType(OverflowBox), findsOneWidget);
-    expect(
-      tester.getTopLeft(find.byKey(const ValueKey('body'))).dx,
-      closeTo(tester.getTopRight(find.byKey(const ValueKey('rail'))).dx, 0.5),
-    );
-
-    await tester.pumpAndSettle();
-    expect(
-      tester.getSize(find.byKey(const ValueKey('rail'))).width,
-      closeTo(240, 0.05),
-    );
-    expect(tester.getSize(find.byKey(const ValueKey('body'))).width, 160);
-    expect(find.byType(OverflowBox), findsOneWidget);
-
-    harnessKey.currentState!.setExpanded(false);
-    await tester.pump();
-    expect(tester.getSize(find.byKey(const ValueKey('body'))).width, 320);
-    await tester.pumpAndSettle();
-    expect(tester.getSize(find.byKey(const ValueKey('body'))).width, 320);
-  });
-
-  testWidgets('sidebar expansion commits the narrow layout at 80 percent', (
+  testWidgets('sidebar spring lays out the body against the live rail width', (
     tester,
   ) async {
     Widget build(double progress) {
@@ -305,45 +266,43 @@ void main() {
             width: 400,
             height: 80,
             child: SpringRailScaffold(
-              expanded: true,
               progress: progress,
               collapsedWidth: 80,
               expandedWidth: 240,
-              rail: const SizedBox.expand(),
-              body: const ColoredBox(
-                key: ValueKey('threshold-body'),
-                color: Color(0xFFFFFFFF),
-              ),
+              rail: const SizedBox(key: ValueKey('rail')),
+              body: const SizedBox(key: ValueKey('body')),
             ),
           ),
         ),
       );
     }
 
-    await tester.pumpWidget(build(0.79));
-    expect(
-      tester.getSize(find.byKey(const ValueKey('threshold-body'))).width,
-      320,
-    );
+    await tester.pumpWidget(build(0));
+    expect(tester.getSize(find.byKey(const ValueKey('rail'))).width, 80);
+    expect(tester.getSize(find.byKey(const ValueKey('body'))).width, 320);
 
-    await tester.pumpWidget(build(0.8));
-    expect(
-      tester.getSize(find.byKey(const ValueKey('threshold-body'))).width,
-      160,
-    );
+    await tester.pumpWidget(build(0.4));
+    final railWidth = tester.getSize(find.byKey(const ValueKey('rail'))).width;
+    final bodyWidth = tester.getSize(find.byKey(const ValueKey('body'))).width;
+    expect(railWidth, closeTo(144, 0.01));
+    expect(bodyWidth, closeTo(400 - railWidth, 0.01));
+    expect(find.byType(OverflowBox), findsNothing);
+
+    await tester.pumpWidget(build(1));
+    expect(tester.getSize(find.byKey(const ValueKey('rail'))).width, 240);
+    expect(tester.getSize(find.byKey(const ValueKey('body'))).width, 160);
   });
 
   testWidgets('sidebar animation preserves body state across layout changes', (
     tester,
   ) async {
-    Widget build({required bool expanded, required double progress}) {
+    Widget build({required double progress}) {
       return MaterialApp(
         home: Material(
           child: SizedBox(
             width: 400,
             height: 80,
             child: SpringRailScaffold(
-              expanded: expanded,
               progress: progress,
               collapsedWidth: 80,
               expandedWidth: 240,
@@ -355,18 +314,11 @@ void main() {
       );
     }
 
-    await tester.pumpWidget(build(expanded: false, progress: 0));
+    await tester.pumpWidget(build(progress: 0));
     await tester.enterText(find.byType(TextField), 'keep cover state');
     final state = tester.state(find.byType(TextField));
-    for (final step in [
-      (true, 0.0),
-      (true, 0.4),
-      (true, 1.0),
-      (false, 1.0),
-      (false, 0.5),
-      (false, 0.0),
-    ]) {
-      await tester.pumpWidget(build(expanded: step.$1, progress: step.$2));
+    for (final progress in [0.0, 0.4, 1.0, 1.0, 0.5, 0.0]) {
+      await tester.pumpWidget(build(progress: progress));
       expect(tester.state(find.byType(TextField)), same(state));
       expect(find.text('keep cover state'), findsOneWidget);
     }
@@ -406,48 +358,6 @@ class _SpringProgressReadoutState extends State<_SpringProgressReadout> {
       target: target,
       builder: (context, t, _) =>
           Text(t.toStringAsFixed(6), key: const ValueKey('t')),
-    );
-  }
-}
-
-class _LayoutSpringHarness extends StatefulWidget {
-  const _LayoutSpringHarness({super.key});
-
-  @override
-  State<_LayoutSpringHarness> createState() => _LayoutSpringHarnessState();
-}
-
-class _LayoutSpringHarnessState extends State<_LayoutSpringHarness> {
-  bool expanded = false;
-
-  void setExpanded(bool value) => setState(() => expanded = value);
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: SizedBox(
-        width: 400,
-        height: 80,
-        child: SpringProgress(
-          target: expanded ? 1.0 : 0.0,
-          builder: (context, t, _) {
-            return SpringRailScaffold(
-              progress: t,
-              expanded: expanded,
-              collapsedWidth: 80,
-              expandedWidth: 240,
-              rail: const ColoredBox(
-                key: ValueKey('rail'),
-                color: Color(0xFF000000),
-              ),
-              body: const ColoredBox(
-                key: ValueKey('body'),
-                color: Color(0xFFFFFFFF),
-              ),
-            );
-          },
-        ),
-      ),
     );
   }
 }

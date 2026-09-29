@@ -137,9 +137,7 @@ class _StatsPageState extends State<StatsPage> {
       ],
       body: Stack(
         children: [
-          Positioned.fill(
-            child: SidebarLayoutTransform(child: _buildBody(scheme)),
-          ),
+          Positioned.fill(child: _buildBody(scheme)),
           ListLocateButtons(
             controller: _scrollController,
             locateTargetAt: _locateTargetAt,
@@ -614,12 +612,11 @@ class _StatsPageState extends State<StatsPage> {
               child: LayoutBuilder(
                 builder: (context, constraints) {
                   final showAlbum = constraints.maxWidth >= 760;
-                  final albumWidth =
-                      constraints.maxWidth >= 1100 ? 260.0 : 180.0;
+                  final albumWidth = constraints.maxWidth >= 1100
+                      ? 260.0
+                      : 180.0;
                   return Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: Spacing.sm,
-                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: Spacing.sm),
                     child: Row(
                       children: [
                         SizedBox(
