@@ -496,6 +496,33 @@ void main() {
     );
   });
 
+  test('AMLL lyric download receives a longer validation budget', () async {
+    Duration? receivedTimeout;
+    final lyric = await getLyricFromPreferredSource(
+      _audio(),
+      ResultSource.amll,
+      search: (query, audio, source) async => [
+        SongSearchResult(
+          source,
+          'Song',
+          'Artist',
+          '',
+          100,
+          amllTtmlFile: 'song.ttml',
+        ),
+      ],
+      loadLyricWithTimeout: (result, timeout) async {
+        receivedTimeout = timeout;
+        return _lineLyric();
+      },
+      timeLimit: const Duration(seconds: 10),
+    );
+
+    expect(lyric, isNotNull);
+    expect(receivedTimeout, greaterThanOrEqualTo(const Duration(seconds: 7)));
+    expect(receivedTimeout, lessThanOrEqualTo(const Duration(seconds: 8)));
+  });
+
   test(
     'preferred search loads the first source result as a last resort',
     () async {

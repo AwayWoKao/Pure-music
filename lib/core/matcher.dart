@@ -32,6 +32,7 @@ const int _preferredVersionAttemptReserve = 1;
 const Duration _preferredTotalTimeout = Duration(seconds: 15);
 const Duration _preferredSearchTimeout = Duration(seconds: 6);
 const Duration _preferredLyricTimeout = Duration(seconds: 5);
+const Duration _amllPreferredLyricTimeout = Duration(seconds: 8);
 const Duration _unifiedSearchTimeLimit = Duration(seconds: 17);
 const Duration _onlineSourceFallbackTimeLimit = Duration(seconds: 20);
 final Map<String, Future<Lyric?>> _lyricFetchCache = {};
@@ -120,6 +121,12 @@ Duration _shorterDuration(Duration left, Duration right) {
   return left.compareTo(right) < 0 ? left : right;
 }
 
+Duration _candidateLyricTimeoutFor(ResultSource source) {
+  return source == ResultSource.amll
+      ? _amllPreferredLyricTimeout
+      : _preferredLyricTimeout;
+}
+
 Future<({Lyric? lyric, int attempts})> _loadFirstValidLyric(
   Audio audio,
   Iterable<SongSearchResult> candidates, {
@@ -130,6 +137,7 @@ Future<({Lyric? lyric, int attempts})> _loadFirstValidLyric(
   int maxCandidates = _preferredCandidateAttemptLimit,
   int batchSize = 2,
   bool sortCandidates = true,
+  Duration candidateTimeout = _preferredLyricTimeout,
 }) async {
   final ranked = candidates.toList();
   if (sortCandidates) {
@@ -145,7 +153,7 @@ Future<({Lyric? lyric, int attempts})> _loadFirstValidLyric(
     final end = min(offset + batchSize, candidateLimit);
     final batch = ranked.sublist(offset, end);
     attempts += batch.length;
-    final timeout = _shorterDuration(remaining, _preferredLyricTimeout);
+    final timeout = _shorterDuration(remaining, candidateTimeout);
     final loaded = await Future.wait(
       batch.map((candidate) async {
         try {
@@ -296,6 +304,7 @@ Future<Lyric?> getLyricFromPreferredSource(
         maxCandidates: versionFallbacks.isEmpty
             ? attemptsRemaining
             : max(0, attemptsRemaining - _preferredVersionAttemptReserve),
+        candidateTimeout: _candidateLyricTimeoutFor(source),
       );
       attemptsRemaining -= loaded.attempts;
       if (loaded.lyric != null) {
@@ -311,6 +320,7 @@ Future<Lyric?> getLyricFromPreferredSource(
       stopwatch: stopwatch,
       timeLimit: timeLimit,
       maxCandidates: attemptsRemaining,
+      candidateTimeout: _candidateLyricTimeoutFor(source),
     );
     if (loadedFallback.lyric != null) {
       logger.i('[preferred] version match from $source');
@@ -327,6 +337,7 @@ Future<Lyric?> getLyricFromPreferredSource(
         maxCandidates: manualFallbacks.length,
         batchSize: 1,
         sortCandidates: false,
+        candidateTimeout: _candidateLyricTimeoutFor(source),
       );
       if (loadedManualFallback.lyric != null) {
         logger.i('[preferred] manual first-result fallback from $source');
@@ -365,11 +376,11 @@ getLyricWithSourceFallback(
     final remaining = _remainingDuration(timeLimit, stopwatch);
     if (remaining == Duration.zero) break;
     final sourcesRemaining = sources.length - index;
-    final sourceBudget = Duration(
-      microseconds: remaining.inMicroseconds ~/ sourcesRemaining,
-    );
-    if (sourceBudget == Duration.zero) break;
     final source = sources[index];
+    final sourceBudget = source == ResultSource.amll
+        ? _shorterDuration(remaining, const Duration(seconds: 8))
+        : Duration(microseconds: remaining.inMicroseconds ~/ sourcesRemaining);
+    if (sourceBudget == Duration.zero) break;
     SongSearchResult? hitResult;
 
     try {
@@ -431,7 +442,7 @@ Future<List<SongSearchResult>> _searchPreferredSource(
     ResultSource.amll => _searchAMLLWithTimeout(
       query,
       audio,
-      _preferredSearchTimeout.inSeconds,
+      seconds,
       _amllSearchLimit,
     ),
   };
@@ -543,7 +554,7 @@ Future<Lyric?> _fetchLyricInternal({
   }
 
   if (amllTtmlFile != null) {
-    futures.add(_getAmllTtmlLyric(amllTtmlFile));
+    futures.add(_getAmllTtmlLyric(amllTtmlFile, timeout: timeout));
   }
 
   if (futures.isEmpty) return null;
@@ -1524,9 +1535,17 @@ Future<Lyric?> _getNeSyncLyric(int neSongId, {Duration? timeout}) async {
   return null;
 }
 
-Future<Lyric?> _getAmllTtmlLyric(String amllTtmlFile) async {
+Future<Lyric?> _getAmllTtmlLyric(
+  String amllTtmlFile, {
+  Duration? timeout,
+}) async {
   try {
-    final raw = await net_api.amllGetTtml(amllTtmlFile);
+    final request = net_api.amllGetTtml(amllTtmlFile);
+    final raw = timeout == null
+        ? await request
+        : await request.timeout(
+            _shorterDuration(timeout, const Duration(seconds: 30)),
+          );
     if (raw == null || raw.isEmpty) return null;
 
     final ttml = Ttml.fromTtmlText(raw);

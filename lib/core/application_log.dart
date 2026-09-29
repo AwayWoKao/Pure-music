@@ -142,17 +142,30 @@ class ApplicationLogOutput extends LogOutput {
     }
     final executable = Platform.resolvedExecutable;
     final executableName = path.basename(executable).toLowerCase();
-    if (executableName != 'dart.exe' &&
-        executableName != 'flutter_tester.exe') {
-      yield path.join(path.dirname(executable), 'logs');
-    }
+    final isNativeExecutable =
+        executableName != 'dart.exe' && executableName != 'flutter_tester.exe';
+    final executableLogPath = path.join(path.dirname(executable), 'logs');
+    const isPortableBuild = bool.fromEnvironment(
+      'PORTABLE_BUILD',
+      defaultValue: true,
+    );
     final localAppData = Platform.environment['LOCALAPPDATA'];
+    final localAppDataLogPath = localAppData == null ||
+            localAppData.trim().isEmpty
+        ? null
+        : path.join(localAppData, 'pure_music', 'logs');
+    if (isPortableBuild && isNativeExecutable) {
+      yield executableLogPath;
+    }
     if (localAppData != null && localAppData.trim().isNotEmpty) {
-      yield path.join(localAppData, 'pure_music', 'logs');
+      yield localAppDataLogPath!;
     }
     final userProfile = Platform.environment['USERPROFILE'];
     if (userProfile != null && userProfile.trim().isNotEmpty) {
       yield path.join(userProfile, 'AppData', 'Local', 'pure_music', 'logs');
+    }
+    if (!isPortableBuild && isNativeExecutable) {
+      yield executableLogPath;
     }
     yield path.join(Directory.systemTemp.path, 'pure_music', 'logs');
   }
