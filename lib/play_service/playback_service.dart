@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:pure_music/core/preference.dart';
 import 'package:pure_music/core/cache.dart';
@@ -8,6 +7,9 @@ import 'package:pure_music/library/audio_library.dart';
 import 'package:pure_music/play_service/play_service.dart';
 import 'package:pure_music/play_service/audio_echo_log_recorder.dart';
 import 'package:pure_music/play_service/equalizer_service.dart';
+import 'package:pure_music/play_service/playback_listen_tracker.dart';
+import 'package:pure_music/play_service/playback_session_store.dart';
+import 'package:pure_music/play_service/playback_song_change_tasks.dart';
 import 'package:pure_music/core/audio_dsp_settings.dart';
 import 'package:pure_music/play_service/smart_transition_coordinator.dart';
 import 'package:pure_music/play_service/smtc_bridge.dart';
@@ -52,21 +54,8 @@ class PlaybackService extends ChangeNotifier {
   Timer? _smtcPositionTimer;
   Timer? _smtcKeepAliveTimer;
   final Set<Timer> _positionSyncBurstTimers = {};
-  int _songChangeTaskToken = 0;
-  Timer? _songChangeMetadataTimer;
-  Timer? _songChangePrefetchTimer;
-  Timer? _songChangePersistTimer;
-  Timer? _songChangeCleanupTimer;
-  double _listenAccumulatedSec = 0;
-  double _listenLastPositionSec = 0;
-  double _thresholdSec = 0;
-  bool _listenRecorded = false;
-  int _listenSessionToken = 0;
+  final PlaybackSongChangeTasks _songChangeTasks = PlaybackSongChangeTasks();
   int? _listenRecordingToken;
-  double _lastFmAccumulatedSec = 0;
-  bool _lastFmQueued = false;
-  int _lastFmStartedAt = 0;
-  int _lastFmThresholdMs = -1;
   String? _supportPath;
   bool _closed = false;
   int _playlistRevision = 0;
@@ -267,6 +256,11 @@ class PlaybackService extends ChangeNotifier {
   final _player = BassPlayer();
   final _smtc = SmtcBridge.create();
   final _pref = AppPreference.instance.playbackPref;
+  late final PlaybackSessionStore _sessionStore = PlaybackSessionStore(
+    preference: _pref,
+    save: AppPreference.instance.savePlaybackOnly,
+  );
+  final PlaybackListenTracker _listenTracker = PlaybackListenTracker();
   late final EqualizerService _eq;
 
   bool get isBassFxLoaded => _player.isBassFxLoaded;
@@ -584,7 +578,7 @@ class PlaybackService extends ChangeNotifier {
       timer = Timer(delay, () {
         _positionSyncBurstTimers.remove(timer);
         if (_closed) return;
-        if (token != null && token != _songChangeTaskToken) return;
+        if (token != null && !_songChangeTasks.isCurrent(token)) return;
         if (path != null && nowPlaying?.path != path) return;
         _notifyPositionSync();
       });
@@ -960,11 +954,10 @@ class PlaybackService extends ChangeNotifier {
     bool rebuildTransitionPreparation = true,
   }) {
     _smtcDisplayRevision++;
-    _songChangeTaskToken++;
     _replayGainRequestToken++;
+    final token = _songChangeTasks.begin();
     _cancelSongChangeTasks();
     ThemeProvider.instance.cancelPendingAudioTheme();
-    final token = _songChangeTaskToken;
 
     _playlistIndex = audioIndex;
     _nowPlaying.value = audio;
@@ -1095,30 +1088,19 @@ class PlaybackService extends ChangeNotifier {
   }
 
   bool _isCurrentSongChangeTask(int token, Audio audio) {
-    return token == _songChangeTaskToken && identical(nowPlaying, audio);
+    return _songChangeTasks.isCurrent(token) && identical(nowPlaying, audio);
   }
 
   void _cancelSongChangeTasks() {
-    _songChangeMetadataTimer?.cancel();
-    _songChangeMetadataTimer = null;
-    _songChangePrefetchTimer?.cancel();
-    _songChangePrefetchTimer = null;
-    _songChangePersistTimer?.cancel();
-    _songChangePersistTimer = null;
-    _songChangeCleanupTimer?.cancel();
-    _songChangeCleanupTimer = null;
+    _songChangeTasks.cancel();
   }
 
   void _resetListenAccumulator(double durationSec) {
-    _listenSessionToken++;
-    _listenAccumulatedSec = 0;
-    _listenLastPositionSec = 0;
-    _listenRecorded = false;
-    _thresholdSec = durationSec > 0 ? math.min(60.0, 0.9 * durationSec) : 0;
-    _lastFmAccumulatedSec = 0;
-    _lastFmQueued = false;
-    _lastFmStartedAt = DateTime.now().millisecondsSinceEpoch;
-    _lastFmThresholdMs = lastFmScrobbleThresholdMs(durationSec.round());
+    _listenTracker.reset(
+      durationSec: durationSec,
+      lastFmStartedAt: DateTime.now().millisecondsSinceEpoch,
+      lastFmThresholdMs: lastFmScrobbleThresholdMs(durationSec.round()),
+    );
     final audio = nowPlaying;
     if (audio != null) {
       unawaited(
@@ -1133,53 +1115,42 @@ class PlaybackService extends ChangeNotifier {
   }
 
   void _onPositionUpdate(double positionSec) {
-    if (_closed || playerState != PlayerState.playing) {
-      _listenLastPositionSec = positionSec;
-      return;
-    }
-
-    final delta = positionSec - _listenLastPositionSec;
-    _listenLastPositionSec = positionSec;
-    if (delta <= 0 || delta > 2.0) return;
-
-    if (!_listenRecorded && _thresholdSec > 0) {
-      _listenAccumulatedSec += delta;
-      if (_listenAccumulatedSec >= _thresholdSec) {
-        unawaited(_recordListen());
-      }
-    }
-    _maybeQueueLastFmScrobble(delta);
+    final delta = _listenTracker.updatePosition(
+      positionSec: positionSec,
+      isPlaying: !_closed && playerState == PlayerState.playing,
+    );
+    if (delta <= 0) return;
+    if (_listenTracker.shouldRecordListen) unawaited(_recordListen());
+    _maybeQueueLastFmScrobble();
   }
 
-  void _maybeQueueLastFmScrobble(double deltaSec) {
-    if (_lastFmQueued || _lastFmThresholdMs < 0) return;
-    _lastFmAccumulatedSec += deltaSec;
-    if (_lastFmAccumulatedSec * 1000 < _lastFmThresholdMs) return;
+  void _maybeQueueLastFmScrobble() {
+    if (!_listenTracker.shouldQueueScrobble) return;
     if (!AppSettings.instance.lastFmEnabled ||
         !LastFmService.instance.isAuthorized) {
       return;
     }
     final audio = nowPlaying;
     if (audio == null) return;
-    _lastFmQueued = true;
+    _listenTracker.markScrobbleQueued();
     unawaited(
       LastFmService.instance.enqueueScrobble(
         title: audio.title,
         artist: audio.artist,
         album: audio.album,
         durationSec: audio.duration,
-        startedAt: _lastFmStartedAt,
+        startedAt: _listenTracker.lastFmStartedAt,
       ),
     );
   }
 
   Future<void> _recordListen() async {
-    if (_listenRecorded) return;
+    if (!_listenTracker.shouldRecordListen) return;
     final audio = nowPlaying;
     if (audio == null) return;
     final audioPath = audio.path;
 
-    final sessionToken = _listenSessionToken;
+    final sessionToken = _listenTracker.sessionToken;
     if (_listenRecordingToken == sessionToken) return;
     _listenRecordingToken = sessionToken;
 
@@ -1190,8 +1161,8 @@ class PlaybackService extends ChangeNotifier {
         path: audioPath,
       );
       audio.playCount++;
-      if (sessionToken == _listenSessionToken) {
-        _listenRecorded = true;
+      if (sessionToken == _listenTracker.sessionToken) {
+        _listenTracker.markListenRecorded();
       }
       if (!_closed) _playCountRevision.value++;
     } catch (err, trace) {
@@ -1209,55 +1180,51 @@ class PlaybackService extends ChangeNotifier {
     required int audioIndex,
     required List<Audio> playlist,
   }) {
-    _songChangeMetadataTimer = Timer(const Duration(milliseconds: 96), () {
-      _songChangeMetadataTimer = null;
-      if (!_isCurrentSongChangeTask(token, audio)) return;
-
-      _syncSmtcPositionTimer();
-
-      playService.desktopLyricService.canSendMessage.then((canSend) {
+    _songChangeTasks.schedule(
+      token: token,
+      onMetadata: () {
         if (!_isCurrentSongChangeTask(token, audio)) return;
-        if (!canSend) return;
 
-        playService.desktopLyricService.sendPlayerStateMessage(
-          playerState == PlayerState.playing,
-        );
-      });
-    });
+        _syncSmtcPositionTimer();
 
-    _songChangePrefetchTimer = Timer(const Duration(milliseconds: 220), () {
-      _songChangePrefetchTimer = null;
-      if (!_isCurrentSongChangeTask(token, audio)) return;
+        playService.desktopLyricService.canSendMessage.then((canSend) {
+          if (!_isCurrentSongChangeTask(token, audio)) return;
+          if (!canSend) return;
 
-      ThemeProvider.instance.applyThemeFromAudio(audio);
+          playService.desktopLyricService.sendPlayerStateMessage(
+            playerState == PlayerState.playing,
+          );
+        });
+      },
+      onPrefetch: () {
+        if (!_isCurrentSongChangeTask(token, audio)) return;
 
-      if (audioIndex + 1 < playlist.length) {
-        final next = playlist[audioIndex + 1];
-        CoverImageCache.instance.preload(next.path);
-        playService.lyricService.prefetchLyric(next);
-        if (audioIndex + 2 < playlist.length) {
-          playService.lyricService.prefetchLyric(playlist[audioIndex + 2]);
+        ThemeProvider.instance.applyThemeFromAudio(audio);
+
+        if (audioIndex + 1 < playlist.length) {
+          final next = playlist[audioIndex + 1];
+          CoverImageCache.instance.preload(next.path);
+          playService.lyricService.prefetchLyric(next);
+          if (audioIndex + 2 < playlist.length) {
+            playService.lyricService.prefetchLyric(playlist[audioIndex + 2]);
+          }
         }
-      }
-    });
-
-    _songChangePersistTimer = Timer(const Duration(milliseconds: 650), () {
-      _songChangePersistTimer = null;
-      if (!_isCurrentSongChangeTask(token, audio)) return;
-      final currentIndex = _playlistIndex;
-      if (currentIndex == null || _playlist.value.isEmpty) return;
-      _persistLastSession(
-        playlist: _playlist.value,
-        playlistIndex: currentIndex,
-        nowPlaying: audio,
-      );
-    });
-
-    _songChangeCleanupTimer = Timer(const Duration(milliseconds: 1800), () {
-      _songChangeCleanupTimer = null;
-      if (!_isCurrentSongChangeTask(token, audio)) return;
-      AudioLibrary.instance.evictStaleCoverBytes();
-    });
+      },
+      onPersist: () {
+        if (!_isCurrentSongChangeTask(token, audio)) return;
+        final currentIndex = _playlistIndex;
+        if (currentIndex == null || _playlist.value.isEmpty) return;
+        _persistLastSession(
+          playlist: _playlist.value,
+          playlistIndex: currentIndex,
+          nowPlaying: audio,
+        );
+      },
+      onCleanup: () {
+        if (!_isCurrentSongChangeTask(token, audio)) return;
+        AudioLibrary.instance.evictStaleCoverBytes();
+      },
+    );
   }
 
   /// 播放当前播放列表的第几项，只能用在播放列表界面
@@ -1390,7 +1357,7 @@ class PlaybackService extends ChangeNotifier {
     logger.i('[action] clearQueue');
     AudioEchoLogRecorder.instance.mark('clearQueue');
     _synchronizeGaplessTransition();
-    _songChangeTaskToken++;
+    _songChangeTasks.begin();
     _cancelSongChangeTasks();
     ThemeProvider.instance.cancelPendingAudioTheme();
     _player.pause();
@@ -1492,15 +1459,20 @@ class PlaybackService extends ChangeNotifier {
     required int playlistIndex,
     required Audio nowPlaying,
   }) {
-    _pref.lastAudioPath = nowPlaying.path;
-    _pref.lastPlaylistPaths = playlist.map((e) => e.path).toList();
-    _pref.lastPlaylistIndex = playlistIndex;
-    _pref.lastShuffleActive = shuffle.value;
-    _pref.lastOriginalPlaylistPaths = shuffle.value
-        ? _playlistBackup.map((e) => e.path).toList()
-        : const [];
-    _pref.lastPositionSeconds = _rememberedPositionSeconds();
-    _savePlaybackOnly();
+    unawaited(
+      _sessionStore.save(
+        PlaybackSessionSnapshot(
+          lastAudioPath: nowPlaying.path,
+          lastPlaylistPaths: playlist.map((e) => e.path).toList(),
+          lastPlaylistIndex: playlistIndex,
+          lastShuffleActive: shuffle.value,
+          lastOriginalPlaylistPaths: shuffle.value
+              ? _playlistBackup.map((e) => e.path).toList()
+              : const [],
+          lastPositionSeconds: _rememberedPositionSeconds(),
+        ),
+      ),
+    );
   }
 
   void _persistCurrentSession() {
@@ -1520,13 +1492,7 @@ class PlaybackService extends ChangeNotifier {
   }
 
   void _clearPersistedLastSession() {
-    _pref.lastAudioPath = '';
-    _pref.lastPlaylistPaths = const [];
-    _pref.lastPlaylistIndex = 0;
-    _pref.lastShuffleActive = false;
-    _pref.lastOriginalPlaylistPaths = const [];
-    _pref.lastPositionSeconds = 0.0;
-    _savePlaybackOnly();
+    unawaited(_sessionStore.clear());
   }
 
   double _rememberedPositionSeconds() {
@@ -1537,34 +1503,37 @@ class PlaybackService extends ChangeNotifier {
     );
   }
 
-  void persistPlaybackPositionForExit() {
+  Future<void> persistPlaybackPositionForExit() async {
     if (_closed) return;
     if (!AppSettings.instance.rememberPlaybackPosition) {
-      if (_pref.lastPositionSeconds != 0.0) {
-        _pref.lastPositionSeconds = 0.0;
-        _savePlaybackOnly();
+      if (_sessionStore.snapshot.lastPositionSeconds != 0.0) {
+        await _sessionStore.save(
+          _sessionStore.snapshot.copyWith(lastPositionSeconds: 0.0),
+        );
       }
       logger.i('[persist] rememberPlaybackPosition disabled, cleared position');
       return;
     }
     final currentAudio = nowPlaying;
     if (currentAudio == null || _playlist.value.isEmpty) {
-      _pref.lastPositionSeconds = 0.0;
-      _savePlaybackOnly();
+      await _sessionStore.save(
+        _sessionStore.snapshot.copyWith(lastPositionSeconds: 0.0),
+      );
       logger.i('[persist] no audio playing, cleared position');
       return;
     }
     final remembered = _rememberedPositionSeconds();
-    _pref.lastPositionSeconds = remembered;
-    _savePlaybackOnly();
+    await _sessionStore.save(
+      _sessionStore.snapshot.copyWith(lastPositionSeconds: remembered),
+    );
     logger.i(
       '[persist] saved position: $remembered (from pos=$position, len=$length)',
     );
   }
 
   Future<void> _restoreLastSession() async {
-    final lastPath = _pref.lastAudioPath;
-    final savedPosition = _pref.lastPositionSeconds;
+    var session = _sessionStore.snapshot;
+    var lastPath = session.lastAudioPath;
     if (lastPath.isEmpty) return;
 
     for (int i = 0; i < 10; i++) {
@@ -1573,13 +1542,18 @@ class PlaybackService extends ChangeNotifier {
     }
     if (AudioLibrary.instance.audioCollection.isEmpty) return;
 
+    session = _sessionStore.snapshot;
+    lastPath = session.lastAudioPath;
+    if (lastPath.isEmpty) return;
+    final savedPosition = session.lastPositionSeconds;
+
     final pathToAudio = <String, Audio>{};
     for (final audio in AudioLibrary.instance.audioCollection) {
       pathToAudio[audio.path] = audio;
     }
 
     final restoredPlaylist = <Audio>[];
-    for (final p in _pref.lastPlaylistPaths) {
+    for (final p in session.lastPlaylistPaths) {
       final a = pathToAudio[p];
       if (a != null) {
         restoredPlaylist.add(a);
@@ -1593,14 +1567,14 @@ class PlaybackService extends ChangeNotifier {
     }
 
     final restoredOriginalPlaylist = <Audio>[];
-    for (final p in _pref.lastOriginalPlaylistPaths) {
+    for (final p in session.lastOriginalPlaylistPaths) {
       final a = pathToAudio[p];
       if (a != null) {
         restoredOriginalPlaylist.add(a);
       }
     }
 
-    var restoredIndex = _pref.lastPlaylistIndex;
+    var restoredIndex = session.lastPlaylistIndex;
     restoredIndex = restoredIndex.clamp(0, restoredPlaylist.length - 1);
     final idxByPath = restoredPlaylist.indexWhere((e) => e.path == lastPath);
     if (idxByPath >= 0) {
@@ -1613,7 +1587,7 @@ class PlaybackService extends ChangeNotifier {
           ? restoredOriginalPlaylist
           : restoredPlaylist,
     );
-    shuffle.value = _pref.lastShuffleActive;
+    shuffle.value = session.lastShuffleActive;
     _playlistIndex = restoredIndex;
     _nowPlaying.value = restoredPlaylist[restoredIndex];
     _smtcDisplayRevision++;
@@ -1646,7 +1620,7 @@ class PlaybackService extends ChangeNotifier {
       );
       logger.i(
         '[restore] rememberPlaybackPosition=${AppSettings.instance.rememberPlaybackPosition}, '
-        'savedPosition=${_pref.lastPositionSeconds}, '
+        'savedPosition=${session.lastPositionSeconds}, '
         'playerLength=${_player.length}, '
         'restoreTo=$restoreTo',
       );
@@ -1788,7 +1762,7 @@ class PlaybackService extends ChangeNotifier {
     _closed = true;
     SleepBlocker.instance.unblock();
     SleepTimerService.instance.cancel();
-    _songChangeTaskToken++;
+    _songChangeTasks.begin();
     _cancelSongChangeTasks();
     _cancelPositionSyncBurst();
 
