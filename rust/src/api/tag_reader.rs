@@ -11,7 +11,6 @@ use std::{
 };
 
 use dsf_meta::DsfFile;
-use flutter_rust_bridge::frb;
 use id3::TagLike;
 use image::{imageops, DynamicImage};
 use lofty::config::{ParseOptions, ParsingMode, WriteOptions};
@@ -19,19 +18,7 @@ use lofty::picture::{MimeType, Picture, PictureType};
 use lofty::prelude::{Accessor, AudioFile, ItemKey, TaggedFileExt};
 use lofty::probe::Probe;
 use lofty::tag::{ItemValue, Tag, TagItem, TagType};
-use midly::{Format as MidiFormat, MetaMessage, Smf, Timing, TrackEventKind};
-use ndsd_read::{dff_reader::DFFReader, DSDFormat, DSDReader};
 use ratag::tag::{Basic as RatagBasic, Picture as RatagPicture};
-use symphonia::{
-    core::{
-        codecs::CodecParameters,
-        formats::{probe::Hint, Attachment, FormatOptions, TrackType},
-        io::MediaSourceStream,
-        meta::{MetadataContainer, MetadataOptions, RawValue, StandardTag, Tag as SymphoniaTag},
-        units::Timestamp,
-    },
-    default::get_probe,
-};
 use windows::{
     core::Interface,
     core::HSTRING,
@@ -48,6 +35,36 @@ use crate::frb_generated::StreamSink;
 use super::library_db;
 use super::logger::log_to_dart;
 
+mod format_detection;
+use format_detection::{
+    is_asf_path, is_dff_path, is_dsf_path, is_generic_id3_path, is_midi_path,
+    is_supported_audio_path, is_symphonia_path, SUPPORTED_FORMATS,
+};
+
+mod format_readers;
+use format_readers::{
+    read_by_asf, read_by_dff, read_by_dsf, read_by_id3, read_by_midi, read_by_symphonia,
+};
+
+mod dff;
+use dff::read_dff_metadata;
+
+mod dsf;
+use dsf::DsfAudioProperties;
+
+mod index_state;
+pub use index_state::IndexActionState;
+
+mod symphonia;
+use symphonia::read_symphonia_metadata;
+
+mod midi;
+use midi::{parse_midi_metadata, read_midi_metadata};
+
+mod extra_metadata;
+use extra_metadata::should_show_recording_date;
+pub use extra_metadata::{AudioExtraItem, AudioExtraMetadata};
+
 /// 将迭代器中的字符串去重后用 "/" 拼接。
 /// FLAC Vorbis Comment 可能包含重复的多值标签（如多个相同的 ARTIST）。
 fn join_deduped<'a>(items: impl IntoIterator<Item = &'a str>) -> String {
@@ -62,46 +79,6 @@ fn join_deduped<'a>(items: impl IntoIterator<Item = &'a str>) -> String {
         }
     }
     result
-}
-
-#[derive(Clone, Copy)]
-struct DsfAudioProperties {
-    duration: u64,
-    bitrate: Option<u32>,
-    sample_rate: Option<u32>,
-    channels: Option<u8>,
-    bit_depth: Option<u8>,
-}
-
-fn is_dsf_path(path: &Path) -> bool {
-    path.extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("dsf"))
-}
-
-fn is_dff_path(path: &Path) -> bool {
-    path.extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("dff"))
-}
-
-fn is_asf_path(path: &Path) -> bool {
-    path.extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("asf") || ext.eq_ignore_ascii_case("wma"))
-}
-
-fn is_midi_path(path: &Path) -> bool {
-    path.extension().is_some_and(|ext| {
-        ext.eq_ignore_ascii_case("mid")
-            || ext.eq_ignore_ascii_case("midi")
-            || ext.eq_ignore_ascii_case("kar")
-            || ext.eq_ignore_ascii_case("rmi")
-    })
-}
-
-fn is_generic_id3_path(path: &Path) -> bool {
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.to_ascii_lowercase())
-        .is_some_and(|ext| matches!(ext.as_str(), "ac3" | "a52" | "amr" | "3ga"))
 }
 
 fn file_name(path: &Path) -> Option<String> {
@@ -155,63 +132,6 @@ fn read_dsf_audio_properties(file: &DsfFile) -> DsfAudioProperties {
     }
 }
 
-fn read_by_dsf(path: &Path, modified: u64, created: u64) -> Option<Audio> {
-    let file = DsfFile::open(path).ok()?;
-    let tag = file.id3_tag().as_ref();
-    let properties = read_dsf_audio_properties(&file);
-    let title = tag
-        .and_then(|tag| tag.title().map(str::to_string))
-        .or_else(|| file_name(path))?;
-
-    Some(Audio {
-        title,
-        artist: unknown_if_empty(tag.and_then(|tag| tag.artist().map(str::to_string))),
-        album: unknown_if_empty(tag.and_then(|tag| tag.album().map(str::to_string))),
-        album_artist: tag.and_then(|tag| tag.album_artist().map(str::to_string)),
-        track: tag.and_then(|tag| tag.track()),
-        disc: tag.and_then(|tag| tag.disc()),
-        duration: properties.duration,
-        bitrate: properties.bitrate,
-        sample_rate: properties.sample_rate,
-        path: path.to_string_lossy().to_string(),
-        modified,
-        created,
-        by: Some("DSF".to_string()),
-    })
-}
-
-fn read_by_asf(path: &Path, modified: u64, created: u64) -> Option<Audio> {
-    let metadata = RatagBasic::from_file(path).ok()?;
-    let windows = Audio::read_by_win_music_properties(path, modified, created).ok();
-    let artist = join_deduped(metadata.artists.iter().map(String::as_str));
-    Some(Audio {
-        title: metadata
-            .title
-            .or_else(|| windows.as_ref().map(|value| value.title.clone()))
-            .or_else(|| file_name(path))?,
-        artist: unknown_if_empty((!artist.is_empty()).then_some(artist)),
-        album: unknown_if_empty(
-            metadata
-                .album
-                .or_else(|| windows.as_ref().map(|value| value.album.clone())),
-        ),
-        album_artist: metadata.album_artist,
-        track: metadata.track,
-        disc: metadata.disc,
-        duration: metadata
-            .length
-            .map(|value| value.as_secs())
-            .or_else(|| windows.as_ref().map(|value| value.duration))
-            .unwrap_or(0),
-        bitrate: windows.as_ref().and_then(|value| value.bitrate),
-        sample_rate: windows.as_ref().and_then(|value| value.sample_rate),
-        path: path.to_string_lossy().to_string(),
-        modified,
-        created,
-        by: Some("ratag".to_string()),
-    })
-}
-
 fn id3_tag_items(tag: &id3::Tag) -> Vec<(String, String)> {
     let mut items = Vec::new();
     let mut push = |key: &str, value: Option<String>| {
@@ -243,518 +163,8 @@ fn id3_tag_items(tag: &id3::Tag) -> Vec<(String, String)> {
     items
 }
 
-fn read_by_id3(path: &Path, modified: u64, created: u64) -> Option<Audio> {
-    let tag = id3::Tag::read_from_path(path).ok()?;
-    let windows = Audio::read_by_win_music_properties(path, modified, created).ok();
-    Some(Audio {
-        title: tag
-            .title()
-            .map(str::to_string)
-            .or_else(|| windows.as_ref().map(|value| value.title.clone()))
-            .or_else(|| file_name(path))?,
-        artist: unknown_if_empty(
-            tag.artist()
-                .map(str::to_string)
-                .or_else(|| windows.as_ref().map(|value| value.artist.clone())),
-        ),
-        album: unknown_if_empty(
-            tag.album()
-                .map(str::to_string)
-                .or_else(|| windows.as_ref().map(|value| value.album.clone())),
-        ),
-        album_artist: tag.album_artist().map(str::to_string),
-        track: tag.track(),
-        disc: tag.disc(),
-        duration: windows.as_ref().map(|value| value.duration).unwrap_or(0),
-        bitrate: windows.as_ref().and_then(|value| value.bitrate),
-        sample_rate: windows.as_ref().and_then(|value| value.sample_rate),
-        path: path.to_string_lossy().to_string(),
-        modified,
-        created,
-        by: Some("ID3".to_string()),
-    })
-}
-
-struct MidiMetadata {
-    title: Option<String>,
-    duration: u64,
-    items: Vec<(String, String)>,
-}
-
-fn midi_text(value: &[u8]) -> Option<String> {
-    optional_nonempty(Some(String::from_utf8_lossy(value).trim().to_string()))
-}
-
-fn midi_track_info(track: &[midly::TrackEvent<'_>]) -> (u64, Vec<(u64, u32)>, Vec<String>) {
-    let mut ticks = 0_u64;
-    let mut tempos = Vec::new();
-    let mut names = Vec::new();
-    for event in track {
-        ticks = ticks.saturating_add(u64::from(event.delta.as_int()));
-        if let TrackEventKind::Meta(meta) = event.kind {
-            match meta {
-                MetaMessage::Tempo(value) => tempos.push((ticks, value.as_int())),
-                MetaMessage::TrackName(value) => {
-                    if let Some(value) = midi_text(value) {
-                        names.push(value);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    (ticks, tempos, names)
-}
-
-fn midi_metrical_micros(ticks: u64, mut tempos: Vec<(u64, u32)>, ticks_per_beat: u32) -> u128 {
-    if ticks == 0 || ticks_per_beat == 0 {
-        return 0;
-    }
-    tempos.sort_unstable_by_key(|(tick, _)| *tick);
-    let mut elapsed_micros = 0_u128;
-    let mut previous_tick = 0_u64;
-    let mut tempo = 500_000_u32;
-    for (tempo_tick, next_tempo) in tempos {
-        if tempo_tick > ticks {
-            break;
-        }
-        elapsed_micros = elapsed_micros.saturating_add(
-            u128::from(tempo_tick.saturating_sub(previous_tick)) * u128::from(tempo)
-                / u128::from(ticks_per_beat),
-        );
-        previous_tick = tempo_tick;
-        tempo = next_tempo.max(1);
-    }
-    elapsed_micros = elapsed_micros.saturating_add(
-        u128::from(ticks.saturating_sub(previous_tick)) * u128::from(tempo)
-            / u128::from(ticks_per_beat),
-    );
-    elapsed_micros
-}
-
-fn midi_track_micros(ticks: u64, tempos: Vec<(u64, u32)>, timing: Timing) -> u128 {
-    match timing {
-        Timing::Metrical(ticks_per_beat) => {
-            midi_metrical_micros(ticks, tempos, u32::from(ticks_per_beat.as_int()))
-        }
-        Timing::Timecode(fps, ticks_per_frame) => {
-            if ticks_per_frame == 0 {
-                0
-            } else {
-                (ticks as f64 * 1_000_000.0
-                    / (f64::from(fps.as_f32()) * f64::from(ticks_per_frame)))
-                    as u128
-            }
-        }
-    }
-}
-
-fn read_midi_metadata(path: &Path) -> Option<MidiMetadata> {
-    let bytes = fs::read(path).ok()?;
-    parse_midi_metadata(&bytes)
-}
-
-fn midi_payload(bytes: &[u8]) -> Option<&[u8]> {
-    if bytes.starts_with(b"MThd") {
-        return Some(bytes);
-    }
-    if bytes.len() < 12 || !bytes.starts_with(b"RIFF") || &bytes[8..12] != b"RMID" {
-        return None;
-    }
-    let riff_size = u32::from_le_bytes(bytes[4..8].try_into().ok()?) as usize;
-    let riff_end = 8_usize.checked_add(riff_size)?.min(bytes.len());
-    let mut offset = 12_usize;
-    while offset.checked_add(8)? <= riff_end {
-        let chunk_size =
-            u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().ok()?) as usize;
-        let data_start = offset + 8;
-        let data_end = data_start.checked_add(chunk_size)?;
-        if data_end > riff_end {
-            return None;
-        }
-        if &bytes[offset..offset + 4] == b"data" {
-            return Some(&bytes[data_start..data_end]);
-        }
-        offset = data_end.checked_add(chunk_size & 1)?;
-    }
-    None
-}
-
-fn parse_midi_metadata(bytes: &[u8]) -> Option<MidiMetadata> {
-    let smf = Smf::parse(midi_payload(bytes)?).ok()?;
-    let mut track_info = Vec::with_capacity(smf.tracks.len());
-    let mut title = None;
-    let mut items = Vec::new();
-    for track in &smf.tracks {
-        let (ticks, tempos, names) = midi_track_info(track);
-        if title.is_none() {
-            title = names.first().cloned();
-        }
-        for name in names {
-            items.push(("track_name".to_string(), name));
-        }
-        for event in track {
-            if let TrackEventKind::Meta(meta) = event.kind {
-                let (key, value) = match meta {
-                    MetaMessage::Copyright(value) => ("copyright", midi_text(value)),
-                    MetaMessage::Text(value) => ("text", midi_text(value)),
-                    MetaMessage::InstrumentName(value) => ("instrument", midi_text(value)),
-                    _ => continue,
-                };
-                if let Some(value) = value {
-                    items.push((key.to_string(), value));
-                }
-            }
-        }
-        track_info.push((ticks, tempos));
-    }
-    let duration_micros = match smf.header.format {
-        MidiFormat::Sequential => track_info
-            .into_iter()
-            .map(|(ticks, tempos)| midi_track_micros(ticks, tempos, smf.header.timing))
-            .sum(),
-        MidiFormat::SingleTrack | MidiFormat::Parallel => {
-            let max_ticks = track_info
-                .iter()
-                .map(|(ticks, _)| *ticks)
-                .max()
-                .unwrap_or(0);
-            let tempos = track_info
-                .into_iter()
-                .flat_map(|(_, tempos)| tempos)
-                .collect();
-            midi_track_micros(max_ticks, tempos, smf.header.timing)
-        }
-    };
-    let duration = u64::try_from(duration_micros / 1_000_000).unwrap_or(u64::MAX);
-    Some(MidiMetadata {
-        title,
-        duration,
-        items,
-    })
-}
-
-fn read_by_midi(path: &Path, modified: u64, created: u64) -> Option<Audio> {
-    let metadata = read_midi_metadata(path)?;
-    Some(Audio {
-        title: metadata.title.or_else(|| file_name(path))?,
-        artist: "UNKNOWN".to_string(),
-        album: "UNKNOWN".to_string(),
-        album_artist: None,
-        track: None,
-        disc: None,
-        duration: metadata.duration,
-        bitrate: estimated_bitrate(path, metadata.duration),
-        sample_rate: None,
-        path: path.to_string_lossy().to_string(),
-        modified,
-        created,
-        by: Some("midly".to_string()),
-    })
-}
-
-struct DffMetadata {
-    title: Option<String>,
-    artist: Option<String>,
-    album: Option<String>,
-    album_artist: Option<String>,
-    track: Option<u32>,
-    disc: Option<u32>,
-    duration: u64,
-    bitrate: Option<u32>,
-    sample_rate: Option<u32>,
-    channels: Option<u8>,
-    picture: Option<Vec<u8>>,
-    items: Vec<(String, String)>,
-}
-
-fn read_dff_metadata(path: &Path) -> Option<DffMetadata> {
-    let path_string = path.to_string_lossy();
-    let mut reader = DFFReader::new(&path_string).ok()?;
-    let mut format = DSDFormat::default();
-    reader.open(&mut format).ok()?;
-    let dsd_metadata = reader.get_metadata();
-    let id3_tag = dsd_metadata
-        .and_then(|metadata| metadata.id3_raw.as_deref())
-        .and_then(read_id3_from_bytes);
-    let id3_tag = id3_tag.as_ref();
-    let duration = if format.sampling_rate == 0 {
-        0
-    } else {
-        format.total_samples.saturating_mul(8) / u64::from(format.sampling_rate)
-    };
-    let title = id3_tag
-        .and_then(|tag| tag.title().map(str::to_string))
-        .or_else(|| dsd_metadata.and_then(|metadata| metadata.title.clone()));
-    let artist = id3_tag
-        .and_then(|tag| tag.artist().map(str::to_string))
-        .or_else(|| dsd_metadata.and_then(|metadata| metadata.artist.clone()));
-    let album = id3_tag
-        .and_then(|tag| tag.album().map(str::to_string))
-        .or_else(|| dsd_metadata.and_then(|metadata| metadata.album.clone()));
-    let album_artist = id3_tag.and_then(|tag| tag.album_artist().map(str::to_string));
-    let picture = id3_tag
-        .and_then(|tag| tag.pictures().next().map(|picture| picture.data.clone()))
-        .or_else(|| {
-            dsd_metadata.and_then(|metadata| {
-                metadata
-                    .cover_art
-                    .first()
-                    .map(|picture| picture.data.clone())
-            })
-        });
-    let mut items = Vec::new();
-    let mut push_item = |key: &str, value: Option<String>| {
-        if let Some(value) = optional_nonempty(value) {
-            items.push((key.to_string(), value));
-        }
-    };
-    push_item(
-        "year",
-        id3_tag
-            .and_then(|tag| tag.year())
-            .or_else(|| dsd_metadata.and_then(|metadata| metadata.year.map(|year| year as i32)))
-            .map(|value| value.to_string()),
-    );
-    push_item(
-        "genre",
-        id3_tag
-            .and_then(|tag| tag.genre().map(str::to_string))
-            .or_else(|| dsd_metadata.and_then(|metadata| metadata.genre.clone())),
-    );
-    push_item("artist", artist.clone());
-    push_item("album_artist", album_artist.clone());
-    push_item(
-        "track",
-        id3_tag
-            .and_then(|tag| tag.track())
-            .map(|value| value.to_string()),
-    );
-    push_item(
-        "disc",
-        id3_tag
-            .and_then(|tag| tag.disc())
-            .map(|value| value.to_string()),
-    );
-
-    Some(DffMetadata {
-        title,
-        artist,
-        album,
-        album_artist,
-        track: id3_tag.and_then(|tag| tag.track()),
-        disc: id3_tag.and_then(|tag| tag.disc()),
-        duration,
-        bitrate: estimated_bitrate(path, duration),
-        sample_rate: (format.sampling_rate > 0).then_some(format.sampling_rate),
-        channels: u8::try_from(format.num_channels).ok(),
-        picture,
-        items,
-    })
-}
-
-fn read_by_dff(path: &Path, modified: u64, created: u64) -> Option<Audio> {
-    let metadata = read_dff_metadata(path)?;
-    Some(Audio {
-        title: metadata.title.or_else(|| file_name(path))?,
-        artist: unknown_if_empty(metadata.artist),
-        album: unknown_if_empty(metadata.album),
-        album_artist: metadata.album_artist,
-        track: metadata.track,
-        disc: metadata.disc,
-        duration: metadata.duration,
-        bitrate: metadata.bitrate,
-        sample_rate: metadata.sample_rate,
-        path: path.to_string_lossy().to_string(),
-        modified,
-        created,
-        by: Some("DFF".to_string()),
-    })
-}
-
 fn parse_alternative_number(value: &str) -> Option<u32> {
     value.split('/').next()?.trim().parse().ok()
-}
-
-struct SymphoniaMetadata {
-    title: Option<String>,
-    artist: Option<String>,
-    album: Option<String>,
-    album_artist: Option<String>,
-    track: Option<u32>,
-    disc: Option<u32>,
-    duration: u64,
-    bitrate: Option<u32>,
-    sample_rate: Option<u32>,
-    channels: Option<u8>,
-    picture: Option<Vec<u8>>,
-    items: Vec<(String, String)>,
-}
-
-fn is_symphonia_path(path: &Path) -> bool {
-    matches!(
-        path.extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| ext.to_ascii_lowercase())
-            .as_deref(),
-        Some("mp1")
-            | Some("mp2")
-            | Some("mpa")
-            | Some("ogg")
-            | Some("oga")
-            | Some("opus")
-            | Some("spx")
-            | Some("mka")
-            | Some("mkv")
-            | Some("webm")
-            | Some("weba")
-            | Some("caf")
-            | Some("mp4")
-            | Some("m4a")
-            | Some("m4b")
-            | Some("m4p")
-            | Some("m4r")
-            | Some("m4v")
-            | Some("3gp")
-            | Some("3g2")
-            | Some("flac")
-            | Some("wav")
-            | Some("wave")
-            | Some("aif")
-            | Some("aiff")
-            | Some("aifc")
-    )
-}
-
-fn read_by_symphonia(path: &Path, modified: u64, created: u64) -> Option<Audio> {
-    let metadata = read_symphonia_metadata(path)?;
-    let title = metadata.title.or_else(|| {
-        path.file_name()
-            .map(|name| name.to_string_lossy().to_string())
-    })?;
-
-    Some(Audio {
-        title,
-        artist: metadata.artist.unwrap_or_else(|| "UNKNOWN".to_string()),
-        album: metadata.album.unwrap_or_else(|| "UNKNOWN".to_string()),
-        album_artist: metadata.album_artist,
-        track: metadata.track,
-        disc: metadata.disc,
-        duration: metadata.duration,
-        bitrate: metadata.bitrate,
-        sample_rate: metadata.sample_rate,
-        path: path.to_string_lossy().to_string(),
-        modified,
-        created,
-        by: Some("Symphonia".to_string()),
-    })
-}
-
-fn symphonia_raw_value(value: &RawValue) -> Option<String> {
-    let value = match value {
-        RawValue::String(value) => value.to_string(),
-        RawValue::StringList(value) => join_deduped(value.iter().map(String::as_str)),
-        RawValue::SignedInt(value) => value.to_string(),
-        RawValue::UnsignedInt(value) => value.to_string(),
-        RawValue::Float(value) => value.to_string(),
-        RawValue::Boolean(value) => value.to_string(),
-        RawValue::Binary(_) | RawValue::Flag => return None,
-        _ => return None,
-    };
-    optional_nonempty(Some(value))
-}
-
-fn symphonia_standard_value(tag: &SymphoniaTag) -> Option<(String, String)> {
-    let (key, value) = match tag.std.as_ref()? {
-        StandardTag::Album(value) => ("album", value.to_string()),
-        StandardTag::AlbumArtist(value) => ("albumartist", value.to_string()),
-        StandardTag::Artist(value) => ("artist", value.to_string()),
-        StandardTag::Comment(value) => ("comment", value.to_string()),
-        StandardTag::Composer(value) => ("composer", value.to_string()),
-        StandardTag::Conductor(value) => ("conductor", value.to_string()),
-        StandardTag::Copyright(value) => ("copyright", value.to_string()),
-        StandardTag::DiscNumber(value) => ("discnumber", value.to_string()),
-        StandardTag::DiscTotal(value) => ("disctotal", value.to_string()),
-        StandardTag::Encoder(value) => ("encoder", value.to_string()),
-        StandardTag::EncoderSettings(value) => ("encodersettings", value.to_string()),
-        StandardTag::Genre(value) => ("genre", value.to_string()),
-        StandardTag::Label(value) => ("label", value.to_string()),
-        StandardTag::Language(value) => ("language", value.to_string()),
-        StandardTag::Lyrics(value) => ("lyrics", value.to_string()),
-        StandardTag::RecordingDate(value) => ("recordingdate", value.to_string()),
-        StandardTag::RecordingYear(value) => ("recordingyear", value.to_string()),
-        StandardTag::ReplayGainAlbumGain(value) => ("replaygain_album_gain", value.to_string()),
-        StandardTag::ReplayGainAlbumPeak(value) => ("replaygain_album_peak", value.to_string()),
-        StandardTag::ReplayGainTrackGain(value) => ("replaygain_track_gain", value.to_string()),
-        StandardTag::ReplayGainTrackPeak(value) => ("replaygain_track_peak", value.to_string()),
-        StandardTag::TrackNumber(value) => ("tracknumber", value.to_string()),
-        StandardTag::TrackTitle(value) => ("title", value.to_string()),
-        StandardTag::TrackTotal(value) => ("tracktotal", value.to_string()),
-        _ => return None,
-    };
-    optional_nonempty(Some(value)).map(|value| (key.to_string(), value))
-}
-
-fn merge_symphonia_field(field: &mut Option<String>, value: String) {
-    if let Some(existing) = field.take() {
-        *field = Some(join_deduped([existing.as_str(), value.as_str()]));
-    } else {
-        *field = Some(value);
-    }
-}
-
-#[derive(Default)]
-#[frb(ignore)]
-struct SymphoniaTagCollection {
-    title: Option<String>,
-    artist: Option<String>,
-    album: Option<String>,
-    album_artist: Option<String>,
-    track_number: Option<u32>,
-    disc_number: Option<u32>,
-    items: Vec<(String, String)>,
-    picture: Option<Vec<u8>>,
-}
-
-fn collect_symphonia_tags(container: &MetadataContainer, tags: &mut SymphoniaTagCollection) {
-    for tag in &container.tags {
-        let (key, value) = if let Some((key, value)) = symphonia_standard_value(tag) {
-            (key, value)
-        } else {
-            let value = match symphonia_raw_value(&tag.raw.value) {
-                Some(value) => value,
-                None => continue,
-            };
-            (tag.raw.key.to_ascii_lowercase(), value)
-        };
-        tags.items.push((key.clone(), value.clone()));
-        match key.as_str() {
-            "title" | "tracktitle" | "tit2" | "title/trackname" | "©nam" => {
-                merge_symphonia_field(&mut tags.title, value)
-            }
-            "artist" | "trackartist" | "tpe1" | "©art" => {
-                merge_symphonia_field(&mut tags.artist, value)
-            }
-            "album" | "talb" | "©alb" => merge_symphonia_field(&mut tags.album, value),
-            "albumartist" | "album artist" | "albumartistname" | "tpe2" | "aart" => {
-                merge_symphonia_field(&mut tags.album_artist, value)
-            }
-            "track" | "tracknumber" | "trck" | "trkn" => {
-                tags.track_number = parse_alternative_number(&value);
-            }
-            "disc" | "discnumber" | "tpos" | "disk" => {
-                tags.disc_number = parse_alternative_number(&value);
-            }
-            _ => {}
-        }
-    }
-    if tags.picture.is_none() {
-        tags.picture = container
-            .visuals
-            .iter()
-            .find(|visual| !visual.data.is_empty())
-            .map(|visual| visual.data.to_vec());
-    }
 }
 
 fn is_image_attachment(name: &str, media_type: Option<&str>) -> bool {
@@ -769,109 +179,6 @@ fn is_image_attachment(name: &str, media_type: Option<&str>) -> bool {
                 .as_deref(),
             Some("jpg") | Some("jpeg") | Some("png") | Some("webp")
         )
-    })
-}
-
-fn read_symphonia_metadata(path: &Path) -> Option<SymphoniaMetadata> {
-    let source = fs::File::open(path).ok()?;
-    let media_source = MediaSourceStream::new(Box::new(source), Default::default());
-    let mut hint = Hint::new();
-    if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
-        hint.with_extension(extension);
-    }
-    let probed = get_probe()
-        .probe(
-            &hint,
-            media_source,
-            FormatOptions::default(),
-            MetadataOptions::default(),
-        )
-        .ok()?;
-    let mut format = probed;
-    let (track_id, duration, sample_rate, channels) = {
-        let track = format.default_track(TrackType::Audio)?;
-        let audio_params = match track.codec_params.as_ref()? {
-            CodecParameters::Audio(params) => params,
-            _ => return None,
-        };
-        let duration = track
-            .duration
-            .zip(track.time_base)
-            .and_then(|(duration, time_base)| {
-                time_base
-                    .calc_time(Timestamp::from(duration.get() as i64))
-                    .map(|time| time.as_secs().max(0) as u64)
-            })
-            .or_else(|| {
-                track
-                    .num_frames
-                    .zip(track.time_base)
-                    .and_then(|(frames, time_base)| {
-                        time_base
-                            .calc_time(Timestamp::from(frames as i64))
-                            .map(|time| time.as_secs().max(0) as u64)
-                    })
-            })
-            .unwrap_or(0);
-        (
-            track.id,
-            duration,
-            audio_params.sample_rate,
-            audio_params
-                .channels
-                .as_ref()
-                .and_then(|value| u8::try_from(value.count()).ok()),
-        )
-    };
-    let bitrate = estimated_bitrate(path, duration);
-    let mut tags = SymphoniaTagCollection::default();
-
-    if let Some(revision) = format.metadata().skip_to_latest() {
-        collect_symphonia_tags(&revision.media, &mut tags);
-        if let Some(track_metadata) = revision
-            .per_track
-            .iter()
-            .find(|metadata| metadata.track_id == u64::from(track_id))
-        {
-            let mut track_tags = SymphoniaTagCollection::default();
-            collect_symphonia_tags(&track_metadata.metadata, &mut track_tags);
-            tags.title = track_tags.title.or(tags.title);
-            tags.artist = track_tags.artist.or(tags.artist);
-            tags.album = track_tags.album.or(tags.album);
-            tags.album_artist = track_tags.album_artist.or(tags.album_artist);
-            tags.track_number = track_tags.track_number.or(tags.track_number);
-            tags.disc_number = track_tags.disc_number.or(tags.disc_number);
-            tags.items.extend(track_tags.items);
-            tags.picture = track_tags.picture.or(tags.picture);
-        }
-    }
-    if tags.picture.is_none() {
-        tags.picture = format
-            .attachments()
-            .iter()
-            .find_map(|attachment| match attachment {
-                Attachment::File(file)
-                    if is_image_attachment(&file.name, file.media_type.as_deref()) =>
-                {
-                    Some(file.data.to_vec())
-                }
-                _ => None,
-            });
-    }
-
-    Some(SymphoniaMetadata {
-        title: tags.title,
-        artist: tags.artist,
-        album: tags.album,
-        album_artist: tags.album_artist,
-        track: tags.track_number,
-        disc: tags.disc_number,
-        duration,
-        bitrate,
-        sample_rate,
-        channels,
-        picture: tags.picture,
-        items: tags.items,
     })
 }
 
@@ -1110,33 +417,6 @@ fn read_id3_picture(path: &Path) -> Option<Vec<u8>> {
         .map(|picture| picture.data.clone())
 }
 
-#[derive(Clone)]
-pub struct AudioExtraItem {
-    pub key: String,
-    pub value: String,
-}
-
-#[derive(Clone)]
-pub struct AudioExtraMetadata {
-    pub extension: String,
-    pub file_size: u64,
-    pub channels: Option<u8>,
-    pub bit_depth: Option<u8>,
-    pub items: Vec<AudioExtraItem>,
-    pub replaygain_track_gain: Option<String>,
-    pub replaygain_track_peak: Option<String>,
-    pub replaygain_album_gain: Option<String>,
-    pub replaygain_album_peak: Option<String>,
-}
-
-fn should_show_recording_date(recording_date: Option<&str>, year: Option<&str>) -> bool {
-    match (recording_date, year) {
-        (Some(date), Some(year)) => date.trim() != year.trim(),
-        (Some(_), None) => true,
-        _ => false,
-    }
-}
-
 /// for Flutter
 pub fn read_audio_extra_metadata(path: String) -> AudioExtraMetadata {
     let file_size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
@@ -1334,39 +614,13 @@ pub fn read_audio_extra_metadata(path: String) -> AudioExtraMetadata {
     }
 }
 
-static SUPPORTED_FORMATS: phf::Set<&'static str> = phf::phf_set! {
-    "mp3", "mp2", "mp1", "mpa",
-    "ogg", "oga", "opus", "spx",
-    "wav", "wave",
-    "aif", "aiff", "aifc", "afc",
-    "asf", "wma",
-    "aac", "adts",
-    "m4a", "mp4", "m4b", "m4p", "m4r", "m4v", "3gp", "3g2",
-    "mka", "mkv", "webm", "weba",
-    "caf",
-    "ac3", "a52",
-    "amr", "3ga",
-    "flac",
-    "mpc", "mp+", "mpp",
-    "mid", "midi", "kar", "rmi",
-    "wv",
-    "dsf", "dff",
-    "ape",
-};
+
 
 const CURRENT_INDEX_VERSION: u64 = 111;
 const MAX_TAG_READER_WORKERS: usize = 4;
 const RESERVED_LOGICAL_CORES: usize = 2;
 const INDEX_PROGRESS_MIN_BATCH: usize = 16;
 const INDEX_PROGRESS_TARGET_UPDATES: usize = 200;
-
-pub struct IndexActionState {
-    /// completed / total
-    pub progress: f64,
-
-    /// describe action state
-    pub message: String,
-}
 
 #[derive(Debug)]
 struct Audio {
@@ -2382,13 +1636,7 @@ fn detect_and_encode(img: &DynamicImage, raw_bytes: &[u8]) -> Result<(Vec<u8>, M
     }
 }
 
-fn is_supported_audio_path(path: &Path) -> bool {
-    let Some(extension) = path.extension() else {
-        return false;
-    };
-    let extension = extension.to_string_lossy().to_ascii_lowercase();
-    SUPPORTED_FORMATS.contains(extension.as_str())
-}
+
 
 /// 递归收集所有子文件夹中的音频文件路径，按父目录分组。
 /// 一次遍历同时完成「统计总数」和「收集路径」，避免二次目录遍历。
@@ -2674,14 +1922,193 @@ fn probe_indexed_path<T>(result: io::Result<T>) -> io::Result<Option<T>> {
 
 #[cfg(test)]
 mod tag_reader_tests {
+    use std::iter;
+
+    use id3::TagLike;
     use lofty::file::FileType;
     use lofty::prelude::ItemKey;
 
     use super::{
-        is_lyric_item_key, parse_midi_metadata, probe_indexed_path, should_emit_index_progress,
+        is_lyric_item_key, join_deduped, parse_midi_metadata, probe_indexed_path,
+        read_audio_extra_metadata, read_by_asf, should_emit_index_progress,
         should_scan_indexed_audio_files, should_show_recording_date, tag_reader_worker_count_for,
         SUPPORTED_FORMATS,
     };
+
+    fn asf_object(guid: [u8; 16], data: Vec<u8>) -> Vec<u8> {
+        let mut object = guid.to_vec();
+        object.extend_from_slice(&((24 + data.len()) as u64).to_le_bytes());
+        object.extend(data);
+        object
+    }
+
+    fn utf16le_null_terminated(value: &str) -> Vec<u8> {
+        value
+            .encode_utf16()
+            .chain(iter::once(0))
+            .flat_map(u16::to_le_bytes)
+            .collect()
+    }
+
+    fn asf_content_description(title: &str, artist: &str) -> Vec<u8> {
+        let values = [
+            utf16le_null_terminated(title),
+            utf16le_null_terminated(artist),
+            utf16le_null_terminated(""),
+            utf16le_null_terminated(""),
+            utf16le_null_terminated(""),
+        ];
+        let mut data = Vec::with_capacity(10 + values.iter().map(Vec::len).sum::<usize>());
+        for value in &values {
+            data.extend_from_slice(&(value.len() as u16).to_le_bytes());
+        }
+        for value in values {
+            data.extend(value);
+        }
+        data
+    }
+
+    fn minimal_asf(title: &str, artist: &str) -> Vec<u8> {
+        const FILE_HEADER_GUID: [u8; 16] = [
+            0x30, 0x26, 0xb2, 0x75, 0x8e, 0x66, 0xcf, 0x11, 0xa6, 0xd9, 0x00, 0xaa, 0x00, 0x62,
+            0xce, 0x6c,
+        ];
+        const CONTENT_DESCRIPTION_GUID: [u8; 16] = [
+            0x33, 0x26, 0xb2, 0x75, 0x8e, 0x66, 0xcf, 0x11, 0xa6, 0xd9, 0x00, 0xaa, 0x00, 0x62,
+            0xce, 0x6c,
+        ];
+
+        let content = asf_object(
+            CONTENT_DESCRIPTION_GUID,
+            asf_content_description(title, artist),
+        );
+        let mut file_header_data = Vec::new();
+        file_header_data.extend_from_slice(&1_u32.to_le_bytes());
+        file_header_data.extend_from_slice(&0_u16.to_le_bytes());
+        file_header_data.extend(content);
+        asf_object(FILE_HEADER_GUID, file_header_data)
+    }
+
+    fn temp_asf_path(suffix: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "pure_music_asf_{}_{}.{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+            suffix
+        ))
+    }
+
+    #[test]
+    fn reads_asf_metadata_through_existing_audio_reader() {
+        let path = temp_asf_path("wma");
+        std::fs::write(&path, minimal_asf("Feature title", "Artist A / Artist B")).unwrap();
+
+        let audio = read_by_asf(&path, 11, 22).expect("valid ASF metadata");
+
+        assert_eq!(audio.title, "Feature title");
+        assert_eq!(audio.artist, "Artist A / Artist B");
+        assert_eq!(audio.album, "UNKNOWN");
+        assert_eq!(audio.track, None);
+        assert_eq!(audio.duration, 0);
+        assert_eq!(audio.modified, 11);
+        assert_eq!(audio.created, 22);
+        assert_eq!(audio.by.as_deref(), Some("ratag"));
+
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn reads_positive_asf_extra_metadata_fields() {
+        let path = temp_asf_path("wma");
+        std::fs::write(&path, minimal_asf("Feature title", "Artist A / Artist B")).unwrap();
+
+        let metadata = read_audio_extra_metadata(path.to_string_lossy().to_string());
+        let fields = metadata
+            .items
+            .into_iter()
+            .map(|item| (item.key, item.value))
+            .collect::<std::collections::HashMap<_, _>>();
+
+        assert_eq!(metadata.extension, "wma");
+        assert_eq!(
+            fields.get("artist").map(String::as_str),
+            Some("Artist A / Artist B")
+        );
+        assert_eq!(metadata.file_size > 0, true);
+
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn missing_asf_text_fields_use_safe_defaults() {
+        let path = temp_asf_path("asf");
+        std::fs::write(&path, minimal_asf("", "")).unwrap();
+
+        let audio = read_by_asf(&path, 33, 44).expect("valid ASF metadata");
+
+        assert_eq!(audio.title, path.file_name().unwrap().to_string_lossy());
+        assert_eq!(audio.artist, "UNKNOWN");
+        assert_eq!(audio.album, "UNKNOWN");
+        assert_eq!(audio.duration, 0);
+        assert_eq!(audio.modified, 33);
+        assert_eq!(audio.created, 44);
+
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn invalid_asf_input_returns_none_from_audio_reader() {
+        let path = temp_asf_path("asf");
+        std::fs::write(&path, b"not an ASF file").unwrap();
+
+        assert!(read_by_asf(&path, 0, 0).is_none());
+
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn asf_artist_joining_deduplicates_in_source_order() {
+        assert_eq!(
+            join_deduped(["Artist A", "Artist B", "Artist A", "Artist B"].into_iter()),
+            "Artist A/Artist B"
+        );
+    }
+
+    #[test]
+    fn reads_positive_id3_extra_metadata_fields() {
+        let path = std::env::temp_dir().join(format!(
+            "pure_music_valid_id3_extra_{}_{}.mp3",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut tag = id3::Tag::new();
+        tag.set_genre("Rock");
+        tag.set_year(2024);
+        tag.set_track(4);
+        tag.set_disc(2);
+        std::fs::write(&path, []).unwrap();
+        tag.write_to_path(&path, id3::Version::Id3v24).unwrap();
+
+        let metadata = read_audio_extra_metadata(path.to_string_lossy().to_string());
+        let fields = metadata
+            .items
+            .into_iter()
+            .map(|item| (item.key, item.value))
+            .collect::<std::collections::HashMap<_, _>>();
+
+        assert_eq!(metadata.extension, "mp3");
+        assert_eq!(fields.get("genre").map(String::as_str), Some("Rock"));
+        assert_eq!(fields.get("year").map(String::as_str), Some("2024"));
+        assert_eq!(fields.get("disc").map(String::as_str), Some("2"));
+
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn reserves_two_logical_cores_for_playback_and_ui() {
