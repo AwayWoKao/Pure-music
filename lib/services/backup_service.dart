@@ -2,11 +2,13 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:archive/archive.dart';
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:pure_music/core/database.dart';
 import 'package:pure_music/core/settings.dart';
 import 'package:pure_music/core/utils.dart';
 import 'package:pure_music/native/rust/api/library_db.dart' as library_db;
+import 'package:pure_music/services/backup_file_transaction.dart';
 import 'package:pure_music/services/lastfm/lastfm_models.dart';
 import 'package:sqlite3/sqlite3.dart';
 
@@ -237,10 +239,19 @@ Map? _readMetaMap(Database db, String key) {
 /// 导入策略。
 enum BackupImportMode { overwrite, merge }
 
+@visibleForTesting
+bool shouldImportLastFmCredentials({
+  required BackupImportMode mode,
+  required LastFmCredentials local,
+}) {
+  return mode == BackupImportMode.overwrite || !local.isAuthorized;
+}
+
 /// 从 zip 导入备份。返回实际导入的类别。
 Future<Set<BackupCategory>> importBackup({
   required String sourcePath,
   required BackupImportMode mode,
+  Directory? dataRoot,
 }) async {
   final sourceFile = File(sourcePath);
   if (sourceFile.lengthSync() > _maxBackupArchiveBytes) {
@@ -297,13 +308,30 @@ Future<Set<BackupCategory>> importBackup({
     }
   }
 
-  final root = await getAppDataDir();
+  final root = dataRoot ?? await getAppDataDir();
   final imported = <BackupCategory>{};
 
   if (categories.contains(BackupCategory.settings)) {
-    await _importSettings(root, archive, mode);
-    if (externalFiles.isNotEmpty) {
-      await _restoreExternalFiles(root, archive, externalFiles, mode);
+    final transaction = BackupFileTransaction(root);
+    try {
+      await _importSettings(root, archive, mode, transaction);
+      if (externalFiles.isNotEmpty) {
+        await _restoreExternalFiles(
+          root,
+          archive,
+          externalFiles,
+          mode,
+          transaction,
+        );
+      }
+      await transaction.commit();
+    } catch (_) {
+      try {
+        await transaction.rollback();
+      } catch (rollbackError, rollbackTrace) {
+        logger.e('备份设置回滚失败', error: rollbackError, stackTrace: rollbackTrace);
+      }
+      rethrow;
     }
     imported.add(BackupCategory.settings);
   }
@@ -353,7 +381,7 @@ Future<Set<BackupCategory>> importBackup({
         final local = LastFmCredentials.fromMap(
           _readMetaMap(db, 'lastfm_credentials'),
         );
-        if (mode == BackupImportMode.overwrite || !local.isAuthorized) {
+        if (shouldImportLastFmCredentials(mode: mode, local: local)) {
           db.execute(
             'INSERT INTO meta(key, value) VALUES(?, ?) '
             'ON CONFLICT(key) DO UPDATE SET value = excluded.value',
@@ -372,6 +400,7 @@ Future<void> _importSettings(
   Directory root,
   Archive archive,
   BackupImportMode mode,
+  BackupFileTransaction transaction,
 ) async {
   for (final rel in _settingsFiles) {
     final entry = archive.findFile(rel);
@@ -379,9 +408,9 @@ Future<void> _importSettings(
     final target = File(p.join(root.path, rel));
     await target.parent.create(recursive: true);
     if (mode == BackupImportMode.overwrite) {
-      await target.writeAsBytes(entry.content, flush: true);
+      await transaction.writeBytes(target, entry.content);
     } else {
-      await _mergeJsonFile(target, entry.content);
+      await _mergeJsonFile(target, entry.content, transaction);
     }
   }
 }
@@ -401,6 +430,15 @@ void _importPlaylistsAndLyricSources(
     db.execute('ROLLBACK');
     rethrow;
   }
+}
+
+@visibleForTesting
+void importPlaylistsAndLyricSourcesForTesting(
+  Database db,
+  Archive archive,
+  BackupImportMode mode,
+) {
+  _importPlaylistsAndLyricSources(db, archive, mode);
 }
 
 /// 歌单按 name 去重：本机没有该名称则整份导入；已有同名时，
@@ -518,6 +556,7 @@ Future<void> _restoreExternalFiles(
   Archive archive,
   Map<String, String> externalFiles,
   BackupImportMode mode,
+  BackupFileTransaction transaction,
 ) async {
   final externalRoot = Directory(p.join(root.path, _externalDir));
   await externalRoot.create(recursive: true);
@@ -541,7 +580,7 @@ Future<void> _restoreExternalFiles(
 
     final target = File(p.join(externalRoot.path, name));
     if (mode == BackupImportMode.overwrite || !target.existsSync()) {
-      await target.writeAsBytes(archiveEntry.content, flush: true);
+      await transaction.writeBytes(target, archiveEntry.content);
     }
     final localValue = settingsMap?[key];
     final keepLocalPath =
@@ -555,38 +594,35 @@ Future<void> _restoreExternalFiles(
   if (pathRewrites.isEmpty) return;
 
   if (!settingsFile.existsSync()) return;
-  try {
-    final settingsMap = jsonDecode(settingsFile.readAsStringSync());
-    if (settingsMap is Map) {
-      for (final entry in pathRewrites.entries) {
-        settingsMap[entry.key] = entry.value;
-      }
-      await writeTextFileAtomically(settingsFile.path, jsonEncode(settingsMap));
+  final decoded = jsonDecode(settingsFile.readAsStringSync());
+  if (decoded is Map) {
+    for (final entry in pathRewrites.entries) {
+      decoded[entry.key] = entry.value;
     }
-  } catch (error, trace) {
-    logger.w('改写外部文件路径失败', error: error, stackTrace: trace);
+    await transaction.writeText(settingsFile, jsonEncode(decoded));
   }
 }
 
 /// JSON 文件按顶层键合并：本机已有键保留，缺失键补入。
-Future<void> _mergeJsonFile(File target, List<int> content) async {
+Future<void> _mergeJsonFile(
+  File target,
+  List<int> content,
+  BackupFileTransaction transaction,
+) async {
   if (!target.existsSync()) {
-    await target.writeAsBytes(content, flush: true);
+    await transaction.writeBytes(target, content);
     return;
   }
-  try {
-    final local = jsonDecode(target.readAsStringSync());
-    final incoming = jsonDecode(utf8.decode(content));
-    if (local is Map && incoming is Map) {
-      final merged = _mergeJsonMaps(
-        Map<String, dynamic>.from(incoming),
-        Map<String, dynamic>.from(local),
-      );
-      await writeTextFileAtomically(target.path, jsonEncode(merged));
-    }
-  } catch (error, trace) {
-    logger.w('合并备份文件失败，保留本机文件', error: error, stackTrace: trace);
+  final local = jsonDecode(target.readAsStringSync());
+  final incoming = jsonDecode(utf8.decode(content));
+  if (local is! Map || incoming is! Map) {
+    throw const FormatException('设置文件必须是 JSON 对象');
   }
+  final merged = _mergeJsonMaps(
+    Map<String, dynamic>.from(incoming),
+    Map<String, dynamic>.from(local),
+  );
+  await transaction.writeText(target, jsonEncode(merged));
 }
 
 Map<String, dynamic> _mergeJsonMaps(
