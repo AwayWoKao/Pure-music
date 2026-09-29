@@ -472,18 +472,14 @@ class BassPlayer {
         return;
       }
       final currentState = playerState;
-      if (currentState == PlayerState.stopped) {
-        if (lastNotifiedState != PlayerState.completed) {
-          lastNotifiedState = PlayerState.completed;
-          if (!_transitionHandledCompletion) {
-            _playerStateStreamController.add(PlayerState.completed);
-          }
-        }
-      } else {
-        if (lastNotifiedState != currentState) {
-          lastNotifiedState = currentState;
-          _playerStateStreamController.add(currentState);
-        }
+      final emit = playbackStateToEmit(
+        lastNotified: lastNotifiedState,
+        current: currentState,
+        suppressCompletion: _transitionHandledCompletion,
+      );
+      if (emit != null) {
+        lastNotifiedState = emit;
+        _playerStateStreamController.add(emit);
       }
 
       _maybeUpdateSpectrum(knownState: currentState);
@@ -2205,7 +2201,7 @@ class BassPlayer {
     );
     if (added) {
       _queuedStreamAttached = true;
-      _resumeOutputIfStopped();
+      _resumeOutputIfNeeded();
       return true;
     }
     logger.w(
@@ -2252,6 +2248,56 @@ class BassPlayer {
     }
   }
 
+  /// 曲尾提前量。定时器按墙上时钟走，播完检测按解码时钟走，
+  /// 淡出拉满时两者会在曲尾错开，混音器先被停掉。
+  static const int transitionEndMarginMs = 120;
+
+  static int transitionTriggerLeadMs({
+    required bool crossfade,
+    required int fadeOutMs,
+    required int fadeInMs,
+  }) {
+    final fadeLead = crossfade ? math.max(fadeOutMs, fadeInMs) : fadeOutMs;
+    return math.max(1, fadeLead) + transitionEndMarginMs;
+  }
+
+  static bool shouldRestartStoppedMixer(int activeState) =>
+      activeState == bass.BASS_ACTIVE_STOPPED;
+
+  static bool shouldReleaseFadedSource({
+    required int handle,
+    required int? currentHandle,
+    required int? queuedHandle,
+  }) => handle != currentHandle && handle != queuedHandle;
+
+  /// 仍在播的流只在过渡已取消，或这不是自动过渡时保留。
+  /// 交叉淡化的清理定时器会比切歌早几十毫秒，这时旧流还是当前流，必须拆掉。
+  static bool shouldKeepLiveFadedSource({
+    required bool stillLive,
+    required int? scheduledGeneration,
+    required int currentGeneration,
+  }) {
+    if (!stillLive) return false;
+    if (scheduledGeneration == null) return true;
+    return scheduledGeneration != currentGeneration;
+  }
+
+  /// 过渡期间混音器会先停再起。停播不能记成“已经通知过完成”，
+  /// 否则标记解除后不会再发出完成事件，下一首就一直不走。
+  static PlayerState? playbackStateToEmit({
+    required PlayerState? lastNotified,
+    required PlayerState current,
+    required bool suppressCompletion,
+  }) {
+    if (current == PlayerState.stopped) {
+      if (suppressCompletion) return null;
+      if (lastNotified == PlayerState.completed) return null;
+      return PlayerState.completed;
+    }
+    if (lastNotified != current) return current;
+    return null;
+  }
+
   void _scheduleAutoTransition() {
     final current = _fstream;
     final sync = _bassSync;
@@ -2268,17 +2314,19 @@ class BassPlayer {
     final fadeOutMs = pref.transitionFadeOutMs;
     final fadeInMs = pref.transitionFadeInMs;
     final crossfade = mode == TransitionMode.crossfade;
-    final leadMs = crossfade ? math.max(fadeOutMs, fadeInMs) : fadeOutMs;
-    // 触发位置基于当前播放流自身的长度
+    final leadMs = transitionTriggerLeadMs(
+      crossfade: crossfade,
+      fadeOutMs: fadeOutMs,
+      fadeInMs: fadeInMs,
+    );
+    // 触发位置基于当前播放流自身的长度。提前一点，避免定时器
+    // 落到曲尾之后，混音器先被 BASS_MIXER_END 停掉。
     final currentLength = _bass.BASS_ChannelBytes2Seconds(
       current,
       _bass.BASS_ChannelGetLength(current, bass.BASS_POS_BYTE),
     );
     if (currentLength <= 0) return;
-    final triggerPos = math.max(
-      0.0,
-      currentLength - math.max(1, leadMs) / 1000.0,
-    );
+    final triggerPos = math.max(0.0, currentLength - leadMs / 1000.0);
 
     _transitionGeneration++;
     final generation = _transitionGeneration;
@@ -2344,6 +2392,11 @@ class BassPlayer {
     final oldStream = _fstream!;
     final gen = generation;
     _transitionHandledCompletion = true;
+    // 交叉淡化会提前切到下一首并取消下面的激活定时器。
+    // 完成标记必须在这里先挂上，否则曲尾停播会被永久吞掉。
+    _armHandledCompletionClear(
+      hold: Duration(milliseconds: math.max(fadeOutMs, fadeInMs) + 1500),
+    );
 
     if (crossfade) {
       if (!_attachQueuedStream(_mixerGeneration, newStream) ||
@@ -2357,6 +2410,7 @@ class BassPlayer {
         durationMs: fadeOutMs,
         delayCleanup: true,
         removeFromMixer: true,
+        transitionGeneration: gen,
       );
       _fadeInNewStream(newStream, durationMs: fadeInMs);
       _transitionTimer = Timer(Duration(milliseconds: fadeOutMs + 50), () {
@@ -2366,7 +2420,6 @@ class BassPlayer {
           _failHandledAutoTransition();
           return;
         }
-        _armHandledCompletionClear();
       });
     } else {
       _transitionOldStream = oldStream;
@@ -2375,6 +2428,7 @@ class BassPlayer {
         durationMs: fadeOutMs,
         delayCleanup: true,
         removeFromMixer: true,
+        transitionGeneration: gen,
       );
       _transitionTimer = Timer(Duration(milliseconds: fadeOutMs), () {
         if (gen != _transitionGeneration) return;
@@ -2389,7 +2443,6 @@ class BassPlayer {
           _failHandledAutoTransition();
           return;
         }
-        _armHandledCompletionClear();
       });
     }
   }
@@ -2399,32 +2452,40 @@ class BassPlayer {
     _handledCompletionClearTimer = null;
     _transitionHandledCompletion = false;
     _cancelTransition();
-    final output = _mixerStream;
-    if (output != null &&
-        _bass.BASS_ChannelIsActive(output) == bass.BASS_ACTIVE_STOPPED) {
-      _playerStateStreamController.add(PlayerState.completed);
-    }
+    // 完成事件只走位置轮询。这里再推一次的话，解除抑制后会连跳两首。
   }
 
-  void _armHandledCompletionClear() {
+  void _armHandledCompletionClear({Duration? hold}) {
     _handledCompletionClearTimer?.cancel();
-    _handledCompletionClearTimer = Timer(const Duration(seconds: 2), () {
-      _handledCompletionClearTimer = null;
-      _transitionHandledCompletion = false;
-    });
+    _handledCompletionClearTimer = Timer(
+      hold ?? const Duration(seconds: 2),
+      () {
+        _handledCompletionClearTimer = null;
+        _resumeOutputIfNeeded();
+        _transitionHandledCompletion = false;
+      },
+    );
   }
 
-  void _resumeOutputIfStopped() {
+  void _markTransitionOutputHealthy() {
+    _handledCompletionClearTimer?.cancel();
+    _handledCompletionClearTimer = null;
+    _transitionHandledCompletion = false;
+  }
+
+  void _resumeOutputIfNeeded() {
     final output = _mixerStream;
     if (output == null || wasapiExclusive) return;
-    if (_bass.BASS_ChannelIsActive(output) != bass.BASS_ACTIVE_STOPPED) {
-      return;
-    }
+    final state = _bass.BASS_ChannelIsActive(output);
+    if (!shouldRestartStoppedMixer(state)) return;
     if (_bass.BASS_ChannelStart(output) == 0) {
       logger.w(
-        '[bass] resuming ended mixer failed: ${_bass.BASS_ErrorGetCode()}',
+        '[bass] resuming mixer after transition failed: '
+        '${_bass.BASS_ErrorGetCode()}',
       );
+      return;
     }
+    logger.i('[bass] resumed mixer after transition');
   }
 
   bool _isOutputActive() {
@@ -2771,6 +2832,7 @@ class BassPlayer {
     int durationMs = 100,
     bool delayCleanup = false,
     bool removeFromMixer = false,
+    int? transitionGeneration,
   }) {
     final sliding = _bass.BASS_ChannelSlideAttribute(
       handle,
@@ -2787,35 +2849,69 @@ class BassPlayer {
     // 清理上一条未释放的旧流
     _fadeOutTimer?.cancel();
     if (_fadeOutHandle != null && _fadeOutHandle != handle) {
-      if (_fadeOutRemoveFromMixer) {
-        _bassMix?.channelRemove(_fadeOutHandle!);
-      }
-      _bass.BASS_ChannelStop(_fadeOutHandle!);
-      _bass.BASS_StreamFree(_fadeOutHandle!);
+      final previous = _fadeOutHandle!;
+      final previousRemove = _fadeOutRemoveFromMixer;
+      _fadeOutHandle = null;
+      _fadeOutRemoveFromMixer = false;
+      _discardFadedSource(previous, removeFromMixer: previousRemove);
     }
     _fadeOutHandle = handle;
     _fadeOutRemoveFromMixer = removeFromMixer;
 
     _fadeOutTimer = Timer(Duration(milliseconds: durationMs + 20), () {
-      if (_fadeOutHandle == handle) {
-        if (_fadeOutRemoveFromMixer) {
-          _bassMix?.channelRemove(handle);
-        }
-        _bass.BASS_ChannelStop(handle);
-        _bass.BASS_StreamFree(handle);
-        _fadeOutHandle = null;
-        _fadeOutRemoveFromMixer = false;
-        _fadeOutTimer = null;
-      }
+      if (_fadeOutHandle != handle) return;
+      _fadeOutHandle = null;
+      _fadeOutRemoveFromMixer = false;
+      _fadeOutTimer = null;
+      _discardFadedSource(
+        handle,
+        removeFromMixer: removeFromMixer,
+        completeTransition: true,
+        transitionGeneration: transitionGeneration,
+      );
     });
+  }
+
+  /// 淡出结束后拆掉旧源。旧源被拆掉时如果新源还没出声，
+  /// BASS_MIXER_END 会把整路输出停掉，这里把混音器拉起来。
+  /// 过渡被取消且这首仍在播时不能拆，否则会把当前歌释放掉。
+  void _discardFadedSource(
+    int handle, {
+    required bool removeFromMixer,
+    bool completeTransition = false,
+    int? transitionGeneration,
+  }) {
+    final stillLive = !shouldReleaseFadedSource(
+      handle: handle,
+      currentHandle: _fstream,
+      queuedHandle: _queuedStream,
+    );
+    if (shouldKeepLiveFadedSource(
+      stillLive: stillLive,
+      scheduledGeneration: transitionGeneration,
+      currentGeneration: _transitionGeneration,
+    )) {
+      _bass.BASS_ChannelSetAttribute(handle, bass.BASS_ATTRIB_VOL, 1.0);
+      return;
+    }
+    if (removeFromMixer) {
+      _bassMix?.channelRemove(handle);
+    }
+    _bass.BASS_ChannelStop(handle);
+    _bass.BASS_StreamFree(handle);
+    _resumeOutputIfNeeded();
+    if (completeTransition && removeFromMixer && _isOutputActive()) {
+      _markTransitionOutputHealthy();
+    }
   }
 
   /// Crossfade: 淡入新流 - 从静音滑到正常播放音量（手动切歌防爆音用，固定短时长）
   void _fadeInNewStream(int handle, {int durationMs = 200}) {
-    if (_bass.BASS_ChannelSetAttribute(handle, bass.BASS_ATTRIB_VOL, 0.0) ==
-        bass.FALSE) {
+    if (durationMs <= 0) {
+      _bass.BASS_ChannelSetAttribute(handle, bass.BASS_ATTRIB_VOL, 1.0);
       return;
     }
+    _bass.BASS_ChannelSetAttribute(handle, bass.BASS_ATTRIB_VOL, 0.0);
     final sliding = _bass.BASS_ChannelSlideAttribute(
       handle,
       bass.BASS_ATTRIB_VOL,
