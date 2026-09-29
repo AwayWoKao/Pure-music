@@ -17,9 +17,11 @@ import 'package:pure_music/core/settings.dart';
 import 'package:pure_music/core/utils.dart';
 import 'package:pure_music/library/audio_library.dart';
 import 'package:pure_music/lyric/lrc_serializer.dart';
-import 'package:pure_music/native/rust/api/tag_reader.dart' as rust_tag_reader;
+import 'package:pure_music/native/rust/api/tag_reader.dart'
+    as rust_tag_reader;
 import 'package:pure_music/native/rust/api/utils.dart';
 import 'package:pure_music/page/audio_detail_cover.dart';
+import 'package:pure_music/page/audio_detail_metadata_cache.dart';
 import 'package:pure_music/play_service/play_service.dart';
 import 'package:pure_music/play_service/taskbar_thumbnail_service.dart';
 import 'package:pure_music/services/online_lyric/api/net_lyric_api.dart'
@@ -37,34 +39,50 @@ String _formatBytes(int bytes) {
   return '${size.toStringAsFixed(size >= 10 ? 1 : 2)} ${units[unitIndex]}';
 }
 
-final Map<String, Future<rust_tag_reader.AudioExtraMetadata>> _audioExtraCache =
-    {};
+final _audioExtraCache = AudioDetailMetadataCache(
+  loader: (audio) => rust_tag_reader.readAudioExtraMetadata(path: audio.path),
+);
 
-void _clearAudioExtraCache() {
-  _audioExtraCache.clear();
-}
+rust_tag_reader.AudioExtraMetadata _emptyAudioExtraMetadata() =>
+    rust_tag_reader.AudioExtraMetadata(
+      extension_: '',
+      fileSize: BigInt.zero,
+      channels: null,
+      bitDepth: null,
+      items: [],
+      replaygainTrackGain: null,
+      replaygainTrackPeak: null,
+      replaygainAlbumGain: null,
+      replaygainAlbumPeak: null,
+    );
 
-Future<rust_tag_reader.AudioExtraMetadata> _getAudioExtra(Audio audio) {
-  final key = '${audio.path}|${audio.modified}';
-  final existing = _audioExtraCache[key];
-  if (existing != null) return existing;
-  final future = rust_tag_reader
-      .readAudioExtraMetadata(path: audio.path)
-      .catchError(
-        (_) => rust_tag_reader.AudioExtraMetadata(
-          extension_: '',
-          fileSize: BigInt.zero,
-          channels: null,
-          bitDepth: null,
-          items: [],
-          replaygainTrackGain: null,
-          replaygainTrackPeak: null,
-          replaygainAlbumGain: null,
-          replaygainAlbumPeak: null,
-        ),
-      );
-  _audioExtraCache[key] = future;
-  return future;
+Future<rust_tag_reader.AudioExtraMetadata> _getAudioExtra(Audio audio) =>
+    _audioExtraCache.get(audio).catchError((_) => _emptyAudioExtraMetadata());
+
+class AudioDetailPageSurface extends StatelessWidget {
+  const AudioDetailPageSurface({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return ListenableBuilder(
+      listenable: AppSettings.backgroundNotifier,
+      builder: (context, _) {
+        final useAppBackground =
+            AppSettings.instance.appBackgroundImagePath != null ||
+            AppSettings.instance.appWindowTransparent;
+        return ColoredBox(
+          key: const ValueKey('audio-detail-page-surface'),
+          color: useAppBackground
+              ? Colors.transparent
+              : scheme.surfaceContainer,
+          child: child,
+        );
+      },
+    );
+  }
 }
 
 String? _findItem(List<rust_tag_reader.AudioExtraItem> items, String key) {
@@ -175,6 +193,7 @@ class _AudioDetailPageState extends State<AudioDetailPage> {
   int _currentTabIndex = 0;
   Future<String?>? _lyricFuture;
   int _coverRevision = 0;
+  int _editRequestToken = 0;
   // 编辑模式下的封面预览字节（null = 无变化，空列表 = 移除封面）
   Uint8List? _pendingCoverBytes;
 
@@ -188,6 +207,7 @@ class _AudioDetailPageState extends State<AudioDetailPage> {
 
   @override
   void dispose() {
+    _editRequestToken++;
     MouseBackExit.unregister(_exitEditOnBack);
     _controllers.dispose();
     super.dispose();
@@ -239,13 +259,19 @@ class _AudioDetailPageState extends State<AudioDetailPage> {
   }
 
   Future<void> _enterEditMode() async {
-    final meta = await _getAudioExtra(audio);
-    _controllers.initFrom(audio, meta.items);
-    setState(() {
-      _isEditing = true;
-      _pendingCoverBytes = null;
-    });
-    MouseBackExit.register(_exitEditOnBack);
+    final requestToken = ++_editRequestToken;
+    await applyAudioDetailMetadataIfMounted(
+      future: _getAudioExtra(audio),
+      isMounted: () => mounted && requestToken == _editRequestToken,
+      apply: (meta) {
+        _controllers.initFrom(audio, meta.items);
+        setState(() {
+          _isEditing = true;
+          _pendingCoverBytes = null;
+        });
+        MouseBackExit.register(_exitEditOnBack);
+      },
+    );
   }
 
   bool _exitEditOnBack() {
@@ -255,6 +281,7 @@ class _AudioDetailPageState extends State<AudioDetailPage> {
   }
 
   void _cancelEdit() {
+    _editRequestToken++;
     MouseBackExit.unregister(_exitEditOnBack);
     setState(() {
       _isEditing = false;
@@ -289,7 +316,7 @@ class _AudioDetailPageState extends State<AudioDetailPage> {
         payload: payload,
         onlyChanged: true,
       );
-      _clearAudioExtraCache();
+      _audioExtraCache.evict(audio);
       AudioLibrary.instance.updateAudioTags(
         audio,
         title: _controllers.title.text,
@@ -322,20 +349,22 @@ class _AudioDetailPageState extends State<AudioDetailPage> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
 
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 0),
-          child: _buildTabBar(scheme),
-        ),
-        const SizedBox(height: 16.0),
-        Expanded(
-          child: DirectionalTabView(
-            index: _currentTabIndex,
-            children: [_buildInfoTab(scheme), _buildLyricTab(scheme)],
+    return AudioDetailPageSurface(
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 0),
+            child: _buildTabBar(scheme),
           ),
-        ),
-      ],
+          const SizedBox(height: 16.0),
+          Expanded(
+            child: DirectionalTabView(
+              index: _currentTabIndex,
+              children: [_buildInfoTab(scheme), _buildLyricTab(scheme)],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
