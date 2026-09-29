@@ -18,6 +18,7 @@ import 'package:pure_music/core/utils.dart';
 import 'package:pure_music/play_service/play_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
+import 'package:pure_music/library/library_page_snapshot_coordinator.dart';
 
 String _audioPathLookupKey(String value) {
   var normalized = value.trim().replaceAll('\\', '/');
@@ -256,20 +257,6 @@ class _LibraryInstallMetrics {
   final int pagePreparationMilliseconds;
 }
 
-class _PageOrderCacheSpec {
-  const _PageOrderCacheSpec({
-    required this.sourcePath,
-    required this.cachePath,
-    required this.sourceSignature,
-    required this.context,
-  });
-
-  final String sourcePath;
-  final String cachePath;
-  final LibraryPageSourceSignature sourceSignature;
-  final String context;
-}
-
 /// from index.json
 class AudioLibrary {
   static const int _pageSnapshotMaterializeBatchSize = 8192;
@@ -326,9 +313,8 @@ class AudioLibrary {
   int? _secondaryPagePreparationGeneration;
   Future<void>? _audioPagePreparation;
   int? _audioPagePreparationGeneration;
-  Future<void>? _pageOrderCacheWrite;
-  int _pageOrderCacheWriteRequest = 0;
-  _PageOrderCacheSpec? _activePageOrderCacheSpec;
+  late final LibraryPageSnapshotCoordinator _pageSnapshotCoordinator =
+      LibraryPageSnapshotCoordinator(contextProvider: _pageOrderCacheContext);
   List<AudioFolder>? _aggregatedRootFoldersCache;
   List<AudioFolder>? _aggregatedRootFoldersSource;
   int _aggregatedRootFoldersSourceLength = -1;
@@ -366,7 +352,6 @@ class AudioLibrary {
         sourcePath: pageCacheSourcePath,
         cachePath: pageCachePath,
       );
-      instance._activePageOrderCacheSpec = cacheSpec;
       final restored = cacheSpec == null
           ? (audios: false, artists: false, albums: false)
           : await instance._restorePreferredPageSnapshots(cacheSpec);
@@ -617,7 +602,7 @@ class AudioLibrary {
     _preparedAudiosPage = null;
     _preparedArtistsPage = null;
     _preparedAlbumsPage = null;
-    _activePageOrderCacheSpec = null;
+    _pageSnapshotCoordinator.reset();
     final generation = _collectionGeneration;
     for (final artist in artistCollection.values) {
       artist.works.clear();
@@ -793,17 +778,13 @@ class AudioLibrary {
     });
   }
 
-  Future<_PageOrderCacheSpec?> _resolvePageOrderCacheSpec({
+  Future<LibraryPageOrderCacheSpec?> _resolvePageOrderCacheSpec({
     required String sourcePath,
     required String cachePath,
-  }) async {
-    final signature = await LibraryPageOrderCache.sourceSignature(sourcePath);
-    if (signature == null) return null;
-    return _PageOrderCacheSpec(
+  }) {
+    return _pageSnapshotCoordinator.resolve(
       sourcePath: sourcePath,
       cachePath: cachePath,
-      sourceSignature: signature,
-      context: _pageOrderCacheContext(),
     );
   }
 
@@ -843,13 +824,11 @@ class AudioLibrary {
   }
 
   Future<({bool audios, bool artists, bool albums})>
-  _restorePreferredPageSnapshots(_PageOrderCacheSpec spec) async {
+  _restorePreferredPageSnapshots(LibraryPageOrderCacheSpec spec) async {
     final stopwatch = Stopwatch()..start();
     final generation = _collectionGeneration;
-    final cached = await LibraryPageOrderCache.read(
-      cachePath: spec.cachePath,
-      sourceSignature: spec.sourceSignature,
-      context: spec.context,
+    final cached = await _pageSnapshotCoordinator.read(
+      spec: spec,
       audioCount: audioCollection.length,
       artistCount: artistCollection.length,
       albumCount: albumCollection.length,
@@ -943,7 +922,6 @@ class AudioLibrary {
       sourcePath: sourcePath,
       cachePath: cachePath,
     );
-    _activePageOrderCacheSpec = spec;
     final restored = spec == null
         ? (audios: false, artists: false, albums: false)
         : await _restorePreferredPageSnapshots(spec);
@@ -958,7 +936,7 @@ class AudioLibrary {
 
   Future<void> _preparePagesForLoad({
     required bool initialLoad,
-    required _PageOrderCacheSpec? cacheSpec,
+    required LibraryPageOrderCacheSpec? cacheSpec,
     required bool restoredAll,
   }) async {
     final protectPlayback = PlayService.hasInitializedPlaybackSession;
@@ -982,15 +960,12 @@ class AudioLibrary {
   }
 
   Future<void> waitForPreferredPageOrderCacheWrite() async {
-    while (true) {
-      final pending = _pageOrderCacheWrite;
-      if (pending == null) return;
-      await pending;
-      if (identical(_pageOrderCacheWrite, pending)) return;
-    }
+    await _pageSnapshotCoordinator.waitForWrite();
   }
 
-  Future<void> _prepareSecondaryPagesAndCache(_PageOrderCacheSpec? spec) async {
+  Future<void> _prepareSecondaryPagesAndCache(
+    LibraryPageOrderCacheSpec? spec,
+  ) async {
     final generation = _collectionGeneration;
     try {
       final delay = deferredSecondaryPagePreparationDelayFor(
@@ -1015,81 +990,60 @@ class AudioLibrary {
     }
   }
 
-  void _schedulePageOrderCacheWrite(_PageOrderCacheSpec spec) {
-    final generation = _collectionGeneration;
-    final request = ++_pageOrderCacheWriteRequest;
-    final previous = _pageOrderCacheWrite;
-    late final Future<void> future;
-    future = () async {
-      await Future<void>.delayed(Duration.zero);
-      try {
-        if (previous != null) await previous;
-        bool isCurrentRequest() =>
-            request == _pageOrderCacheWriteRequest &&
-            generation == _collectionGeneration;
-        if (!isCurrentRequest() || spec.context != _pageOrderCacheContext()) {
-          return;
-        }
-        final sourceSignature = await LibraryPageOrderCache.sourceSignature(
-          spec.sourcePath,
-        );
-        if (!isCurrentRequest() || sourceSignature != spec.sourceSignature) {
-          return;
-        }
-        final audios = preparedAudiosPage;
-        final artists = preparedArtistsPage;
-        final albums = preparedAlbumsPage;
-        if (audios == null || artists == null || albums == null) return;
-        final audioIndexes = await _pageIndexes(
-          audios.items,
-          (audio) => audio._libraryIndex,
-          isCurrentRequest,
-        );
-        if (audioIndexes == null) return;
-        final artistIndexes = await _pageIndexes(
-          artists.items,
-          (artist) => artist._libraryIndex,
-          isCurrentRequest,
-        );
-        if (artistIndexes == null) return;
-        final albumIndexes = await _pageIndexes(
-          albums.items,
-          (album) => album._libraryIndex,
-          isCurrentRequest,
-        );
-        if (albumIndexes == null) return;
-        final orders = LibraryPageOrders(
-          sourceSignature: spec.sourceSignature,
-          context: spec.context,
-          audios: PageOrderSnapshot(
-            sortMethod: audios.sortMethod,
-            sortOrderIndex: audios.sortOrder.index,
-            indexes: audioIndexes,
-          ),
-          artists: PageOrderSnapshot(
-            sortMethod: artists.sortMethod,
-            sortOrderIndex: artists.sortOrder.index,
-            indexes: artistIndexes,
-          ),
-          albums: PageOrderSnapshot(
-            sortMethod: albums.sortMethod,
-            sortOrderIndex: albums.sortOrder.index,
-            indexes: albumIndexes,
-          ),
-        );
-        await LibraryPageOrderCache.write(
-          cachePath: spec.cachePath,
-          orders: orders,
-        );
-      } catch (error, trace) {
-        logger.w('页面顺序缓存写入失败', error: error, stackTrace: trace);
-      } finally {
-        if (identical(_pageOrderCacheWrite, future)) {
-          _pageOrderCacheWrite = null;
-        }
-      }
-    }();
-    _pageOrderCacheWrite = future;
+  void _schedulePageOrderCacheWrite(LibraryPageOrderCacheSpec spec) {
+    _pageSnapshotCoordinator.scheduleWrite(
+      spec: spec,
+      generation: _collectionGeneration,
+      isGenerationCurrent: (generation) => generation == _collectionGeneration,
+      buildOrders: (isCurrent) => _buildPageOrderCacheOrders(spec, isCurrent),
+    );
+  }
+
+  Future<LibraryPageOrders?> _buildPageOrderCacheOrders(
+    LibraryPageOrderCacheSpec spec,
+    bool Function() isCurrent,
+  ) async {
+    final audios = preparedAudiosPage;
+    final artists = preparedArtistsPage;
+    final albums = preparedAlbumsPage;
+    if (audios == null || artists == null || albums == null) return null;
+    final audioIndexes = await _pageIndexes(
+      audios.items,
+      (audio) => audio._libraryIndex,
+      isCurrent,
+    );
+    if (audioIndexes == null) return null;
+    final artistIndexes = await _pageIndexes(
+      artists.items,
+      (artist) => artist._libraryIndex,
+      isCurrent,
+    );
+    if (artistIndexes == null) return null;
+    final albumIndexes = await _pageIndexes(
+      albums.items,
+      (album) => album._libraryIndex,
+      isCurrent,
+    );
+    if (albumIndexes == null) return null;
+    return LibraryPageOrders(
+      sourceSignature: spec.sourceSignature,
+      context: spec.context,
+      audios: PageOrderSnapshot(
+        sortMethod: audios.sortMethod,
+        sortOrderIndex: audios.sortOrder.index,
+        indexes: audioIndexes,
+      ),
+      artists: PageOrderSnapshot(
+        sortMethod: artists.sortMethod,
+        sortOrderIndex: artists.sortOrder.index,
+        indexes: artistIndexes,
+      ),
+      albums: PageOrderSnapshot(
+        sortMethod: albums.sortMethod,
+        sortOrderIndex: albums.sortOrder.index,
+        indexes: albumIndexes,
+      ),
+    );
   }
 
   Future<Uint32List?> _pageIndexes<T>(
@@ -1235,7 +1189,7 @@ class AudioLibrary {
     } else {
       return;
     }
-    final cacheSpec = _activePageOrderCacheSpec;
+    final cacheSpec = _pageSnapshotCoordinator.activeSpec;
     if (cacheSpec != null) {
       _schedulePageOrderCacheWrite(cacheSpec);
     }
@@ -1573,6 +1527,7 @@ class AudioLibrary {
     }
 
     var collectionsChanged = includedRefreshedFolders.length != folders.length;
+    var pageOrderChanged = false;
     final mergedFolders = <AudioFolder>[];
     Map<String, Audio>? fallbackAudios;
     var fallbackAudiosBuilt = false;
@@ -1659,6 +1614,15 @@ class AudioLibrary {
           final collectionMetadataMatches = existing._collectionMetadataMatches(
             refreshedAudio,
           );
+          final pageOrderFieldsMatch =
+              existing.title == refreshedAudio.title &&
+              existing.artist == refreshedAudio.artist &&
+              existing.album == refreshedAudio.album &&
+              existing.created == refreshedAudio.created &&
+              existing.modified == refreshedAudio.modified;
+          if (!pageOrderFieldsMatch) {
+            pageOrderChanged = true;
+          }
           if (!sameAudioSlot || !collectionMetadataMatches) {
             collectionsChanged = true;
           }
@@ -1700,7 +1664,7 @@ class AudioLibrary {
       _audioByPath.addAll(fallbackAudios!);
     }
     folders = mergedFolders;
-    if (collectionsChanged) {
+    if (collectionsChanged || pageOrderChanged) {
       _buildCollections();
     } else {
       logger.i(
@@ -1851,7 +1815,7 @@ class AudioLibrary {
     _preparedAudiosPage = null;
     _preparedArtistsPage = null;
     _preparedAlbumsPage = null;
-    _activePageOrderCacheSpec = null;
+    _pageSnapshotCoordinator.reset();
     trimCollectionThumbnailRetention(0);
     _smallCoverOrder.clear();
     _coverCachePaths.clear();

@@ -341,6 +341,77 @@ void main() {
     expect(library.preparedAudiosPage, isNull);
   });
 
+  test('metadata-only refresh invalidates stale audio page order', () async {
+    final library = AudioLibrary.instance;
+    final first = Audio(
+      'A',
+      'Artist',
+      'Album',
+      null,
+      1,
+      60,
+      320,
+      44100,
+      r'C:\Music\a.mp3',
+      1,
+      1,
+      'test',
+    );
+    final second = Audio(
+      'B',
+      'Artist',
+      'Album',
+      null,
+      2,
+      60,
+      320,
+      44100,
+      r'C:\Music\b.mp3',
+      2,
+      2,
+      'test',
+    );
+    library.replaceFolders([
+      AudioFolder([first, second], r'C:\Music', 1, 1),
+    ]);
+    await library.preparePreferredAudioPageSnapshot();
+    expect(library.preparedAudiosPage!.items, [first, second]);
+
+    final refreshedFirst = Audio(
+      'Z',
+      'Artist',
+      'Album',
+      null,
+      1,
+      60,
+      320,
+      44100,
+      first.path,
+      1,
+      1,
+      'test',
+    );
+    final refreshedSecond = Audio(
+      second.title,
+      second.artist,
+      second.album,
+      null,
+      second.track,
+      second.duration,
+      second.bitrate,
+      second.sampleRate,
+      second.path,
+      second.modified,
+      second.created,
+      second.by,
+    );
+    library.replaceFolders([
+      AudioFolder([refreshedFirst, refreshedSecond], r'C:\Music', 1, 1),
+    ]);
+
+    expect(library.preparedAudiosPage, isNull);
+  });
+
   test(
     'page snapshots keep the preference captured when work starts',
     () async {
