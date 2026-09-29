@@ -38,4 +38,19 @@ void main() {
 
     expect(result, r'C:\Users\listener\AppData\Local\pure_music');
   });
+
+  test('portable data has a user-writable fallback candidate', () {
+    final result = appDataPathCandidates(
+      usePortableData: true,
+      executablePath: r'C:\Program Files\Pure Music\pure_music.exe',
+      environment: const {
+        'LOCALAPPDATA': r'C:\Users\listener\AppData\Local',
+      },
+    );
+
+    expect(result, [
+      r'C:\Program Files\Pure Music\data',
+      r'C:\Users\listener\AppData\Local\pure_music',
+    ]);
+  });
 }

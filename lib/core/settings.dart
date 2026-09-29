@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:pure_music/core/hotkey_binding.dart';
 import 'package:pure_music/core/setting_action_state.dart';
+import 'package:pure_music/core/settings/settings_decoder.dart';
+import 'package:pure_music/core/settings/settings_types.dart';
 import 'package:pure_music/native/rust/api/system_theme.dart';
 import 'package:pure_music/core/enums.dart';
 import 'package:pure_music/core/utils.dart';
@@ -12,6 +14,9 @@ import 'package:flutter/material.dart';
 import 'package:github/github.dart';
 import 'package:path/path.dart' as path;
 import 'package:window_manager/window_manager.dart';
+
+export 'settings/settings_decoder.dart';
+export 'settings/settings_types.dart';
 
 const bool portableBuild = bool.fromEnvironment(
   'PORTABLE_BUILD',
@@ -50,14 +55,69 @@ String resolveAppDataPath({
   throw StateError('Unable to determine app data directory');
 }
 
-Future<Directory> getAppDataDir() async {
-  final exe = Platform.resolvedExecutable;
-  final resolvedPath = resolveAppDataPath(
+List<String> appDataPathCandidates({
+  required bool usePortableData,
+  required String executablePath,
+  required Map<String, String> environment,
+}) {
+  final preferred = resolveAppDataPath(
+    usePortableData: usePortableData,
+    executablePath: executablePath,
+    environment: environment,
+  );
+  final fallback = resolveAppDataPath(
+    usePortableData: false,
+    executablePath: executablePath,
+    environment: environment,
+  );
+  return [
+    preferred,
+    if (path.normalize(preferred).toLowerCase() !=
+        path.normalize(fallback).toLowerCase())
+      fallback,
+  ];
+}
+
+Future<Directory>? _appDataDirectoryFuture;
+
+Future<Directory> getAppDataDir() {
+  return _appDataDirectoryFuture ??= _resolveAppDataDir();
+}
+
+Future<Directory> _resolveAppDataDir() async {
+  final executable = Platform.resolvedExecutable;
+  final candidates = appDataPathCandidates(
     usePortableData: portableBuild,
-    executablePath: exe,
+    executablePath: executable,
     environment: Platform.environment,
   );
-  return Directory(resolvedPath).create(recursive: true);
+  Object? lastError;
+  for (final candidate in candidates) {
+    try {
+      final directory = await Directory(candidate).create(recursive: true);
+      await _verifyWritableDirectory(directory);
+      return directory;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw StateError('Unable to create writable app data directory: $lastError');
+}
+
+Future<void> _verifyWritableDirectory(Directory directory) async {
+  final probe = File(
+    path.join(
+      directory.path,
+      '.pure_music_write_test_${pid}_${DateTime.now().microsecondsSinceEpoch}',
+    ),
+  );
+  try {
+    await probe.writeAsBytes(const <int>[], flush: true);
+  } finally {
+    try {
+      if (await probe.exists()) await probe.delete();
+    } catch (_) {}
+  }
 }
 
 Future<Directory> getSettingsDir() async {
@@ -130,106 +190,6 @@ Future<Directory> getCacheDir() async {
 Future<Directory> getDbDir() async {
   final root = await getAppDataDir();
   return Directory(path.join(root.path, 'db')).create(recursive: true);
-}
-
-/// 歌词显示模式（控制是否使用逐字歌词）
-enum LyricDisplayMode {
-  lineByLine, // 逐行歌词（标准LRC格式）
-  wordByWord, // 逐字歌词（带逐字时间戳）
-  plain, // 旧名兼容
-  enhanced, // 旧名兼容
-}
-
-enum ThemeOption { system, light, dark }
-
-enum ThemeColorMode { material3, independent }
-
-enum WindowCloseBehavior { exit, minimizeToTray }
-
-Set<NowPlayingMode> defaultWavyBarEnabledModes() => {};
-
-ThemeOption normalizedThemeOption(Object? value) {
-  final index = normalizedEnumIndex(
-    value,
-    length: ThemeOption.values.length,
-    defaultIndex: -1,
-  );
-  if (index >= 0) return ThemeOption.values[index];
-
-  final name = normalizedSettingEnumName(value);
-  for (final option in ThemeOption.values) {
-    if (option.name == name) return option;
-  }
-  return ThemeOption.system;
-}
-
-ThemeColorMode normalizedThemeColorMode(Object? value) {
-  final index = normalizedEnumIndex(
-    value,
-    length: ThemeColorMode.values.length,
-    defaultIndex: -1,
-  );
-  if (index >= 0) return ThemeColorMode.values[index];
-
-  return switch (normalizedSettingEnumName(value)) {
-    'seed' || 'material3' => ThemeColorMode.material3,
-    'monochrome' || 'independent' => ThemeColorMode.independent,
-    _ => ThemeColorMode.material3,
-  };
-}
-
-Set<NowPlayingMode> normalizedWavyBarEnabledModes(Object? value) {
-  if (value is String) {
-    final mode = NowPlayingMode.fromStoredValue(value);
-    return mode == null ? defaultWavyBarEnabledModes() : {mode};
-  }
-  if (value is! List) return defaultWavyBarEnabledModes();
-  if (value.isEmpty) return {};
-  final modes = NowPlayingMode.fromList(value);
-  return modes.isEmpty ? defaultWavyBarEnabledModes() : modes;
-}
-
-String? normalizedSettingEnumName(Object? value) {
-  final normalized = normalizedStringSetting(value)?.toLowerCase();
-  if (normalized == null) return null;
-  final separator = normalized.lastIndexOf('.');
-  return separator < 0 ? normalized : normalized.substring(separator + 1);
-}
-
-String? normalizedPathSetting(Object? value) {
-  final normalized = normalizedStringSetting(value);
-  if (normalized == null) return null;
-  final uri = Uri.tryParse(normalized);
-  if (uri != null && uri.scheme.toLowerCase() == 'file') {
-    final host = uri.host.toLowerCase();
-    if ((host.isEmpty || host == 'localhost') && uri.path == '/') return null;
-    if (host == 'localhost') {
-      return uri.replace(host: '').toFilePath(windows: true);
-    }
-    return uri.toFilePath(windows: true);
-  }
-  return normalized;
-}
-
-T? normalizedSettingEnumValue<T extends Enum>(
-  Object? value,
-  List<T> values, {
-  T? fallback,
-}) {
-  final index = normalizedEnumIndex(
-    value,
-    length: values.length,
-    defaultIndex: -1,
-  );
-  if (index >= 0) return values[index];
-
-  final name = normalizedSettingEnumName(value);
-  if (name != null) {
-    for (final option in values) {
-      if (option.name.toLowerCase() == name) return option;
-    }
-  }
-  return fallback;
 }
 
 class RebuildNotifier extends ChangeNotifier {
