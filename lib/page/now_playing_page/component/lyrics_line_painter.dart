@@ -19,6 +19,41 @@ const lyricBackgroundVocalEntryDuration = Duration(milliseconds: 400);
 const _bgEntryDuration = 400.0;
 const lyricBackgroundVocalExitDuration = Duration(milliseconds: 400);
 
+bool lyricLineHasBackgroundVocal(LyricLine line) {
+  if (line is! SyncLyricLine) return false;
+  return line.bgWords.isNotEmpty ||
+      line.bgText?.isNotEmpty == true ||
+      line.bgTranslation?.isNotEmpty == true ||
+      line.bg != null;
+}
+
+double lyricBackgroundExitVisibility(double elapsedMs) {
+  final progress = (elapsedMs / lyricBackgroundVocalExitDuration.inMilliseconds)
+      .clamp(0.0, 1.0);
+  return 1.0 - Curves.easeInCubic.transform(progress);
+}
+
+double lyricBackgroundHeightFactor({
+  required double currentTimeMs,
+  required double startMs,
+  required double endMs,
+  required bool isMainLine,
+  bool isBackgroundActive = false,
+  bool? isBackgroundVisible,
+  double? exitVisibility,
+}) {
+  if (exitVisibility != null) return exitVisibility.clamp(0.0, 1.0);
+  if ((!isMainLine && !isBackgroundActive) ||
+      endMs <= startMs ||
+      currentTimeMs < startMs ||
+      currentTimeMs >= endMs) {
+    return 0.0;
+  }
+  return Curves.easeOutBack.transform(
+    ((currentTimeMs - startMs) / _bgEntryDuration).clamp(0.0, 1.0),
+  );
+}
+
 double lyricExitLift(double lastLift, double floatProgress) {
   if (lastLift == 0) return 0;
   final t = floatProgress.clamp(0.0, 1.0);
@@ -35,7 +70,9 @@ double lyricHighlightTimeMs({
   required double lineStartMs,
   required double lastWordEndMs,
   required double? deadlineMs,
+  bool usesAuthoredTiming = false,
 }) {
+  if (usesAuthoredTiming) return currentTimeMs;
   if (deadlineMs == null || deadlineMs <= lineStartMs) return currentTimeMs;
   if (lastWordEndMs < deadlineMs - lyricHighlightFinishLeadMs ||
       currentTimeMs < deadlineMs - lyricHighlightCatchUpDurationMs) {
@@ -107,16 +144,64 @@ Alignment lyricLineScaleAlignment(LyricTextAlign align) {
 
 enum LyricWordEffect { none, scale, scaleAndGlow }
 
+bool _isCjkSungSyllable(String grapheme) {
+  if (grapheme.isEmpty) return false;
+  final rune = grapheme.runes.first;
+  return (rune >= 0x3400 && rune <= 0x9FFF) ||
+      (rune >= 0xF900 && rune <= 0xFAFF) ||
+      (rune >= 0x3040 && rune <= 0x30FF) ||
+      (rune >= 0x31F0 && rune <= 0x31FF) ||
+      (rune >= 0xAC00 && rune <= 0xD7AF);
+}
+
+bool _isLatinLetter(String grapheme) {
+  if (grapheme.isEmpty) return false;
+  final rune = grapheme.runes.first;
+  return (rune >= 0x41 && rune <= 0x5A) ||
+      (rune >= 0x61 && rune <= 0x7A) ||
+      (rune >= 0xC0 && rune <= 0x024F);
+}
+
+bool _continuesLatinWord(String grapheme) {
+  return grapheme == "'" || grapheme == '’' || grapheme == '-';
+}
+
+/// 汉字、假名、谚文各算一个演唱单位，连续拉丁字母算一个。
+int lyricSungUnitCount(String content) {
+  var units = 0;
+  var inLatin = false;
+  for (final char in content.characters) {
+    if (_isCjkSungSyllable(char)) {
+      if (inLatin) {
+        units++;
+        inLatin = false;
+      }
+      units++;
+    } else if (_isLatinLetter(char) || (inLatin && _continuesLatinWord(char))) {
+      inLatin = true;
+    } else if (inLatin) {
+      units++;
+      inLatin = false;
+    }
+  }
+  if (inLatin) units++;
+  return units;
+}
+
 LyricWordEffect lyricWordEffect({
   required Duration duration,
   required Duration lineMedianDuration,
   required bool isLineEnding,
+  int sungUnitCount = 1,
 }) {
   const scaleFloor = Duration(milliseconds: 750);
   const scaleThreshold = Duration(milliseconds: 950);
   const glowFloor = Duration(milliseconds: 1200);
   const glowThreshold = Duration(milliseconds: 1600);
   if (duration <= Duration.zero) return LyricWordEffect.none;
+
+  // 行尾时间戳会把整句收成一个词。辉光缩放只作用于单个字或单个拉丁词。
+  if (sungUnitCount > 1) return LyricWordEffect.none;
 
   final medianMicros = lineMedianDuration.inMicroseconds;
   final relativeDuration = medianMicros > 0
@@ -398,13 +483,16 @@ class LyricsLinePainter extends CustomPainter {
   // 快捷访问器，避免大面积修改 paint 逻辑
   LyricLine get line => params.line;
   double get currentTimeMs => params.currentTimeMs;
-  ValueListenable<double>? get currentTimeListenable => params.currentTimeListenable;
+  ValueListenable<double>? get currentTimeListenable =>
+      params.currentTimeListenable;
   ValueListenable<double>? get backgroundVocalVisibilityListenable =>
       params.backgroundVocalVisibilityListenable;
   double get blurSigma => params.blurSigma;
   LyricRenderConfig get config => params.config;
   bool get isMainLine => params.isMainLine;
   bool get isHighlightActive => params.isHighlightActive;
+  bool get isMainVocalActive => params.isMainVocalActive ?? isHighlightActive;
+  bool get isBackgroundActive => params.isBackgroundActive;
   bool get accelerateTailHighlight => params.accelerateTailHighlight;
   bool get useMaterialYouColor => params.useMaterialYouColor;
   String? get fontFamily => params.fontFamily;
@@ -412,7 +500,8 @@ class LyricsLinePainter extends CustomPainter {
   double get opacity => params.opacity;
   double? get highlightDeadlineMs => params.highlightDeadlineMs;
   Duration get lineMedianWordDuration => params.lineMedianWordDuration;
-  ValueListenable<double>? get liftDecayListenable => params.liftDecayListenable;
+  ValueListenable<double>? get liftDecayListenable =>
+      params.liftDecayListenable;
 
   // 多声部时按 agent 强制对齐：v1 左对齐，v2 右对齐
   LyricTextAlign get _effectiveTextAlign {
@@ -601,25 +690,18 @@ class LyricsLinePainter extends CustomPainter {
   }
 
   double _bgHeightFactor(SyncLyricLine syncLine) {
-    final visibility = backgroundVocalVisibilityListenable?.value;
-    if (visibility != null) return visibility.clamp(0.0, 1.0).toDouble();
-    if (!isMainLine) return 0.0;
-    final currentTimeMs = _effectiveCurrentTimeMs;
     final start = (syncLine.bgStart ?? syncLine.bg?.start ?? syncLine.start)
         .inMilliseconds
         .toDouble();
-    final end = _bgEndMs(syncLine);
-    if (end <= start) return 0.0;
-
-    if (currentTimeMs < start) return 0.0;
-
-    if (currentTimeMs < start + _bgEntryDuration) {
-      // 进入：从 0 到 1，带弹性
-      final t = ((currentTimeMs - start) / _bgEntryDuration).clamp(0.0, 1.0);
-      return Curves.easeOutBack.transform(t);
-    }
-
-    return 1.0;
+    return lyricBackgroundHeightFactor(
+      currentTimeMs: _effectiveCurrentTimeMs,
+      startMs: start,
+      endMs: _bgEndMs(syncLine),
+      isMainLine: isMainLine,
+      isBackgroundActive: isBackgroundActive,
+      isBackgroundVisible: params.isBackgroundVisible,
+      exitVisibility: backgroundVocalVisibilityListenable?.value,
+    );
   }
 
   double _bgEndMs(SyncLyricLine syncLine) {
@@ -636,14 +718,6 @@ class LyricsLinePainter extends CustomPainter {
       if (lastEnd > end) end = lastEnd;
     }
     return end;
-  }
-
-  bool _isBgInActiveWindow(SyncLyricLine syncLine) {
-    final hasBg = syncLine.bgText != null && syncLine.bgText!.isNotEmpty;
-    final hasBgTranslation =
-        syncLine.bgTranslation != null && syncLine.bgTranslation!.isNotEmpty;
-    if (!hasBg && !hasBgTranslation && syncLine.bgWords.isEmpty) return false;
-    return _bgHeightFactor(syncLine) > 0.001;
   }
 
   static TextPainter obtainTextPainter() {
@@ -702,6 +776,7 @@ class LyricsLinePainter extends CustomPainter {
         ),
         lineMedianDuration: lineMedianWordDuration,
         isLineEnding: wordIndex == syncLine.words.length - 1,
+        sungUnitCount: lyricSungUnitCount(syncLine.words[wordIndex].content),
       );
     }
 
@@ -947,9 +1022,9 @@ class LyricsLinePainter extends CustomPainter {
 
           final liftProgress = _calcLiftProgress(charProgress, wordProgress);
           final double yLift;
-          if (isHighlightActive && config.liftStyle == LyricLiftStyle.cosine) {
+          if (isMainVocalActive && config.liftStyle == LyricLiftStyle.cosine) {
             yLift = 0.0;
-          } else if (isHighlightActive && liftProgress > 0.0) {
+          } else if (isMainVocalActive && liftProgress > 0.0) {
             final elapsedMs = currentTimeMs - wordStartMs;
             final durationProgress = (elapsedMs / config.liftDurationMs)
                 .clamp(0.0, 1.0)
@@ -1049,7 +1124,7 @@ class LyricsLinePainter extends CustomPainter {
       }
     }
 
-    if (!isHighlightActive) {
+    if (!isMainVocalActive) {
       _applyExitCharLifts(charInfos);
     }
 
@@ -1364,7 +1439,7 @@ class LyricsLinePainter extends CustomPainter {
       );
 
       // ── Cosine lift recomputation (needs final X + highlightR) ──
-      if (config.liftStyle == LyricLiftStyle.cosine && isHighlightActive) {
+      if (config.liftStyle == LyricLiftStyle.cosine && isMainVocalActive) {
         for (final wc in words) {
           for (final info in wc.chars) {
             info.yLift = _calcCosineLift(
@@ -1439,7 +1514,7 @@ class LyricsLinePainter extends CustomPainter {
       }
     }
 
-    if (isHighlightActive) {
+    if (isMainVocalActive) {
       _captureCharLifts(charInfos);
     }
 
@@ -1554,7 +1629,7 @@ class LyricsLinePainter extends CustomPainter {
           final clipBottom =
               bgBlockTop +
               (size.height - bgBlockTop).clamp(0.0, double.infinity) *
-                  visibility;
+                  (params.usesAuthoredTiming ? 1.0 : visibility);
           canvas.clipRect(Rect.fromLTRB(0.0, 0.0, size.width, clipBottom));
         }
         // 高度由 _bgHeightFactor 在 measureHeight 中控制，画布自然 clip
@@ -1588,14 +1663,13 @@ class LyricsLinePainter extends CustomPainter {
           paintBgSecondaryTrack(track);
         }
 
-        if (hasBgWords && isMainLine) {
+        if (hasBgWords &&
+            (isMainLine ||
+                isBackgroundActive ||
+                params.isBackgroundVisible != null)) {
           cursorY += bgFontSize * 0.45;
           final bgWordY = cursorY;
-          final currentMs = _highlightTimeMs(
-            syncLine,
-            syncLine.bgWords,
-            _effectiveCurrentTimeMs,
-          );
+          final currentMs = _effectiveCurrentTimeMs;
           final bgWordWidths = <double>[];
           double bgTotalWidth = 0.0;
           final bgWordGap = bgFontSize * 0.12;
@@ -2163,6 +2237,7 @@ class LyricsLinePainter extends CustomPainter {
       lineStartMs: syncLine.start.inMilliseconds.toDouble(),
       lastWordEndMs: lastWordEnd,
       deadlineMs: deadlineMs,
+      usesAuthoredTiming: params.usesAuthoredTiming,
     );
   }
 
@@ -2244,6 +2319,59 @@ class LyricsLinePainter extends CustomPainter {
     for (var i = 0; i < n; i++) {
       charInfos[i].yLift = lyricExitLift(last[i], progress);
     }
+  }
+
+  /// 背景人声完整预留高度：只看内容，不随播放进度变化。
+  double _measureBackgroundVocalHeight(
+    SyncLyricLine syncLine,
+    double lineWidth,
+    double fontSize,
+  ) {
+    final bgFontSize = fontSize * 0.60;
+    final bgWeight = config.discreteFontWeight(
+      (config.fontWeight - 150).clamp(100, 900),
+    );
+    final gap = bgFontSize * 0.80; // top + between gaps approx
+    var bgHeight = 0.0;
+    if (syncLine.bgText != null && syncLine.bgText!.isNotEmpty) {
+      final bgTp = _buildTextPainter(
+        syncLine.bgText!,
+        scheme.onSurface,
+        bgFontSize,
+        bgWeight,
+        config.letterSpacing(fontSize: bgFontSize),
+      );
+      bgTp.layout(maxWidth: lineWidth);
+      bgHeight += gap + bgTp.height;
+      recycleTextPainter(bgTp);
+    }
+    final bgRomanLyric = syncLine.bg?.romanLyric;
+    if (config.showRoman && bgRomanLyric != null && bgRomanLyric.isNotEmpty) {
+      final bgRomanTp = _buildTextPainter(
+        bgRomanLyric,
+        scheme.onSurface,
+        bgFontSize * 0.85,
+        bgWeight,
+        config.letterSpacing(fontSize: bgFontSize * 0.85),
+      );
+      bgRomanTp.layout(maxWidth: lineWidth);
+      bgHeight += bgFontSize * 0.45 + bgRomanTp.height;
+      recycleTextPainter(bgRomanTp);
+    }
+    if (syncLine.bgTranslation != null &&
+        syncLine.bgTranslation!.isNotEmpty) {
+      final bgTransTp = _buildTextPainter(
+        syncLine.bgTranslation!,
+        scheme.onSurface,
+        bgFontSize * 0.90,
+        bgWeight,
+        config.letterSpacing(fontSize: bgFontSize * 0.90),
+      );
+      bgTransTp.layout(maxWidth: lineWidth);
+      bgHeight += bgFontSize * 0.45 + bgTransTp.height;
+      recycleTextPainter(bgTransTp);
+    }
+    return bgHeight;
   }
 
   double measureHeight(
@@ -2454,55 +2582,10 @@ class LyricsLinePainter extends CustomPainter {
         }
       }
 
-      // BG 离场后只保留绘制，不再占用布局高度。
-      if (reserveBackgroundVocalHeight && _isBgInActiveWindow(syncLine)) {
-        final bgFontSize = fontSize * 0.60;
-        final bgWeight = config.discreteFontWeight(
-          (config.fontWeight - 150).clamp(100, 900),
-        );
-        final gap = bgFontSize * 0.80; // top + between gaps approx
-        var bgHeight = 0.0;
-        if (syncLine.bgText != null && syncLine.bgText!.isNotEmpty) {
-          final bgTp = _buildTextPainter(
-            syncLine.bgText!,
-            scheme.onSurface,
-            bgFontSize,
-            bgWeight,
-            config.letterSpacing(fontSize: bgFontSize),
-          );
-          bgTp.layout(maxWidth: lineWidth);
-          bgHeight += gap + bgTp.height;
-          recycleTextPainter(bgTp);
-        }
-        final bgRomanLyric = syncLine.bg?.romanLyric;
-        if (config.showRoman &&
-            bgRomanLyric != null &&
-            bgRomanLyric.isNotEmpty) {
-          final bgRomanTp = _buildTextPainter(
-            bgRomanLyric,
-            scheme.onSurface,
-            bgFontSize * 0.85,
-            bgWeight,
-            config.letterSpacing(fontSize: bgFontSize * 0.85),
-          );
-          bgRomanTp.layout(maxWidth: lineWidth);
-          bgHeight += bgFontSize * 0.45 + bgRomanTp.height;
-          recycleTextPainter(bgRomanTp);
-        }
-        if (syncLine.bgTranslation != null &&
-            syncLine.bgTranslation!.isNotEmpty) {
-          final bgTransTp = _buildTextPainter(
-            syncLine.bgTranslation!,
-            scheme.onSurface,
-            bgFontSize * 0.90,
-            bgWeight,
-            config.letterSpacing(fontSize: bgFontSize * 0.90),
-          );
-          bgTransTp.layout(maxWidth: lineWidth);
-          bgHeight += bgFontSize * 0.45 + bgTransTp.height;
-          recycleTextPainter(bgTransTp);
-        }
-        height += bgHeight * _bgHeightFactor(syncLine);
+      // BG 高度按完整内容一次性预留，播放进度只控制绘制透明度。
+      if (reserveBackgroundVocalHeight &&
+          lyricLineHasBackgroundVocal(syncLine)) {
+        height += _measureBackgroundVocalHeight(syncLine, lineWidth, fontSize);
       }
 
       return height;

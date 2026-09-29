@@ -85,6 +85,64 @@ void main() {
   });
 
   group('lyricNextAdvanceBoundaryMs', () {
+    test('overlapping lines wake at their actual start after pre-switch', () {
+      expect(
+        lyricNextAdvanceBoundaryMs(
+          posMs: 2680,
+          nextLyricLine: 2,
+          lineSwitchStartMs: const [0, 2680, 7000],
+          lineRenderStartMs: const [0, 3000, 7320],
+          lineEndMs: const [6000, 6500, 9000],
+        ),
+        3000,
+      );
+    });
+
+    test('parallel lines retain their pre-entry boundary', () {
+      expect(
+        lyricNextAdvanceBoundaryMs(
+          posMs: 2500,
+          nextLyricLine: 1,
+          lineSwitchStartMs: const [0, 3000],
+          lineRenderStartMs: const [0, 3000],
+          lineEndMs: const [6000, 5000],
+        ),
+        2680,
+      );
+    });
+
+    test('the final line still wakes at its actual start', () {
+      expect(
+        lyricNextAdvanceBoundaryMs(
+          posMs: 2680,
+          nextLyricLine: 2,
+          lineSwitchStartMs: const [0, 2680],
+          lineRenderStartMs: const [0, 3000],
+          lineEndMs: const [6000, 5000],
+        ),
+        3000,
+      );
+    });
+
+    test('overlap endings remain scheduled after the final switch', () {
+      for (final (position, expected) in <(int, int?)>[
+        (3000, 5000),
+        (5000, 6000),
+        (6000, null),
+      ]) {
+        expect(
+          lyricNextAdvanceBoundaryMs(
+            posMs: position,
+            nextLyricLine: 2,
+            lineSwitchStartMs: const [0, 2680],
+            lineRenderStartMs: const [0, 3000],
+            lineEndMs: const [6000, 5000],
+          ),
+          expected,
+        );
+      }
+    });
+
     test('catches up an overdue line instead of jumping to a future start', () {
       expect(
         lyricNextAdvanceBoundaryMs(

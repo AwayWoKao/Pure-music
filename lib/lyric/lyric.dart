@@ -93,32 +93,53 @@ class SyncLyricWord {
   final Duration start;
   Duration length;
   String content;
+  bool hasExplicitEnd;
   bool obscene;
   bool isMerged;
   int? emptyBeat; // amll:empty-beat 空拍标记
   List<RubyTag>? ruby; // tts:ruby 注音
 
-  SyncLyricWord(this.start, this.length, this.content)
-    : obscene = false,
-      isMerged = false,
-      emptyBeat = null,
-      ruby = null;
+  SyncLyricWord(
+    this.start,
+    this.length,
+    this.content, {
+    this.hasExplicitEnd = false,
+  }) : obscene = false,
+       isMerged = false,
+       emptyBeat = null,
+       ruby = null;
 }
 
 class LyricLineUpdate {
   final int primaryIndex;
   final List<int> activeIndices;
+  final List<int> mainActiveIndices;
+  final List<int> backgroundActiveIndices;
   final List<int> layoutIndices;
   final int? positionMs;
+  final Lyric? sourceLyric;
+  final int? generation;
+  final bool usesAuthoredTiming;
 
   const LyricLineUpdate({
     required this.primaryIndex,
-    required this.activeIndices,
+    List<int>? activeIndices,
+    List<int>? mainActiveIndices,
+    this.backgroundActiveIndices = const [],
     List<int>? layoutIndices,
     this.positionMs,
-  }) : layoutIndices = layoutIndices ?? activeIndices;
+    this.sourceLyric,
+    this.generation,
+    this.usesAuthoredTiming = false,
+  }) : activeIndices = activeIndices ?? mainActiveIndices ?? const [],
+       mainActiveIndices = mainActiveIndices ?? activeIndices ?? const [],
+       layoutIndices =
+           layoutIndices ?? activeIndices ?? mainActiveIndices ?? const [];
 
   bool isActive(int lineIndex) => activeIndices.contains(lineIndex);
+  bool isMainActive(int lineIndex) => mainActiveIndices.contains(lineIndex);
+  bool isBackgroundActive(int lineIndex) =>
+      backgroundActiveIndices.contains(lineIndex);
 }
 
 class UnsyncLyricLine extends LyricLine {

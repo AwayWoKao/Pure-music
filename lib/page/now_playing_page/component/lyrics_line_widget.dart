@@ -30,7 +30,12 @@ class LyricsLineWidget extends StatefulWidget {
     required this.opacity,
     this.distance,
     this.positionMs,
+    this.positionListenable,
     this.isHighlightActive = false,
+    this.isMainVocalActive,
+    this.isBackgroundActive = false,
+    this.isBackgroundVisible,
+    this.usesAuthoredTiming = false,
     this.accelerateTailHighlight = false,
     this.lineOffsetY = 0.0,
     this.lineOffsetProgressListenable,
@@ -49,7 +54,12 @@ class LyricsLineWidget extends StatefulWidget {
   final double opacity;
   final int? distance;
   final double? positionMs;
+  final ValueListenable<double>? positionListenable;
   final bool isHighlightActive;
+  final bool? isMainVocalActive;
+  final bool isBackgroundActive;
+  final bool? isBackgroundVisible;
+  final bool usesAuthoredTiming;
   final bool accelerateTailHighlight;
   final double lineOffsetY;
   final ValueListenable<double>? lineOffsetProgressListenable;
@@ -91,6 +101,7 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
 
   late final AnimationController _scaleController;
   late final AnimationController _floatController;
+  late final Listenable _visualTransformListenable;
 
   // 缓存 Painter，避免每帧重建
   LyricsLinePainter? _cachedPainter;
@@ -102,26 +113,10 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
   final ValueNotifier<double> _heightNotifier = ValueNotifier(0.0);
   double? _frozenHeight;
   double? _departingPaintHeight;
-  double _lastBgHeightUpdateMs = -1e9;
-  double _lastBackgroundVocalHeightFactor = -1.0;
 
   void _clearHeightCache() {
     _cachedLineHeight = null;
     _heightCacheKey = null;
-  }
-
-  void _applyMeasuredHeight(double measuredHeight) {
-    if (widget.freezeHeight) {
-      _frozenHeight ??= measuredHeight;
-      if ((_frozenHeight! - _heightNotifier.value).abs() > 0.01) {
-        _cachedLineHeight = _frozenHeight;
-        _heightNotifier.value = _frozenHeight!;
-      }
-      return;
-    }
-    if ((measuredHeight - _heightNotifier.value).abs() <= 0.01) return;
-    _cachedLineHeight = measuredHeight;
-    _heightNotifier.value = measuredHeight;
   }
 
   Duration _lineMedianWordDuration(LyricLine line) {
@@ -163,35 +158,18 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
         ? _config.mainLineScale * _config.activeLineScaleMultiplier
         : _config.subLineScale * _config.inactiveLineScaleMultiplier;
     _floatController = AnimationController.unbounded(vsync: this);
-    _floatController.value = widget.distance == 0 ? 1.0 : 0.0;
-    widget.backgroundVocalVisibilityListenable?.addListener(
-      _updateBackgroundVocalHeight,
-    );
+    _floatController.value = _mainHighlightFor(widget) ? 1.0 : 0.0;
+    _visualTransformListenable = Listenable.merge([
+      _scaleController,
+      _floatController,
+    ]);
     _playerStateListener = _syncProgressTicker;
-    PlayService.instance.playbackService.playerStateNotifier.addListener(
-      _playerStateListener,
-    );
+    if (widget.positionListenable == null) {
+      PlayService.instance.playbackService.playerStateNotifier.addListener(
+        _playerStateListener,
+      );
+    }
     _syncProgressTicker();
-  }
-
-  void _updateBackgroundVocalHeight() {
-    if (!widget.reserveBackgroundVocalHeight) return;
-    if (!mounted ||
-        _cachedPainter == null ||
-        _heightCacheKey == null ||
-        _heightCacheKey!.lineWidth <= 0) {
-      return;
-    }
-    final factor = widget.backgroundVocalVisibilityListenable?.value;
-    if (factor != null) {
-      if ((factor - _lastBackgroundVocalHeightFactor).abs() <= 0.002) return;
-      _lastBackgroundVocalHeightFactor = factor;
-    }
-    final height = _cachedPainter!.measureHeight(
-      _heightCacheKey!.lineWidth,
-      reserveBackgroundVocalHeight: true,
-    );
-    _applyMeasuredHeight(height);
   }
 
   void _animateScale() {
@@ -217,7 +195,7 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
   }
 
   void _animateFloat() {
-    final target = widget.distance == 0 ? 1.0 : 0.0;
+    final target = _mainHighlightFor(widget) ? 1.0 : 0.0;
     // 不在这里提前返回，让动画有机会完成
     final style = context.read<LyricViewController>().renderConfig.staggerStyle;
     if (style == LyricStaggerStyle.smooth) {
@@ -243,11 +221,22 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
   DateTime? _tickerHoldUntil;
   Timer? _tickerHoldTimer;
 
+  bool _mainHighlightFor(LyricsLineWidget target) {
+    return target.usesAuthoredTiming
+        ? target.isMainVocalActive ?? target.isHighlightActive
+        : target.distance == 0 || target.isHighlightActive;
+  }
+
   bool _hasBaseProgressTickerFor(LyricsLineWidget target) {
-    return (target.distance == 0 || target.isHighlightActive) &&
-        target.line is SyncLyricLine &&
-        (target.line as SyncLyricLine).words.isNotEmpty &&
-        _config.displayMode == LyricDisplayMode.wordByWord;
+    if (!_mainHighlightFor(target) && !target.isBackgroundActive) {
+      return false;
+    }
+    if (target.line is! SyncLyricLine ||
+        _config.displayMode != LyricDisplayMode.wordByWord) {
+      return false;
+    }
+    final line = target.line as SyncLyricLine;
+    return line.words.isNotEmpty || line.bgWords.isNotEmpty;
   }
 
   bool get _needsProgressTicker {
@@ -274,6 +263,10 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
   }
 
   void _syncProgressTicker() {
+    if (widget.positionListenable != null) {
+      _ticker?.stop();
+      return;
+    }
     final hasBaseProgressTicker = _hasBaseProgressTickerFor(widget);
     if (hasBaseProgressTicker) {
       _tickerHoldTimer?.cancel();
@@ -342,21 +335,6 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
         fromMs <= bgStart + lyricBackgroundVocalEntryDuration.inMilliseconds;
   }
 
-  double _backgroundVocalHeightFactor(
-    SyncLyricLine line,
-    double currentTimeMs,
-  ) {
-    final start = (line.bgStart ?? line.bg?.start ?? line.start).inMilliseconds
-        .toDouble();
-    if (currentTimeMs < start) return 0.0;
-    final progress =
-        ((currentTimeMs - start) /
-                lyricBackgroundVocalEntryDuration.inMilliseconds)
-            .clamp(0.0, 1.0)
-            .toDouble();
-    return Curves.easeOutBack.transform(progress);
-  }
-
   double _targetOpacity() {
     final dist = (widget.distance ?? 0).abs();
     if (dist == 0) return 1.0;
@@ -375,7 +353,12 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
         elapsed - _lastNativeSyncElapsed >= _nativePositionSyncInterval;
     final rawMs = shouldSyncNative
         ? _readNativePositionMs()
-        : _currentTimeMs + elapsedDelta.inMicroseconds / 1000.0;
+        : _currentTimeMs +
+              elapsedDelta.inMicroseconds /
+                  1000.0 *
+                  (widget.usesAuthoredTiming
+                      ? PlayService.instance.playbackService.rate.value
+                      : 1.0);
     if (shouldSyncNative) {
       _lastNativeSyncElapsed = elapsed;
     }
@@ -438,50 +421,9 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
       if (_currentTimeNotifier.value != _currentTimeMs) {
         _currentTimeNotifier.value = _currentTimeMs;
       }
-      if (syncLine.bg != null || (syncLine.bgText?.isNotEmpty == true)) {
-        final bgStart =
-            (syncLine.bgStart ?? syncLine.bg?.start ?? syncLine.start)
-                .inMilliseconds
-                .toDouble();
-        final bgEnd = _bgEndMs(syncLine);
-        if (_currentTimeMs >= bgStart - 400 && _currentTimeMs < bgEnd + 5000) {
-          final factor = _backgroundVocalHeightFactor(syncLine, _currentTimeMs);
-          if ((factor - _lastBackgroundVocalHeightFactor).abs() > 0.002 &&
-              (_currentTimeMs - _lastBgHeightUpdateMs).abs() > 8) {
-            _lastBgHeightUpdateMs = _currentTimeMs;
-            _lastBackgroundVocalHeightFactor = factor;
-            if (widget.reserveBackgroundVocalHeight &&
-                _cachedPainter != null &&
-                _heightCacheKey != null &&
-                _heightCacheKey!.lineWidth > 0) {
-              final h = _cachedPainter!.measureHeight(
-                _heightCacheKey!.lineWidth,
-                reserveBackgroundVocalHeight: true,
-              );
-              _applyMeasuredHeight(h);
-            }
-          }
-        }
-      }
     } else if (_currentTimeNotifier.value != _currentTimeMs) {
       _currentTimeNotifier.value = _currentTimeMs;
     }
-  }
-
-  double _bgEndMs(SyncLyricLine syncLine) {
-    var end =
-        (syncLine.bgEnd ??
-                syncLine.bg?.end ??
-                (syncLine.start + syncLine.length))
-            .inMilliseconds
-            .toDouble();
-    if (syncLine.bgWords.isNotEmpty) {
-      final last = syncLine.bgWords.last;
-      final lastEnd = (last.start.inMilliseconds + last.length.inMilliseconds)
-          .toDouble();
-      if (lastEnd > end) end = lastEnd;
-    }
-    return end;
   }
 
   @override
@@ -496,37 +438,48 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
       _setCurrentTimeMs(widget.positionMs!);
     }
 
-    if (widget.backgroundVocalVisibilityListenable != null &&
+    if (widget.positionListenable != oldWidget.positionListenable) {
+      if (oldWidget.positionListenable == null) {
+        PlayService.instance.playbackService.playerStateNotifier.removeListener(
+          _playerStateListener,
+        );
+      } else if (widget.positionListenable == null) {
+        PlayService.instance.playbackService.playerStateNotifier.addListener(
+          _playerStateListener,
+        );
+      }
+      _syncProgressTicker();
+    }
+
+    if (!widget.usesAuthoredTiming &&
+        widget.backgroundVocalVisibilityListenable != null &&
         oldWidget.backgroundVocalVisibilityListenable == null &&
         _heightNotifier.value > 0) {
       _departingPaintHeight = _heightNotifier.value;
-    } else if (widget.backgroundVocalVisibilityListenable == null) {
+    } else if (widget.usesAuthoredTiming ||
+        widget.backgroundVocalVisibilityListenable == null) {
       _departingPaintHeight = null;
     }
 
     if (widget.freezeHeight && !oldWidget.freezeHeight) {
-      if (widget.distance == 0) {
-        _frozenHeight = null;
-      } else if (_cachedPainter != null &&
-          _heightCacheKey != null &&
-          _heightCacheKey!.lineWidth > 0) {
-        _frozenHeight = _cachedPainter!.measureHeight(
-          _heightCacheKey!.lineWidth,
-          reserveBackgroundVocalHeight: widget.reserveBackgroundVocalHeight,
-        );
-      } else if (_heightNotifier.value > 0) {
-        _frozenHeight = _heightNotifier.value;
-      }
+      // 只冻结已经算出的完整高度，不重新测量半成品
+      _frozenHeight = widget.distance == 0 || _heightNotifier.value <= 0
+          ? null
+          : _heightNotifier.value;
     } else if (!widget.freezeHeight) {
       _frozenHeight = null;
     }
 
     final isActive = widget.distance == 0;
     final wasActive = oldWidget.distance == 0;
-    final isHighlightActive = isActive || widget.isHighlightActive;
-    final wasHighlightActive = wasActive || oldWidget.isHighlightActive;
+    final isHighlightActive = _mainHighlightFor(widget);
+    final wasHighlightActive = _mainHighlightFor(oldWidget);
+    if (widget.usesAuthoredTiming && isHighlightActive != wasHighlightActive) {
+      _animateFloat();
+    }
 
     if (isHighlightActive != wasHighlightActive ||
+        widget.isBackgroundActive != oldWidget.isBackgroundActive ||
         widget.line != oldWidget.line) {
       if (_hasBaseProgressTickerFor(oldWidget) &&
           !_hasBaseProgressTickerFor(widget)) {
@@ -537,20 +490,10 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
 
     if (isActive != wasActive) {
       _animateScale();
-      _animateFloat();
+      if (!widget.usesAuthoredTiming) _animateFloat();
       _cachedPainter = null;
       _clearHeightCache();
       if (isActive) _frozenHeight = null;
-    }
-
-    if (widget.backgroundVocalVisibilityListenable !=
-        oldWidget.backgroundVocalVisibilityListenable) {
-      oldWidget.backgroundVocalVisibilityListenable?.removeListener(
-        _updateBackgroundVocalHeight,
-      );
-      widget.backgroundVocalVisibilityListenable?.addListener(
-        _updateBackgroundVocalHeight,
-      );
     }
 
     final oldKeepAlive = (oldWidget.distance ?? 999).abs() <= 2;
@@ -566,22 +509,20 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
       _frozenHeight = null;
       _pendingSeekMs = null;
       _pendingSeekAt = null;
-      _lastBackgroundVocalHeightFactor = -1.0;
     }
   }
 
   @override
   void dispose() {
-    PlayService.instance.playbackService.playerStateNotifier.removeListener(
-      _playerStateListener,
-    );
+    if (widget.positionListenable == null) {
+      PlayService.instance.playbackService.playerStateNotifier.removeListener(
+        _playerStateListener,
+      );
+    }
     _ticker?.dispose();
     _tickerHoldTimer?.cancel();
     _scaleController.dispose();
     _floatController.dispose();
-    widget.backgroundVocalVisibilityListenable?.removeListener(
-      _updateBackgroundVocalHeight,
-    );
     _currentTimeNotifier.dispose();
     _heightNotifier.dispose();
     _cachedPainter = null;
@@ -595,7 +536,10 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
 
     final dist = (widget.distance ?? 0).abs();
     final isCurrentLine = widget.distance == 0;
-    final isHighlightActive = isCurrentLine || widget.isHighlightActive;
+    final isMainVocalActive = _mainHighlightFor(widget);
+    final isHighlightActive = widget.usesAuthoredTiming
+        ? widget.isHighlightActive
+        : isMainVocalActive;
 
     final renderConfig = context.watch<LyricViewController>().renderConfig;
 
@@ -635,6 +579,7 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
             ? LyricTransitionTile(
                 key: ValueKey(widget.line),
                 syncLine: widget.line as SyncLyricLine,
+                positionMs: _currentTimeMs,
                 alignment: effectiveTextAlign,
                 useMaterialYouColor:
                     AppSettings.instance.useMaterialYouForTransition,
@@ -705,9 +650,9 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
                     : null;
                 final useMaterialYouColor =
                     AppSettings.instance.useMaterialYouForLyrics;
-                final currentTimeListenable = _needsProgressTicker
-                    ? _currentTimeNotifier
-                    : null;
+                final currentTimeListenable =
+                    widget.positionListenable ??
+                    (_needsProgressTicker ? _currentTimeNotifier : null);
                 final backgroundVocalVisibilityListenable =
                     widget.backgroundVocalVisibilityListenable;
                 final lineMedianWordDuration = _lineMedianWordDuration(
@@ -724,6 +669,12 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
                   config: renderConfig,
                   isMainLine: isCurrentLine,
                   isHighlightActive: isHighlightActive,
+                  isMainVocalActive: widget.usesAuthoredTiming
+                      ? isMainVocalActive
+                      : null,
+                  isBackgroundActive: widget.isBackgroundActive,
+                  isBackgroundVisible: widget.isBackgroundVisible,
+                  usesAuthoredTiming: widget.usesAuthoredTiming,
                   accelerateTailHighlight: widget.accelerateTailHighlight,
                   useMaterialYouColor: useMaterialYouColor,
                   opacity: animatedOpacity,
@@ -731,7 +682,7 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
                   agent: agent,
                   highlightDeadlineMs: widget.highlightDeadlineMs,
                   lineMedianWordDuration: lineMedianWordDuration,
-                  liftDecayListenable: isHighlightActive
+                  liftDecayListenable: isMainVocalActive
                       ? null
                       : _floatController,
                 );
@@ -806,22 +757,21 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
     );
 
     inner = AnimatedBuilder(
-      animation: _scaleController,
+      animation: _visualTransformListenable,
       builder: (context, child) {
-        return Transform.scale(
-          scale: _scaleController.value,
+        final transform = Matrix4.identity()
+          ..translateByDouble(0.0, _floatController.value * -4.0, 0.0, 1.0)
+          ..scaleByDouble(
+            _scaleController.value,
+            _scaleController.value,
+            _scaleController.value,
+            1.0,
+          );
+        return Transform(
+          transform: transform,
           alignment: layoutScaleAlignment,
           child: child!,
         );
-      },
-      child: inner,
-    );
-
-    inner = AnimatedBuilder(
-      animation: _floatController,
-      builder: (context, child) {
-        final offsetY = _floatController.value * -4.0;
-        return Transform.translate(offset: Offset(0, offsetY), child: child!);
       },
       child: inner,
     );

@@ -4,6 +4,60 @@ import 'package:pure_music/core/enums.dart';
 import 'package:pure_music/page/now_playing_page/component/lyrics_line_painter.dart';
 
 void main() {
+  test('authored highlight time ignores layout deadlines and catch-up', () {
+    for (final time in [309000.0, 309581.0, 309582.0, 310550.0]) {
+      expect(
+        lyricHighlightTimeMs(
+          currentTimeMs: time,
+          lineStartMs: 305755,
+          lastWordEndMs: 309582,
+          deadlineMs: 309300,
+          usesAuthoredTiming: true,
+        ),
+        time,
+      );
+    }
+  });
+
+  test('background visibility follows its authored time window', () {
+    for (final time in [14301.0, 14400.0]) {
+      expect(
+        lyricBackgroundHeightFactor(
+          currentTimeMs: time,
+          startMs: 14457,
+          endMs: 15143,
+          isMainLine: true,
+        ),
+        0.0,
+      );
+    }
+    expect(
+      lyricBackgroundHeightFactor(
+        currentTimeMs: 14800,
+        startMs: 14457,
+        endMs: 15143,
+        isMainLine: true,
+      ),
+      greaterThan(0.0),
+    );
+    expect(
+      lyricBackgroundHeightFactor(
+        currentTimeMs: 15253,
+        startMs: 14457,
+        endMs: 15143,
+        isMainLine: true,
+      ),
+      0.0,
+    );
+  });
+
+  test('each background exit finishes using its own elapsed time', () {
+    expect(lyricBackgroundExitVisibility(0), 1.0);
+    expect(lyricBackgroundExitVisibility(400), 0.0);
+    expect(lyricBackgroundExitVisibility(250), greaterThan(0.0));
+    expect(lyricBackgroundExitVisibility(500), 0.0);
+  });
+
   group('lyricHighlightTimeMs', () {
     test('keeps the final lyric line on its authored timing', () {
       expect(
@@ -118,6 +172,35 @@ void main() {
           duration: const Duration(milliseconds: 1200),
           lineMedianDuration: const Duration(milliseconds: 600),
           isLineEnding: true,
+        ),
+        LyricWordEffect.scaleAndGlow,
+      );
+    });
+
+    test('keeps a line-timed sentence from glowing as one long note', () {
+      expect(lyricSungUnitCount('每次上机 都幻想'), 7);
+      expect(lyricSungUnitCount('再捕捉捕捉恋爱定格'), 9);
+      expect(lyricSungUnitCount('Cream cheese点缀我吗'), 6);
+      expect(lyricSungUnitCount("can't"), 1);
+      expect(
+        lyricWordEffect(
+          duration: const Duration(milliseconds: 18920),
+          lineMedianDuration: const Duration(milliseconds: 18920),
+          isLineEnding: true,
+          sungUnitCount: lyricSungUnitCount('再捕捉捕捉恋爱定格'),
+        ),
+        LyricWordEffect.none,
+      );
+    });
+
+    test('still glows one sustained syllable', () {
+      expect(lyricSungUnitCount('啊'), 1);
+      expect(
+        lyricWordEffect(
+          duration: const Duration(milliseconds: 2400),
+          lineMedianDuration: const Duration(milliseconds: 400),
+          isLineEnding: false,
+          sungUnitCount: 1,
         ),
         LyricWordEffect.scaleAndGlow,
       );
@@ -319,11 +402,20 @@ void main() {
   });
 
   group('lyricLineScaleAlignment', () {
-    test('scales a wrapped line from the top so the second visual line stays put', () {
-      expect(lyricLineScaleAlignment(LyricTextAlign.left), Alignment.topLeft);
-      expect(lyricLineScaleAlignment(LyricTextAlign.center), Alignment.topCenter);
-      expect(lyricLineScaleAlignment(LyricTextAlign.right), Alignment.topRight);
-    });
+    test(
+      'scales a wrapped line from the top so the second visual line stays put',
+      () {
+        expect(lyricLineScaleAlignment(LyricTextAlign.left), Alignment.topLeft);
+        expect(
+          lyricLineScaleAlignment(LyricTextAlign.center),
+          Alignment.topCenter,
+        );
+        expect(
+          lyricLineScaleAlignment(LyricTextAlign.right),
+          Alignment.topRight,
+        );
+      },
+    );
   });
 
   group('lyricExitLift', () {

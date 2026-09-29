@@ -5,6 +5,99 @@ import 'package:pure_music/page/now_playing_page/component/vertical_lyric_view.d
 import 'package:pure_music/play_service/lyric_service.dart';
 
 void main() {
+  test(
+    'authored snapshots can keep an earlier anchor without losing updates',
+    () {
+      const update = LyricLineUpdate(
+        primaryIndex: 0,
+        mainActiveIndices: [2],
+        backgroundActiveIndices: [0],
+        layoutIndices: [0, 2],
+        positionMs: 318000,
+        generation: 4,
+        usesAuthoredTiming: true,
+      );
+      expect(
+        lyricLineUpdateQueueAfterEnqueue(
+          queued: const [],
+          update: update,
+          currentIndex: 2,
+          isPlaying: true,
+          currentPositionMs: 317900,
+          currentGeneration: 4,
+        ),
+        [update],
+      );
+      expect(
+        shouldApplyPlaybackLyricResync(
+          currentIndex: 2,
+          resyncIndex: 0,
+          isPlaying: true,
+          usesAuthoredTiming: true,
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'authored snapshots replace backlog and reject old seek generations',
+    () {
+      const previous = LyricLineUpdate(
+        primaryIndex: 0,
+        mainActiveIndices: [0],
+        positionMs: 1000,
+        generation: 2,
+        usesAuthoredTiming: true,
+      );
+      const latest = LyricLineUpdate(
+        primaryIndex: 3,
+        mainActiveIndices: [3, 4],
+        positionMs: 9000,
+        generation: 2,
+        usesAuthoredTiming: true,
+      );
+      final queue = lyricLineUpdateQueueAfterEnqueue(
+        queued: const [previous],
+        update: latest,
+        currentIndex: 0,
+        isPlaying: true,
+        currentPositionMs: 1000,
+        currentGeneration: 2,
+      );
+      expect(queue, [latest]);
+      expect(
+        lyricLineUpdateQueueAfterEnqueue(
+          queued: queue,
+          update: previous,
+          currentIndex: 3,
+          isPlaying: true,
+          currentPositionMs: 9000,
+          currentGeneration: 3,
+        ),
+        queue,
+      );
+      const seek = LyricLineUpdate(
+        primaryIndex: 0,
+        mainActiveIndices: [0],
+        positionMs: 1000,
+        generation: 3,
+        usesAuthoredTiming: true,
+      );
+      expect(
+        lyricLineUpdateQueueAfterEnqueue(
+          queued: queue,
+          update: seek,
+          currentIndex: 3,
+          isPlaying: true,
+          currentPositionMs: 9000,
+          currentGeneration: 2,
+        ),
+        [seek],
+      );
+    },
+  );
+
   group('initial lyric scroll completion', () {
     bool finished({
       bool hasContentDimensions = true,

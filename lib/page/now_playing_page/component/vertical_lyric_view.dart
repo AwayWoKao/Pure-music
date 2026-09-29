@@ -11,6 +11,7 @@ import 'package:pure_music/core/route_visibility.dart';
 import 'package:pure_music/core/window_render_gate.dart';
 import 'package:pure_music/lyric/lrc.dart';
 import 'package:pure_music/lyric/lyric.dart';
+import 'package:pure_music/lyric/ttml.dart';
 import 'package:pure_music/native/bass/bass_player.dart' show PlayerState;
 import 'package:pure_music/page/now_playing_page/component/collapsible_lyric_controls.dart';
 import 'package:pure_music/page/now_playing_page/component/lyric_stagger_motion.dart';
@@ -39,7 +40,6 @@ const _shaderFadeInWithoutBlur = 0.05;
 const _shaderFadeOutWithBlur = 0.80;
 const _shaderFadeOutWithoutBlur = 0.95;
 const _lyricOffsetCacheCapacity = 6;
-const _backgroundVocalStaggerHold = Duration(milliseconds: 600);
 
 bool alwaysShowLyricViewControls = false;
 
@@ -141,7 +141,9 @@ bool shouldApplyPlaybackLyricResync({
   required int currentIndex,
   required int resyncIndex,
   required bool isPlaying,
+  bool usesAuthoredTiming = false,
 }) {
+  if (usesAuthoredTiming) return true;
   if (resyncIndex == currentIndex) return true;
   if (!isPlaying) return true;
   if (resyncIndex < currentIndex) return false;
@@ -164,8 +166,34 @@ List<LyricLineUpdate> lyricLineUpdateQueueAfterEnqueue({
   required LyricLineUpdate update,
   required int currentIndex,
   required bool isPlaying,
+  int? currentPositionMs,
+  int? currentGeneration,
 }) {
   final next = List<LyricLineUpdate>.of(queued);
+  if (update.usesAuthoredTiming) {
+    final last = next.isEmpty ? null : next.last;
+    final queuedGeneration = last?.generation;
+    final generation = currentGeneration == null
+        ? queuedGeneration
+        : queuedGeneration == null
+        ? currentGeneration
+        : max(currentGeneration, queuedGeneration);
+    if (generation != null && update.generation != null) {
+      if (update.generation! < generation) return next;
+      if (update.generation! > generation) return [update];
+    }
+    final position =
+        last != null && (generation == null || last.generation == generation)
+        ? last.positionMs
+        : currentPositionMs;
+    if (isPlaying &&
+        position != null &&
+        update.positionMs != null &&
+        update.positionMs! < position) {
+      return next;
+    }
+    return [update];
+  }
   if (isPlaying && update.primaryIndex < currentIndex) return next;
   if (next.isEmpty) {
     next.add(update);
@@ -438,6 +466,10 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
   final playbackService = PlayService.instance.playbackService;
   final lyricService = PlayService.instance.lyricService;
   final _userScrollTracker = LyricUserScrollTracker();
+  late final ValueNotifier<double> _sharedLyricPositionMs;
+  Ticker? _sharedLyricPositionTicker;
+  Duration _sharedLyricLastTick = Duration.zero;
+  Duration _sharedLyricLastNativeSync = Duration.zero;
   late StreamSubscription lyricLineStreamSubscription;
   Timer? _positionResyncTimer;
   Timer? _positionResyncStopTimer;
@@ -452,7 +484,6 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
   Timer? _userScrollHoldTimer;
   Timer? _sizeChangeTimer;
   Timer? _idleCleanupTimer;
-  Timer? _backgroundVocalReleaseTimer;
   bool _didIdleCleanup = false;
   LyricScrollState _scrollState = LyricScrollState.idle;
   int _mainLine = 0;
@@ -472,10 +503,14 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
 
   /// TTML 当前并行组；[_mainLine] 仍只负责主行布局。
   final Set<int> _parallelGroupLines = {};
+  final Set<int> _mainActiveLyricLines = {};
+  final Set<int> _backgroundActiveLyricLines = {};
   final Set<int> _activeLyricLines = {};
   int? _tailHighlightCatchUpLine;
-  int? _departingBackgroundVocalLine;
-  double _backgroundVocalReflowOffset = 0.0;
+  final Set<int> _departingBackgroundVocalLines = {};
+  final Map<int, ValueNotifier<double>> _backgroundExitValues = {};
+  final Map<int, int> _backgroundExitStartedMs = {};
+  final Stopwatch _backgroundExitClock = Stopwatch();
   late final AnimationController _backgroundVocalExitController;
   int _backgroundVocalExitGeneration = 0;
   int _pendingScrollRetries = 0;
@@ -490,6 +525,7 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
   /// 需要在收到歌词行更新后补一次滚动。
   bool _needsInitialScroll = true;
   double _displayPositionMs = 0.0;
+  int? _lastTtmlGeneration;
   int _lastPositionResyncMs = 0;
   int _positionResyncExtensionCount = 0;
   static const int _maxPositionResyncExtensions = 5;
@@ -532,6 +568,7 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
   void initState() {
     super.initState();
     _displayPositionMs = playbackService.position * 1000.0;
+    _sharedLyricPositionMs = ValueNotifier(_displayPositionMs);
     final initialOffset = _restoreCachedInitialPosition();
     scrollController = ScrollController(initialScrollOffset: initialOffset);
     _scrollTransition = ValueTransition<double>(
@@ -542,7 +579,7 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
     _backgroundVocalExitController = AnimationController(
       vsync: this,
       duration: lyricBackgroundVocalExitDuration,
-    );
+    )..addListener(_updateBackgroundExitValues);
     lyricLineStreamSubscription = lyricService.lyricLineStream.listen(
       _updateNextLyricLine,
     );
@@ -551,7 +588,9 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
     _positionResyncListener = _queuePositionResync;
     playbackService.nowPlayingNotifier.addListener(_contentResyncListener);
     playbackService.positionSyncNotifier.addListener(_positionResyncListener);
+    playbackService.playerStateNotifier.addListener(_syncSharedLyricTicker);
     lyricService.addListener(_contentResyncListener);
+    _syncSharedLyricTicker();
     _startPositionResyncWindow();
     _initLyricView();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -562,6 +601,42 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
 
     // 启动空闲检测（一次性定时器，活动时重置）
     _scheduleIdleCleanup();
+  }
+
+  bool get _needsSharedLyricPosition =>
+      widget.lyric.isWordByWord && widget.lyric.lines.isNotEmpty;
+
+  void _syncSharedLyricTicker() {
+    if (_disposed ||
+        !_needsSharedLyricPosition ||
+        playbackService.playerState != PlayerState.playing) {
+      _sharedLyricPositionTicker?.stop();
+      _sharedLyricLastTick = Duration.zero;
+      return;
+    }
+    _sharedLyricPositionTicker ??= createTicker(_onSharedLyricTick);
+    if (!_sharedLyricPositionTicker!.isActive) {
+      _sharedLyricLastTick = Duration.zero;
+      _sharedLyricLastNativeSync = Duration.zero;
+      _sharedLyricPositionTicker!.start();
+    }
+  }
+
+  void _onSharedLyricTick(Duration elapsed) {
+    if (_disposed || !mounted) return;
+    final delta = _sharedLyricLastTick == Duration.zero
+        ? Duration.zero
+        : elapsed - _sharedLyricLastTick;
+    _sharedLyricLastTick = elapsed;
+    if (delta > const Duration(milliseconds: 200) ||
+        _sharedLyricLastNativeSync == Duration.zero ||
+        elapsed - _sharedLyricLastNativeSync >= const Duration(seconds: 1)) {
+      _sharedLyricPositionMs.value = playbackService.position * 1000.0;
+      _sharedLyricLastNativeSync = elapsed;
+      return;
+    }
+    _sharedLyricPositionMs.value +=
+        delta.inMicroseconds / 1000.0 * playbackService.rate.value;
   }
 
   double _restoreCachedInitialPosition() {
@@ -666,6 +741,8 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
 
   void _queuePlaybackResync({required bool forceScroll}) {
     if (_disposed || !mounted) return;
+    _sharedLyricPositionMs.value = playbackService.position * 1000.0;
+    _syncSharedLyricTicker();
     if (!shouldAcceptLyricUiUpdate(
       windowFramesEnabled: WindowRenderGate.instance.shouldRender,
     )) {
@@ -718,6 +795,10 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
   }
 
   void _enqueueLyricLineUpdate(LyricLineUpdate update) {
+    if (update.sourceLyric != null &&
+        !identical(update.sourceLyric, widget.lyric)) {
+      return;
+    }
     if (!shouldAcceptLyricUiUpdate(
       windowFramesEnabled: WindowRenderGate.instance.shouldRender,
     )) {
@@ -729,6 +810,8 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
       update: update,
       currentIndex: _mainLine,
       isPlaying: playbackService.playerState == PlayerState.playing,
+      currentPositionMs: _displayPositionMs.round(),
+      currentGeneration: _lastTtmlGeneration,
     );
     _pendingLyricLineUpdates
       ..clear()
@@ -839,49 +922,76 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
   }
 
   void _collapseDepartingBackgroundVocal() {
-    _backgroundVocalReleaseTimer?.cancel();
-    _backgroundVocalReleaseTimer = null;
-    if (_departingBackgroundVocalLine == null || _disposed || !mounted) return;
+    if (_departingBackgroundVocalLines.isEmpty || _disposed || !mounted) {
+      return;
+    }
     if (_backgroundVocalExitController.isAnimating) return;
-    final line = _departingBackgroundVocalLine;
+    final lines = Set<int>.of(_departingBackgroundVocalLines);
     final generation = ++_backgroundVocalExitGeneration;
+    _backgroundVocalExitController.value = 0;
     _backgroundVocalExitController
         .animateTo(
-          0.0,
+          1.0,
           duration: lyricBackgroundVocalExitDuration,
-          curve: Curves.easeInCubic,
+          curve: Curves.linear,
         )
         .whenCompleteOrCancel(() {
           if (_disposed ||
               !mounted ||
               generation != _backgroundVocalExitGeneration ||
-              line != _departingBackgroundVocalLine) {
+              !setEquals(lines, _departingBackgroundVocalLines)) {
             return;
           }
           setState(() {
-            _departingBackgroundVocalLine = null;
-            _backgroundVocalReflowOffset = 0.0;
+            _discardDepartingBackgroundVocal();
           });
         });
   }
 
   void _discardDepartingBackgroundVocal() {
-    _backgroundVocalReleaseTimer?.cancel();
-    _backgroundVocalReleaseTimer = null;
     _backgroundVocalExitGeneration++;
-    _backgroundVocalExitController
+    _backgroundVocalExitController.stop();
+    for (final value in _backgroundExitValues.values) {
+      value.dispose();
+    }
+    _backgroundExitValues.clear();
+    _backgroundExitStartedMs.clear();
+    _backgroundExitClock
       ..stop()
-      ..value = 0.0;
-    _departingBackgroundVocalLine = null;
-    _backgroundVocalReflowOffset = 0.0;
+      ..reset();
+    _departingBackgroundVocalLines.clear();
   }
 
-  void _scheduleDepartingBackgroundVocalRelease() {
-    _backgroundVocalReleaseTimer?.cancel();
-    if (_departingBackgroundVocalLine == null) return;
-    _backgroundVocalReleaseTimer = Timer(_backgroundVocalStaggerHold, () {
-      _collapseDepartingBackgroundVocal();
-    });
+  void _prepareBackgroundExitValues(Set<int> next) {
+    _backgroundVocalExitGeneration++;
+    _backgroundVocalExitController.stop();
+    for (final index in _backgroundExitValues.keys.toList()) {
+      if (!next.contains(index)) {
+        _backgroundExitValues.remove(index)!.dispose();
+        _backgroundExitStartedMs.remove(index);
+      }
+    }
+    if (next.isEmpty) {
+      _backgroundExitClock
+        ..stop()
+        ..reset();
+      return;
+    }
+    _backgroundExitClock.start();
+    final now = _backgroundExitClock.elapsedMilliseconds;
+    for (final index in next) {
+      if (_backgroundExitValues.containsKey(index)) continue;
+      _backgroundExitValues[index] = ValueNotifier(1.0);
+      _backgroundExitStartedMs[index] = now;
+    }
+  }
+
+  void _updateBackgroundExitValues() {
+    final now = _backgroundExitClock.elapsedMilliseconds;
+    for (final entry in _backgroundExitValues.entries) {
+      final elapsed = now - _backgroundExitStartedMs[entry.key]!;
+      entry.value.value = lyricBackgroundExitVisibility(elapsed.toDouble());
+    }
   }
 
   void _computeOffsets(double maxWidth) {
@@ -969,7 +1079,10 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
           lineMedianWordDuration: Duration.zero,
         ),
         scheme: scheme,
-      ).measureHeight(lineLayoutWidth, reserveBackgroundVocalHeight: false);
+      ).measureHeight(
+        lineLayoutWidth,
+        reserveBackgroundVocalHeight: lyricLineHasBackgroundVocal(line),
+      );
     }
 
     double measureLine(LyricLine line, bool isMain) {
@@ -1433,6 +1546,9 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
       _jumpDeltaY = 0;
       _jumpTriggerId++;
       _parallelGroupLines.clear();
+      _mainActiveLyricLines.clear();
+      _backgroundActiveLyricLines.clear();
+      _lastTtmlGeneration = null;
       _activeLyricLines.clear();
       _tailHighlightCatchUpLine = null;
       _discardDepartingBackgroundVocal();
@@ -1574,7 +1690,7 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
       _userScrollHoldTimer = null;
       _scrollTransition.jumpTo(to);
       _stopScrollTicker();
-      _scheduleDepartingBackgroundVocalRelease();
+      _collapseDepartingBackgroundVocal();
       // 补偿只给这一帧，避免稍后新挂上的行把弹簧再放一遍。
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_disposed || !mounted) return;
@@ -1993,6 +2109,8 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
   ({
     int primaryIndex,
     Set<int> groupLines,
+    Set<int> mainActiveLines,
+    Set<int> backgroundActiveLines,
     Set<int> activeLines,
     int? tailCatchUpLine,
   })
@@ -2001,14 +2119,30 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
     final positionMs =
         update.positionMs?.toDouble() ?? playbackService.position * 1000.0;
     final layoutLines = _renderableLineIndices(update.layoutIndices);
-    final activeLines = _renderableLineIndices(update.activeIndices);
-    final groupCandidates = layoutLines.isNotEmpty ? layoutLines : activeLines;
-    final groupLines = _fitParallelLines(groupCandidates, activeLines);
+    final mainActiveLines = _renderableLineIndices(update.mainActiveIndices);
+    final backgroundActiveLines = _renderableLineIndices(
+      update.backgroundActiveIndices,
+    );
+    final activeLines = <int>{...mainActiveLines, ...backgroundActiveLines};
+    final groupCandidates = layoutLines;
+    final groupLines = update.usesAuthoredTiming
+        ? groupCandidates
+        : _fitParallelLines(groupCandidates, mainActiveLines);
     final primaryIndex = lyricDisplayPrimaryIndex(
       fallbackPrimaryIndex: update.primaryIndex,
       lineCount: lines.length,
       groupedLines: groupLines,
     );
+    if (update.usesAuthoredTiming) {
+      return (
+        primaryIndex: primaryIndex,
+        groupLines: groupLines,
+        mainActiveLines: mainActiveLines,
+        backgroundActiveLines: backgroundActiveLines,
+        activeLines: activeLines,
+        tailCatchUpLine: null,
+      );
+    }
     var tailCatchUp = _tailHighlightCatchUpLineFor(
       groupCandidates,
       visibleCandidates: groupLines,
@@ -2022,6 +2156,8 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
     return (
       primaryIndex: primaryIndex,
       groupLines: groupLines,
+      mainActiveLines: mainActiveLines,
+      backgroundActiveLines: backgroundActiveLines,
       activeLines: activeLines,
       tailCatchUpLine: tailCatchUp,
     );
@@ -2044,102 +2180,6 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
     return null;
   }
 
-  bool _hasBackgroundVocal(LyricLine line) {
-    if (line is! SyncLyricLine) return false;
-    return line.bgText?.isNotEmpty == true ||
-        (LyricViewController.instance.renderConfig.showRoman &&
-            line.bg?.romanLyric?.isNotEmpty == true) ||
-        line.bgTranslation?.isNotEmpty == true ||
-        line.bgWords.isNotEmpty;
-  }
-
-  bool _hasStartedBackgroundVocal(LyricLine line, double positionMs) {
-    if (!_hasBackgroundVocal(line)) return false;
-    final syncLine = line as SyncLyricLine;
-    final start = (syncLine.bgStart ?? syncLine.bg?.start ?? syncLine.start)
-        .inMilliseconds
-        .toDouble();
-    return positionMs >= start;
-  }
-
-  bool _isTransitionLine(LyricLine line) {
-    if (line is SyncLyricLine) {
-      return line.words.isEmpty && line.length > const Duration(seconds: 3);
-    }
-    if (line is LrcLine) {
-      return line.isBlank &&
-          line.length > const Duration(seconds: 3) &&
-          line.start == Duration.zero;
-    }
-    return false;
-  }
-
-  double _transitionReflowOffsetFor(int lineIndex) {
-    final lineContext = _lineKeys[lineIndex]?.currentContext;
-    final lineBox = lineContext?.findRenderObject() as RenderBox?;
-    if (lineBox != null && lineBox.hasSize) return lineBox.size.height;
-
-    final config = LyricViewController.instance.renderConfig;
-    final line = widget.lyric.lines[lineIndex];
-    final verticalPadding = line is SyncLyricLine
-        ? config.syncVerticalPadding(isMainLine: true)
-        : config.lrcVerticalPadding();
-    return transitionTileHeight + verticalPadding * 2;
-  }
-
-  double _backgroundVocalReflowOffsetFor(
-    int lineIndex, {
-    required double positionMs,
-  }) {
-    if (lineIndex < 0 || lineIndex >= widget.lyric.lines.length) return 0.0;
-    final line = widget.lyric.lines[lineIndex];
-    if (_isTransitionLine(line)) {
-      // 间奏行退场同样会释放布局高度，复用下方歌词的位移补偿。
-      return _transitionReflowOffsetFor(lineIndex);
-    }
-    final heights = _cachedBackgroundVocalHeights;
-    if (heights == null || lineIndex >= heights.length) {
-      return 0.0;
-    }
-    if (line is! SyncLyricLine) return 0.0;
-    final start = (line.bgStart ?? line.bg?.start ?? line.start).inMilliseconds
-        .toDouble();
-    final elapsed = positionMs - start;
-    final entryProgress =
-        (elapsed / lyricBackgroundVocalEntryDuration.inMilliseconds)
-            .clamp(0.0, 1.0)
-            .toDouble();
-    final visibleFactor = Curves.easeOutBack
-        .transform(entryProgress)
-        .clamp(0.0, 1.0)
-        .toDouble();
-    return heights[lineIndex] * visibleFactor;
-  }
-
-  int? _departingBackgroundVocalLineFor(
-    List<LyricLine> lines,
-    int previousMainLine,
-    int nextMainLine,
-    bool mainLineChanged,
-    double positionMs,
-  ) {
-    if (!mainLineChanged) return _departingBackgroundVocalLine;
-    if (_isTransitionLine(lines[previousMainLine])) {
-      return previousMainLine;
-    }
-    final previousGroupLines = _parallelGroupLines.toList()
-      ..sort((a, b) => b.compareTo(a));
-    for (final index in previousGroupLines) {
-      if (index != nextMainLine &&
-          _hasStartedBackgroundVocal(lines[index], positionMs)) {
-        return index;
-      }
-    }
-    return _hasStartedBackgroundVocal(lines[previousMainLine], positionMs)
-        ? previousMainLine
-        : null;
-  }
-
   void _syncToPlaybackPosition({Duration? duration, bool forceScroll = true}) {
     if (_disposed || !mounted) return;
     final update = lyricService.lineUpdateForLyric(
@@ -2150,6 +2190,9 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
       if (forceScroll) _discardPendingLyricLineUpdates();
       lyricService.forceEmitCurrentLine();
       return;
+    }
+    if (forceScroll && update.usesAuthoredTiming) {
+      _discardPendingLyricLineUpdates();
     }
     if (shouldEnqueuePlayingLyricResync(
       forceScroll: forceScroll,
@@ -2230,6 +2273,11 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
     final positionChanged = (_displayPositionMs - positionMs).abs() > 0.5;
     if (nextMainLine == _mainLine &&
         setEquals(_parallelGroupLines, displayUpdate.groupLines) &&
+        setEquals(_mainActiveLyricLines, displayUpdate.mainActiveLines) &&
+        setEquals(
+          _backgroundActiveLyricLines,
+          displayUpdate.backgroundActiveLines,
+        ) &&
         setEquals(_activeLyricLines, displayUpdate.activeLines) &&
         _tailHighlightCatchUpLine == displayUpdate.tailCatchUpLine &&
         (playbackService.playerState == PlayerState.playing ||
@@ -2255,6 +2303,7 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
       currentIndex: _mainLine,
       resyncIndex: nextMainLine,
       isPlaying: playbackService.playerState == PlayerState.playing,
+      usesAuthoredTiming: update.usesAuthoredTiming,
     )) {
       return;
     }
@@ -2267,6 +2316,23 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
     Duration? duration,
   }) {
     if (_disposed || !mounted) return;
+    var resetVoiceLayout = forceScroll;
+    if (update.sourceLyric != null &&
+        !identical(update.sourceLyric, widget.lyric)) {
+      return;
+    }
+    if (update.usesAuthoredTiming && update.generation != null) {
+      if (_lastTtmlGeneration != null &&
+          update.generation! < _lastTtmlGeneration!) {
+        return;
+      }
+      if (update.generation != _lastTtmlGeneration) {
+        resetVoiceLayout = true;
+        _discardDepartingBackgroundVocal();
+      }
+      _lastTtmlGeneration = update.generation;
+    }
+    if (forceScroll) _discardDepartingBackgroundVocal();
     final lines = widget.lyric.lines;
     if (lines.isEmpty) return;
 
@@ -2275,6 +2341,8 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
     final displayUpdate = _displayLineUpdate(update);
     final positionChanged = (_displayPositionMs - positionMs).abs() > 0.5;
     final nextGroupLines = displayUpdate.groupLines;
+    final nextMainActiveLines = displayUpdate.mainActiveLines;
+    final nextBackgroundActiveLines = displayUpdate.backgroundActiveLines;
     final nextActiveLines = displayUpdate.activeLines;
     final nextTailHighlightCatchUpLine = displayUpdate.tailCatchUpLine;
     final nextMainLine = displayUpdate.primaryIndex;
@@ -2286,11 +2354,14 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
     if (renderableMainLine == null) return;
     if (renderableMainLine == _mainLine &&
         setEquals(_parallelGroupLines, nextGroupLines) &&
+        setEquals(_mainActiveLyricLines, nextMainActiveLines) &&
+        setEquals(_backgroundActiveLyricLines, nextBackgroundActiveLines) &&
         setEquals(_activeLyricLines, nextActiveLines) &&
         _tailHighlightCatchUpLine == nextTailHighlightCatchUpLine) {
-      if (positionChanged &&
-          (_needsInitialScroll ||
-              playbackService.playerState != PlayerState.playing)) {
+      if (resetVoiceLayout ||
+          positionChanged &&
+              (_needsInitialScroll ||
+                  playbackService.playerState != PlayerState.playing)) {
         setState(() {
           _displayPositionMs = positionMs;
         });
@@ -2312,31 +2383,32 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
     }
     final previousMainLine = _mainLine;
     final mainLineChanged = previousMainLine != renderableMainLine;
-    final departingBackgroundVocalLine = forceScroll
-        ? null
-        : _departingBackgroundVocalLineFor(
-            lines,
-            previousMainLine,
-            renderableMainLine,
-            mainLineChanged,
-            positionMs,
-          );
-    final startBackgroundVocalExit =
-        departingBackgroundVocalLine != null &&
-        departingBackgroundVocalLine != _departingBackgroundVocalLine;
-    final backgroundVocalReflowOffset = departingBackgroundVocalLine == null
-        ? 0.0
-        : _backgroundVocalReflowOffsetFor(
-            departingBackgroundVocalLine,
-            positionMs: positionMs,
-          );
-    if (departingBackgroundVocalLine != _departingBackgroundVocalLine) {
-      _backgroundVocalReleaseTimer?.cancel();
-      _backgroundVocalReleaseTimer = null;
-      _backgroundVocalExitGeneration++;
-      _backgroundVocalExitController
-        ..stop()
-        ..value = departingBackgroundVocalLine == null ? 0.0 : 1.0;
+    final retained = update.usesAuthoredTiming
+        ? nextGroupLines
+        : nextBackgroundActiveLines;
+    final previousRetained = update.usesAuthoredTiming
+        ? _parallelGroupLines
+        : _backgroundActiveLyricLines;
+    final nextDepartingBackgroundVocalLines =
+        resetVoiceLayout
+              ? <int>{}
+              : <int>{
+                  ..._departingBackgroundVocalLines,
+                  ...previousRetained.difference(retained).where((index) {
+                    final line = lines[index];
+                    return line is SyncLyricLine &&
+                        (line.bgWords.isNotEmpty ||
+                            line.bgText?.isNotEmpty == true ||
+                            line.bg != null);
+                  }),
+                }
+          ..removeAll(retained);
+    final startBackgroundVocalExit = !setEquals(
+      _departingBackgroundVocalLines,
+      nextDepartingBackgroundVocalLines,
+    );
+    if (startBackgroundVocalExit) {
+      _prepareBackgroundExitValues(nextDepartingBackgroundVocalLines);
     }
 
     final renderConfig = context.read<LyricViewController>().renderConfig;
@@ -2378,11 +2450,18 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
     setState(() {
       _mainLine = renderableMainLine;
       _displayPositionMs = positionMs;
-      _departingBackgroundVocalLine = departingBackgroundVocalLine;
-      _backgroundVocalReflowOffset = backgroundVocalReflowOffset;
+      _departingBackgroundVocalLines
+        ..clear()
+        ..addAll(nextDepartingBackgroundVocalLines);
       _parallelGroupLines
         ..clear()
         ..addAll(nextGroupLines);
+      _mainActiveLyricLines
+        ..clear()
+        ..addAll(nextMainActiveLines);
+      _backgroundActiveLyricLines
+        ..clear()
+        ..addAll(nextBackgroundActiveLines);
       _activeLyricLines
         ..clear()
         ..addAll(nextActiveLines);
@@ -2399,7 +2478,7 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
       }
     });
 
-    if (startBackgroundVocalExit) {
+    if (startBackgroundVocalExit && _departingBackgroundVocalLines.isNotEmpty) {
       _collapseDepartingBackgroundVocal();
     }
 
@@ -2437,7 +2516,9 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
       overscanScreens: renderConfig.viewportOverscanScreens,
       userScrollHoldDuration: renderConfig.userScrollHoldDuration,
     );
-    final freezeParallelGroup = _parallelGroupLines.length > 1;
+    final usesAuthoredTiming = widget.lyric is Ttml;
+    final freezeParallelGroup =
+        !usesAuthoredTiming && _parallelGroupLines.length > 1;
     final lyricFontFamily = context
         .watch<ThemeProvider>()
         .resolvedLyricFontFamily;
@@ -2567,7 +2648,18 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
                         final signedDist = i - _mainLine;
                         final dist = signedDist.abs();
                         final isGroupLine = _parallelGroupLines.contains(i);
-                        final isActiveLine = _activeLyricLines.contains(i);
+                        final isMainActiveLine = _mainActiveLyricLines.contains(
+                          i,
+                        );
+                        final isBackgroundActiveLine =
+                            _backgroundActiveLyricLines.contains(i);
+                        final isActiveLine =
+                            isMainActiveLine || isBackgroundActiveLine;
+                        final usesSharedLyricPosition = usesAuthoredTiming
+                            ? isActiveLine
+                            : i == _mainLine &&
+                                  line is SyncLyricLine &&
+                                  line.words.isNotEmpty;
                         final highlightDeadlineMs = _highlightDeadlineForLine(
                           i,
                         );
@@ -2610,34 +2702,32 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
                               parallelGroupLines: _parallelGroupLines,
                             ),
                             positionMs: _displayPositionMs,
-                            isHighlightActive: isGroupLine || isActiveLine,
+                            positionListenable: usesSharedLyricPosition
+                                ? _sharedLyricPositionMs
+                                : null,
+                            isHighlightActive: usesAuthoredTiming
+                                ? isGroupLine
+                                : isGroupLine || isMainActiveLine,
+                            isMainVocalActive: usesAuthoredTiming
+                                ? isMainActiveLine
+                                : null,
+                            isBackgroundActive: isBackgroundActiveLine,
+                            usesAuthoredTiming: usesAuthoredTiming,
+                            isBackgroundVisible: usesAuthoredTiming
+                                ? isGroupLine
+                                : null,
                             accelerateTailHighlight:
                                 i == _tailHighlightCatchUpLine,
-                            lineOffsetY:
-                                _departingBackgroundVocalLine != null &&
-                                    i > _departingBackgroundVocalLine!
-                                ? _backgroundVocalReflowOffset
-                                : 0.0,
-                            lineOffsetProgressListenable:
-                                _departingBackgroundVocalLine != null &&
-                                    i > _departingBackgroundVocalLine!
-                                ? _backgroundVocalExitController
-                                : null,
                             staggerDelay: staggerDelay,
                             jumpTriggerId: _jumpTriggerId,
                             jumpDeltaY: _jumpDeltaY,
                             isUserScrolling: userIsDragging,
                             freezeHeight: freezeParallelGroup && isGroupLine,
                             reserveBackgroundVocalHeight:
-                                (i == _mainLine ||
-                                    isGroupLine ||
-                                    isActiveLine) &&
-                                i != _departingBackgroundVocalLine,
+                                lyricLineHasBackgroundVocal(line),
                             highlightDeadlineMs: highlightDeadlineMs,
                             backgroundVocalVisibilityListenable:
-                                i == _departingBackgroundVocalLine
-                                ? _backgroundVocalExitController
-                                : null,
+                                _backgroundExitValues[i],
                             onTap: widget.enableSeekOnTap
                                 ? () => _seekToLyricLineWithOriginalIndex(line)
                                 : null,
@@ -2683,7 +2773,7 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
     _sizeChangeTimer?.cancel();
     _playbackResyncTimer?.cancel();
     _idleCleanupTimer?.cancel(); // 取消空闲检测
-    _backgroundVocalReleaseTimer?.cancel();
+    _discardDepartingBackgroundVocal();
     _backgroundVocalExitController.dispose();
     _lyricViewController?.removeListener(_scheduleEnsureCurrentVisible);
     routeVisibilityObserver.unsubscribe(this);
@@ -2691,11 +2781,14 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
     playbackService.positionSyncNotifier.removeListener(
       _positionResyncListener,
     );
+    playbackService.playerStateNotifier.removeListener(_syncSharedLyricTicker);
     lyricService.removeListener(_contentResyncListener);
     WindowRenderGate.instance.framesEnabled.removeListener(
       _onWindowFramesEnabled,
     );
     lyricLineStreamSubscription.cancel();
+    _sharedLyricPositionTicker?.dispose();
+    _sharedLyricPositionMs.dispose();
     _positionResyncTimer?.cancel();
     _positionResyncStopTimer?.cancel();
     scrollController.dispose();

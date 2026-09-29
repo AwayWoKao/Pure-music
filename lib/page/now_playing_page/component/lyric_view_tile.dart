@@ -17,22 +17,41 @@ const _compactSizeFactorMultiplier = 0.5;
 const _circleGapMultiplier = 3.0;
 const compactTransitionTileMargin = 10.0;
 const transitionTileMargin = 12.0;
-const _enterOpacityFraction = 0.12;
-const _exitOpacityFraction = 0.18;
 const _alphaBase = 0.05;
 const _activeAlphaBase = 0.22;
 const _staggerStep = 1 / 3;
 const _breathingStep = 1 / 180;
 const _staleInterludeTick = Duration(milliseconds: 200);
+const _transitionEnterFraction = 0.12;
+const _transitionExitFraction = 0.18;
 
 bool shouldIgnoreStaleInterludeTick(Duration delta) =>
     delta > _staleInterludeTick;
+
+double lyricTransitionEnterOpacity(double progress) {
+  return Curves.easeOutCubic.transform(
+    (progress / _transitionEnterFraction).clamp(0.0, 1.0),
+  );
+}
+
+double lyricTransitionExitOpacity(double progress) {
+  return Curves.easeOutCubic.transform(
+    ((1.0 - progress) / _transitionExitFraction).clamp(0.0, 1.0),
+  );
+}
+
+double lyricTransitionOpacity(double progress) {
+  final normalized = progress.clamp(0.0, 1.0);
+  return lyricTransitionEnterOpacity(normalized) *
+      lyricTransitionExitOpacity(normalized);
+}
 
 /// 歌词间奏表示
 /// lrcLine 和 syncLine 必须有且只有一个不为空
 class LyricTransitionTile extends StatefulWidget {
   final LrcLine? lrcLine;
   final SyncLyricLine? syncLine;
+  final double? positionMs;
   final LyricTextAlign? alignment;
   final bool enableBreathing;
   final bool compact;
@@ -42,6 +61,7 @@ class LyricTransitionTile extends StatefulWidget {
     super.key,
     this.lrcLine,
     this.syncLine,
+    this.positionMs,
     this.alignment,
     this.enableBreathing = true,
     this.compact = false,
@@ -60,7 +80,10 @@ class _LyricTransitionTileState extends State<LyricTransitionTile> {
   void initState() {
     super.initState();
     controller = LyricTransitionTileController(
-        widget.lrcLine, widget.syncLine, widget.enableBreathing);
+      widget.lrcLine,
+      widget.syncLine,
+      widget.enableBreathing,
+    );
   }
 
   @override
@@ -70,7 +93,14 @@ class _LyricTransitionTileState extends State<LyricTransitionTile> {
         oldWidget.syncLine != widget.syncLine) {
       controller.dispose();
       controller = LyricTransitionTileController(
-          widget.lrcLine, widget.syncLine, widget.enableBreathing);
+        widget.lrcLine,
+        widget.syncLine,
+        widget.enableBreathing,
+      );
+    }
+    if (widget.positionMs != null &&
+        widget.positionMs != oldWidget.positionMs) {
+      controller.updatePositionMs(widget.positionMs!);
     }
   }
 
@@ -147,54 +177,59 @@ class LyricTransitionPainter extends CustomPainter {
 
   final double radius = _baseRadius;
 
-  LyricTransitionPainter(this.scheme, this.controller,
-      {this.compact = false,
-      this.useMaterialYouColor = true,
-      this.animateVisibilityWithProgress = true,
-      this.alignment = LyricTextAlign.left})
-      : super(repaint: controller);
+  LyricTransitionPainter(
+    this.scheme,
+    this.controller, {
+    this.compact = false,
+    this.useMaterialYouColor = true,
+    this.animateVisibilityWithProgress = true,
+    this.alignment = LyricTextAlign.left,
+  }) : super(repaint: controller);
 
   @override
   void paint(Canvas canvas, Size size) {
     final progress = controller.progress.clamp(0.0, 1.0);
-    final enterOpacity = Curves.easeOutCubic
-        .transform((progress / _enterOpacityFraction).clamp(0.0, 1.0));
-    final exitOpacity = Curves.easeOutCubic
-        .transform(((1.0 - progress) / _exitOpacityFraction).clamp(0.0, 1.0));
-    final opacityEnvelope =
-        animateVisibilityWithProgress ? enterOpacity * exitOpacity : 1.0;
-    final alphaBase =
-        animateVisibilityWithProgress ? _alphaBase : _activeAlphaBase;
+    final opacityEnvelope = animateVisibilityWithProgress
+        ? lyricTransitionOpacity(progress)
+        : 1.0;
+    final alphaBase = animateVisibilityWithProgress
+        ? _alphaBase
+        : _activeAlphaBase;
     final alphaRange = 1.0 - alphaBase;
 
-    final a1 = (255 *
-            opacityEnvelope *
-            (alphaBase + min(controller.progress * 3, 1) * alphaRange))
-        .round()
-        .clamp(0, 255);
-    final a2 = (255 *
-            opacityEnvelope *
-            (alphaBase +
-                min(max(controller.progress - _staggerStep, 0) * 3, 1) *
-                    alphaRange))
-        .round()
-        .clamp(0, 255);
-    final a3 = (255 *
-            opacityEnvelope *
-            (alphaBase +
-                min(max(controller.progress - 2 * _staggerStep, 0) * 3, 1) *
-                    alphaRange))
-        .round()
-        .clamp(0, 255);
-    final transitionColor =
-        useMaterialYouColor ? scheme.onSecondaryContainer : scheme.onSurface;
+    final a1 =
+        (255 *
+                opacityEnvelope *
+                (alphaBase + min(controller.progress * 3, 1) * alphaRange))
+            .round()
+            .clamp(0, 255);
+    final a2 =
+        (255 *
+                opacityEnvelope *
+                (alphaBase +
+                    min(max(controller.progress - _staggerStep, 0) * 3, 1) *
+                        alphaRange))
+            .round()
+            .clamp(0, 255);
+    final a3 =
+        (255 *
+                opacityEnvelope *
+                (alphaBase +
+                    min(max(controller.progress - 2 * _staggerStep, 0) * 3, 1) *
+                        alphaRange))
+            .round()
+            .clamp(0, 255);
+    final transitionColor = useMaterialYouColor
+        ? scheme.onSecondaryContainer
+        : scheme.onSurface;
     circlePaint1.color = transitionColor.withAlpha(a1);
     circlePaint2.color = transitionColor.withAlpha(a2);
     circlePaint3.color = transitionColor.withAlpha(a3);
 
     final cy = size.height / 2;
     if (compact) {
-      final r = _compactBaseRadius +
+      final r =
+          _compactBaseRadius +
           controller.sizeFactor * _compactSizeFactorMultiplier;
       final gap = _circleGapMultiplier * r;
       final double x1, x2, x3;
@@ -275,8 +310,9 @@ class _TransitionControllerManager {
 
   void register(LyricTransitionTileController controller) {
     if (_controllers.isEmpty) {
-      PlayService.instance.playbackService.playerStateNotifier
-          .addListener(_playerStateListener);
+      PlayService.instance.playbackService.playerStateNotifier.addListener(
+        _playerStateListener,
+      );
     }
     _controllers.add(controller);
     controller._isPlaying = _isPlaying;
@@ -289,8 +325,9 @@ class _TransitionControllerManager {
     _controllers.remove(controller);
     if (_controllers.isEmpty) {
       _stopProgressTicker();
-      PlayService.instance.playbackService.playerStateNotifier
-          .removeListener(_playerStateListener);
+      PlayService.instance.playbackService.playerStateNotifier.removeListener(
+        _playerStateListener,
+      );
     } else {
       _syncProgressTicker();
     }
@@ -379,8 +416,9 @@ class _TransitionControllerManager {
     }
     if (_controllers.isEmpty) {
       _stopProgressTicker();
-      PlayService.instance.playbackService.playerStateNotifier
-          .removeListener(_playerStateListener);
+      PlayService.instance.playbackService.playerStateNotifier.removeListener(
+        _playerStateListener,
+      );
     }
   }
 }
@@ -404,11 +442,27 @@ class LyricTransitionTileController extends ChangeNotifier {
   late final bool _enableBreathing;
   bool _disposed = false;
   bool _isPlaying = false;
+  bool _registered = false;
 
-  LyricTransitionTileController(
-      [this.lrcLine, this.syncLine, bool enableBreathing = true]) {
+  LyricTransitionTileController([
+    this.lrcLine,
+    this.syncLine,
+    bool enableBreathing = true,
+  ]) {
     _enableBreathing = enableBreathing;
+    _register();
+  }
+
+  void _register() {
+    if (_disposed || _registered) return;
+    _registered = true;
     _TransitionControllerManager.instance.register(this);
+  }
+
+  void _unregister() {
+    if (!_registered) return;
+    _registered = false;
+    _TransitionControllerManager.instance.unregister(this);
   }
 
   void _advanceBreathing(double stepScale) {
@@ -441,16 +495,23 @@ class LyricTransitionTileController extends ChangeNotifier {
     if (lengthInMs <= 0) {
       progress = 1.0;
       notifyListeners();
-      dispose();
+      _unregister();
       return;
     }
     final sinceStart = position * 1000 - startInMs;
+    if (progress >= 1.0 && sinceStart < lengthInMs) {
+      _register();
+    }
     progress = max(sinceStart, 0) / lengthInMs;
     notifyListeners();
 
     if (progress >= 1) {
-      dispose();
+      _unregister();
     }
+  }
+
+  void updatePositionMs(double positionMs) {
+    _updateProgress(positionMs / 1000.0);
   }
 
   @override
@@ -458,7 +519,7 @@ class LyricTransitionTileController extends ChangeNotifier {
     if (_disposed) return;
     _disposed = true;
 
-    _TransitionControllerManager.instance.unregister(this);
+    _unregister();
 
     super.dispose();
   }

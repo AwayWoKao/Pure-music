@@ -30,22 +30,24 @@ class Ttml extends Lyric {
       );
       final transliterations = _parseTransliterations(root);
 
-      final body = root.findAllElements('body').firstOrNull;
+      final body = root.descendantElements
+          .where((element) => element.name.local == 'body')
+          .firstOrNull;
       if (body == null) return null;
 
       final lines = <TtmlLine>[];
-      for (final div in body.findAllElements('div')) {
-        for (final p in div.findAllElements('p')) {
-          final line = _parseParagraph(
-            p,
-            separator,
-            agentAlignment: agentAlignment,
-            translations: translations,
-            transliterations: transliterations,
-            preferredLanguage: translationLanguage,
-          );
-          if (line != null) lines.add(line);
-        }
+      for (final p in body.descendantElements.where(
+        (element) => element.name.local == 'p',
+      )) {
+        final line = _parseParagraph(
+          p,
+          separator,
+          agentAlignment: agentAlignment,
+          translations: translations,
+          transliterations: transliterations,
+          preferredLanguage: translationLanguage,
+        );
+        if (line != null) lines.add(line);
       }
 
       if (lines.isEmpty) return null;
@@ -110,14 +112,36 @@ class Ttml extends Lyric {
           }
         }
 
-        _fillWordDurations(line.words, line.start, line.length, nextStart);
+        final lineEnd = line.start + line.length;
+        final lastMainWordStart = line.words.isEmpty
+            ? line.start
+            : line.words.last.start;
+        final mainFallbackEnd =
+            line.bgStart != null &&
+                line.bgStart! > lastMainWordStart &&
+                line.bgStart! < lineEnd
+            ? line.bgStart
+            : lineEnd;
+        _fillWordDurations(
+          line.words,
+          line.start,
+          line.length,
+          nextStart,
+          fallbackEnd: mainFallbackEnd,
+        );
 
         if (line.bgWords.isNotEmpty) {
           final bgStart = line.bgStart ?? line.bgWords.first.start;
           final bgEnd =
               line.bgEnd ?? line.bgWords.last.start + line.bgWords.last.length;
           final bgLength = bgEnd > bgStart ? bgEnd - bgStart : line.length;
-          _fillWordDurations(line.bgWords, bgStart, bgLength, nextStart);
+          _fillWordDurations(
+            line.bgWords,
+            bgStart,
+            bgLength,
+            nextStart,
+            fallbackEnd: bgEnd,
+          );
         }
       }
 
@@ -352,6 +376,7 @@ class Ttml extends Lyric {
                 start,
                 end != null ? end - start : Duration.zero,
                 value,
+                hasExplicitEnd: end != null,
               ),
             );
           }
@@ -509,6 +534,7 @@ class Ttml extends Lyric {
         line,
         end,
         translations[key],
+        parentBegin: begin,
         preferredLanguage: preferredLanguage,
         fallbackRoman: transf?.backgroundText,
       );
@@ -587,6 +613,7 @@ class Ttml extends Lyric {
           last.start,
           last.length,
           '${last.content}\n',
+          hasExplicitEnd: last.hasExplicitEnd,
         );
       }
       buffer.write('\u0001');
@@ -611,14 +638,14 @@ class Ttml extends Lyric {
             parsedEnd != null && _isOffsetTime(_attr(element, 'end'))
             ? parentBegin + parsedEnd
             : parsedEnd;
+        final hasValidExplicitEnd =
+            actualEnd != null && actualEnd >= actualBegin;
         words.add(
           SyncLyricWord(
             actualBegin,
-            (actualEnd ??
-                    fallbackEnd ??
-                    actualBegin + _estimateDuration(text)) -
-                actualBegin,
+            hasValidExplicitEnd ? actualEnd - actualBegin : Duration.zero,
             wordText,
+            hasExplicitEnd: hasValidExplicitEnd,
           ),
         );
       }
@@ -692,11 +719,14 @@ class Ttml extends Lyric {
     TtmlLine line,
     Duration? fallbackEnd,
     String? fallbackTranslation, {
+    required Duration parentBegin,
     required String preferredLanguage,
     String? fallbackRoman,
   }) {
     final bgWords = <SyncLyricWord>[];
-    final bgBegin = _parseTime(_attr(bgSpan, 'begin')) ?? Duration.zero;
+    final bgBegin =
+        _parseElementTime(bgSpan, 'begin', parentBegin: parentBegin) ??
+        parentBegin;
 
     // 排除翻译子节点，让 inner span 各自成为独立词
     final bgChildren = bgSpan.children.where((child) {
@@ -745,6 +775,7 @@ class Ttml extends Lyric {
             w.start,
             w.length,
             w.content.replaceAll(RegExp(r'[()（）]'), ''),
+            hasExplicitEnd: w.hasExplicitEnd,
           ),
         )
         .where((w) => w.content.isNotEmpty)
@@ -758,14 +789,23 @@ class Ttml extends Lyric {
       }
     }
 
-    final parsedBgStart = _parseTime(_attr(bgSpan, 'begin')) ?? bgBegin;
-    final parsedBgEnd = _parseTime(_attr(bgSpan, 'end')) ?? fallbackEnd;
+    final parsedBgStart =
+        _parseElementTime(bgSpan, 'begin', parentBegin: parentBegin) ?? bgBegin;
+    final rawBgEnd = _parseElementTime(bgSpan, 'end', parentBegin: parentBegin);
+    final parsedBgEnd = rawBgEnd != null && rawBgEnd >= parsedBgStart
+        ? rawBgEnd
+        : fallbackEnd;
     if (cleanedBgWords.isEmpty &&
         finalBgText.isNotEmpty &&
         parsedBgEnd != null &&
         parsedBgEnd > parsedBgStart) {
       cleanedBgWords.add(
-        SyncLyricWord(parsedBgStart, parsedBgEnd - parsedBgStart, finalBgText),
+        SyncLyricWord(
+          parsedBgStart,
+          parsedBgEnd - parsedBgStart,
+          finalBgText,
+          hasExplicitEnd: rawBgEnd != null && rawBgEnd >= parsedBgStart,
+        ),
       );
     }
 
@@ -813,6 +853,7 @@ class Ttml extends Lyric {
           cur.start,
           mergedLen.isNegative ? Duration.zero : mergedLen,
           '${cur.content}${next.content}',
+          hasExplicitEnd: next.hasExplicitEnd,
         )..isMerged = true;
         words.removeAt(wi + 1);
       } else {
@@ -854,13 +895,16 @@ class Ttml extends Lyric {
     List<SyncLyricWord> words,
     Duration lineStart,
     Duration lineLength,
-    Duration? nextLineStart,
-  ) {
+    Duration? nextLineStart, {
+    Duration? fallbackEnd,
+  }) {
     if (words.isEmpty) return;
+    final inferredLineEnd = fallbackEnd ?? (lineStart + lineLength);
     for (int j = 0; j < words.length; j++) {
       final curr = words[j];
+      if (curr.hasExplicitEnd) continue;
       final nextWordStart = j < words.length - 1 ? words[j + 1].start : null;
-      final end = nextWordStart ?? (lineStart + lineLength);
+      final end = nextWordStart ?? inferredLineEnd;
       final d = end - curr.start;
       curr.length = d.isNegative
           ? Duration.zero
@@ -908,6 +952,20 @@ class Ttml extends Lyric {
       return Duration(milliseconds: (seconds * 1000).round());
     }
 
+    // 小时：1.5h
+    final hMatch = RegExp(r'^(\d+(?:\.\d+)?)h$').firstMatch(time);
+    if (hMatch != null) {
+      final hours = double.tryParse(hMatch.group(1)!) ?? 0;
+      return Duration(milliseconds: (hours * 3600 * 1000).round());
+    }
+
+    // 分钟：1.5m
+    final mMatch = RegExp(r'^(\d+(?:\.\d+)?)m$').firstMatch(time);
+    if (mMatch != null) {
+      final minutes = double.tryParse(mMatch.group(1)!) ?? 0;
+      return Duration(milliseconds: (minutes * 60 * 1000).round());
+    }
+
     // 帧：f1200（默认 30fps）
     final fMatch = RegExp(r'^(\d+)f$').firstMatch(time);
     if (fMatch != null) {
@@ -927,7 +985,18 @@ class Ttml extends Lyric {
 
   /// 判断 TTML 时间是否为 offset 形式（需要叠加父元素开始时间）
   static bool _isOffsetTime(String time) {
-    return RegExp(r'^\d+(?:\.\d+)?[msf]$').hasMatch(time.trim());
+    return RegExp(r'^\d+(?:\.\d+)?(?:ms|h|m|s|f)$').hasMatch(time.trim());
+  }
+
+  static Duration? _parseElementTime(
+    XmlElement element,
+    String name, {
+    Duration parentBegin = Duration.zero,
+  }) {
+    final raw = _attr(element, name);
+    final parsed = _parseTime(raw);
+    if (parsed == null) return null;
+    return _isOffsetTime(raw) ? parentBegin + parsed : parsed;
   }
 
   static double _parseSeconds(String s) {
@@ -936,11 +1005,6 @@ class Ttml extends Lyric {
       return double.tryParse(s) ?? 0.0;
     }
     return double.tryParse(s) ?? 0.0;
-  }
-
-  static Duration _estimateDuration(String text) {
-    final len = text.replaceAll(RegExp(r'\s+'), '').length;
-    return Duration(milliseconds: (len * 150).clamp(180, 2200));
   }
 
   static String _removeBgParentheses(String text) {

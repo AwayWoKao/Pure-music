@@ -16,6 +16,10 @@ class LyricPainterParams {
   final LyricRenderConfig config;
   final bool isMainLine;
   final bool isHighlightActive;
+  final bool? isMainVocalActive;
+  final bool isBackgroundActive;
+  final bool? isBackgroundVisible;
+  final bool usesAuthoredTiming;
   final bool accelerateTailHighlight;
   final bool useMaterialYouColor;
   final String? fontFamily;
@@ -34,6 +38,10 @@ class LyricPainterParams {
     required this.config,
     required this.isMainLine,
     required this.isHighlightActive,
+    this.isMainVocalActive,
+    this.isBackgroundActive = false,
+    this.isBackgroundVisible,
+    this.usesAuthoredTiming = false,
     required this.accelerateTailHighlight,
     required this.useMaterialYouColor,
     this.fontFamily,
@@ -58,6 +66,10 @@ class LyricPainterParams {
         other.config == config &&
         other.isMainLine == isMainLine &&
         other.isHighlightActive == isHighlightActive &&
+        other.isMainVocalActive == isMainVocalActive &&
+        other.isBackgroundActive == isBackgroundActive &&
+        other.isBackgroundVisible == isBackgroundVisible &&
+        other.usesAuthoredTiming == usesAuthoredTiming &&
         other.accelerateTailHighlight == accelerateTailHighlight &&
         other.useMaterialYouColor == useMaterialYouColor &&
         other.fontFamily == fontFamily &&
@@ -70,25 +82,29 @@ class LyricPainterParams {
 
   @override
   int get hashCode => Object.hash(
-        line,
-        currentTimeListenable,
-        backgroundVocalVisibilityListenable,
-        currentTimeListenable == null ? currentTimeMs : null,
-        blurSigma,
-        config,
-        Object.hash(
-          isMainLine,
-          isHighlightActive,
-          accelerateTailHighlight,
-          useMaterialYouColor,
-          fontFamily,
-          agent,
-        ),
-        Object.hash(
-          opacity,
-          highlightDeadlineMs,
-          lineMedianWordDuration,
-          liftDecayListenable,
-        ),
-      );
+    line,
+    currentTimeListenable,
+    backgroundVocalVisibilityListenable,
+    currentTimeListenable == null ? currentTimeMs : null,
+    blurSigma,
+    config,
+    Object.hash(
+      isMainLine,
+      isHighlightActive,
+      isMainVocalActive,
+      isBackgroundActive,
+      isBackgroundVisible,
+      usesAuthoredTiming,
+      accelerateTailHighlight,
+      useMaterialYouColor,
+      fontFamily,
+      agent,
+    ),
+    Object.hash(
+      opacity,
+      highlightDeadlineMs,
+      lineMedianWordDuration,
+      liftDecayListenable,
+    ),
+  );
 }
