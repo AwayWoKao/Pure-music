@@ -8,7 +8,6 @@ import 'package:pure_music/core/settings.dart';
 import 'package:pure_music/core/setting_action_state.dart';
 import 'package:pure_music/core/sleep_blocker.dart';
 import 'package:pure_music/core/theme.dart';
-import 'package:pure_music/core/update_checker.dart';
 import 'package:pure_music/core/utils.dart';
 import 'package:pure_music/core/window_lifecycle.dart';
 import 'package:pure_music/core/zh_converter.dart';
@@ -26,10 +25,11 @@ import 'package:pure_music/play_service/taskbar_thumbnail_service.dart';
 import 'package:pure_music/play_service/desktop_lyric_service.dart';
 import 'package:pure_music/page/now_playing_page/component/lyric_view_controls.dart';
 import 'package:pure_music/page/page_scaffold.dart';
-import 'package:pure_music/page/settings_page/check_update.dart';
-import 'package:pure_music/page/settings_page/create_issue.dart';
 import 'package:pure_music/page/settings_page/artist_separator_editor.dart';
 import 'package:pure_music/page/settings_page/settings_group_entry.dart';
+import 'package:pure_music/page/settings_page/tabs/advanced_tab.dart';
+import 'package:pure_music/page/settings_page/tabs/about_tab.dart';
+import 'package:pure_music/page/settings_page/tabs/settings_section_header.dart';
 import 'package:pure_music/page/settings_page/hotkey_settings.dart'
     show HotkeySettingsPanel, GlobalHotkeySettingsPanel;
 import 'package:pure_music/page/settings_page/lastfm_settings.dart';
@@ -40,10 +40,8 @@ import 'package:pure_music/page/settings_page/other_settings.dart'
         RememberPlaybackPositionControl,
         ReplayGainControl,
         TransitionControl;
-import 'package:pure_music/native/rust/api/utils.dart' as rust_utils;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:github/github.dart' as gh;
 import 'package:go_router/go_router.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
@@ -121,8 +119,8 @@ class _SettingsTabsState extends State<SettingsTabs> {
               _LyricsTabContent(),
               _PlaybackTabContent(),
               _DesktopLyricTabContent(),
-              _AdvancedTabContent(),
-              _AboutTabContent(),
+              AdvancedTabContent(),
+              AboutTabContent(),
             ],
           ),
         ),
@@ -1729,7 +1727,7 @@ class _LyricsTabContent extends StatelessWidget {
           groupId: 'lyric-writing',
         ),
         SizedBox(height: 8.0),
-        _SettingsSectionHeader('歌词显示'),
+        SettingsSectionHeader('歌词显示'),
         SizedBox(height: 4.0),
         _GroupEntry(
           icon: Symbols.animation,
@@ -1757,7 +1755,7 @@ class _PlaybackTabContent extends StatelessWidget {
           groupId: 'playback-behavior',
         ),
         SizedBox(height: 8.0),
-        _SettingsSectionHeader('第三方服务'),
+        SettingsSectionHeader('第三方服务'),
         SizedBox(height: 4.0),
         _GroupEntry(
           icon: Symbols.graphic_eq,
@@ -1766,7 +1764,7 @@ class _PlaybackTabContent extends StatelessWidget {
           groupId: 'playback-lastfm',
         ),
         SizedBox(height: 8.0),
-        _SettingsSectionHeader('任务栏和热键'),
+        SettingsSectionHeader('任务栏和热键'),
         SizedBox(height: 4.0),
         _GroupEntry(
           icon: Symbols.desktop_windows,
@@ -1848,7 +1846,7 @@ class _DesktopLyricTabContentState extends State<_DesktopLyricTabContent> {
                 ),
               ),
             const SizedBox(height: 8),
-            const _SettingsSectionHeader('内容与布局'),
+            const SettingsSectionHeader('内容与布局'),
             const SizedBox(height: 4),
             const _GroupEntry(
               icon: Symbols.lyrics,
@@ -1871,7 +1869,7 @@ class _DesktopLyricTabContentState extends State<_DesktopLyricTabContent> {
               groupId: 'desktop-window',
             ),
             const SizedBox(height: 8),
-            const _SettingsSectionHeader('视觉样式'),
+            const SettingsSectionHeader('视觉样式'),
             const SizedBox(height: 4),
             const _GroupEntry(
               icon: Symbols.format_size,
@@ -2407,48 +2405,6 @@ class _DesktopColorPickerDialogState extends State<_DesktopColorPickerDialog> {
               child: const Text('确定'),
             ),
           ],
-        ),
-      ],
-    );
-  }
-}
-
-class _AdvancedTabContent extends StatelessWidget {
-  const _AdvancedTabContent();
-
-  @override
-  Widget build(BuildContext context) {
-    return const SmoothScrollListView(
-      padding: EdgeInsets.only(bottom: 96.0, right: 20),
-      children: [
-        _GroupEntry(
-          icon: Symbols.settings_suggest,
-          title: '系统行为',
-          subtitle: '关闭窗口、防休眠与日志',
-          groupId: 'advanced-system',
-        ),
-        SizedBox(height: 8.0),
-        _SettingsSectionHeader('媒体与字体'),
-        SizedBox(height: 4.0),
-        _GroupEntry(
-          icon: Symbols.interests,
-          title: '媒体解析',
-          subtitle: '艺术家名称分隔',
-          groupId: 'advanced-custom',
-        ),
-        SizedBox(height: 8.0),
-        _GroupEntry(
-          icon: Symbols.text_fields,
-          title: '字体',
-          subtitle: '界面与歌词字体',
-          groupId: 'advanced-font',
-        ),
-        SizedBox(height: 8.0),
-        _GroupEntry(
-          icon: Symbols.backup,
-          title: '备份',
-          subtitle: '导出与导入用户数据',
-          groupId: 'advanced-backup',
         ),
       ],
     );
@@ -3232,317 +3188,6 @@ class _DefaultLyricSourceControlState extends State<DefaultLyricSourceControl> {
   }
 }
 
-class _AboutTabContent extends StatelessWidget {
-  const _AboutTabContent();
-
-  @override
-  Widget build(BuildContext context) {
-    return const SmoothScrollListView(
-      padding: EdgeInsets.only(bottom: 96.0, right: 20),
-      children: [
-        _SettingsSectionHeader('更新'),
-        SizedBox(height: 4.0),
-        _AboutVersionItem(),
-        SizedBox(height: 16.0),
-        _AboutUpdateChannelItem(),
-        SizedBox(height: 16.0),
-        _AboutAutoUpdateItem(),
-        SizedBox(height: 24.0),
-        _SettingsSectionHeader('相关链接'),
-        SizedBox(height: 4.0),
-        _AboutLinkItem(
-          title: '官方网站',
-          url: 'https://qingyueyin.github.io/Pure-music/',
-          actionLabel: '访问官网',
-          icon: Symbols.language,
-        ),
-        SizedBox(height: 16.0),
-        _AboutLinkItem(
-          title: '项目主页',
-          url: 'https://github.com/qingyueyin/Pure-music',
-          actionLabel: '打开仓库',
-          icon: Symbols.code,
-        ),
-        SizedBox(height: 16.0),
-        _AboutLinkItem(
-          title: '交流群组',
-          url: 'https://t.me/+NsZamWiEKh5lOWNl',
-          actionLabel: '加入群组',
-          icon: Symbols.send,
-        ),
-        SizedBox(height: 16.0),
-        CreateIssueTile(),
-        _AboutContributorsSection(),
-      ],
-    );
-  }
-}
-
-class _AboutContributorsSection extends StatefulWidget {
-  const _AboutContributorsSection();
-
-  @override
-  State<_AboutContributorsSection> createState() =>
-      _AboutContributorsSectionState();
-}
-
-class _AboutContributorsSectionState extends State<_AboutContributorsSection> {
-  static List<_AboutContributor>? _cachedContributors;
-  static Future<List<_AboutContributor>>? _pendingRequest;
-
-  late List<_AboutContributor> _contributors;
-
-  @override
-  void initState() {
-    super.initState();
-    _contributors = _cachedContributors ?? const [];
-    if (_cachedContributors == null) _loadContributors();
-  }
-
-  Future<void> _loadContributors() async {
-    try {
-      final contributors = await _getContributors();
-      if (!mounted) return;
-      setState(() => _contributors = contributors);
-    } catch (error, trace) {
-      logger.w('[About] contributors request failed: ${error.runtimeType}');
-      logger.d(trace.toString());
-    }
-  }
-
-  static Future<List<_AboutContributor>> _getContributors() async {
-    final cached = _cachedContributors;
-    if (cached != null) return cached;
-
-    final pending = _pendingRequest;
-    if (pending != null) return pending;
-
-    final request = _fetchContributors();
-    _pendingRequest = request;
-    try {
-      final contributors = await request;
-      _cachedContributors = contributors;
-      return contributors;
-    } finally {
-      if (identical(_pendingRequest, request)) _pendingRequest = null;
-    }
-  }
-
-  static Future<List<_AboutContributor>> _fetchContributors() async {
-    final slug = gh.RepositorySlug.full(AppPreference.defaultUpdateRepoSlug);
-    final response = await AppSettings.github.repositories
-        .listContributors(slug, anon: true)
-        .toList()
-        .timeout(const Duration(seconds: 15));
-    final contributors = response
-        .where((item) {
-          final login = item.login?.trim();
-          final type = item.type?.toLowerCase();
-          return login != null &&
-              login.isNotEmpty &&
-              type != 'bot' &&
-              !login.toLowerCase().endsWith('[bot]');
-        })
-        .map(_AboutContributor.fromGitHub)
-        .toList();
-    contributors.sort((left, right) {
-      final contributionOrder = right.contributions.compareTo(
-        left.contributions,
-      );
-      if (contributionOrder != 0) return contributionOrder;
-      return left.login.toLowerCase().compareTo(right.login.toLowerCase());
-    });
-    return List.unmodifiable(contributors);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_contributors.isEmpty) return const SizedBox.shrink();
-
-    return Padding(
-      padding: const EdgeInsets.only(top: 24.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const _SettingsSectionHeader('贡献者'),
-          const SizedBox(height: 8.0),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final columns = constraints.maxWidth >= 720
-                  ? 3
-                  : constraints.maxWidth >= 460
-                  ? 2
-                  : 1;
-              final tileWidth =
-                  (constraints.maxWidth - (columns - 1) * Spacing.sm) / columns;
-              return Wrap(
-                spacing: Spacing.sm,
-                runSpacing: Spacing.sm,
-                children: [
-                  for (final contributor in _contributors)
-                    _ContributorTile(
-                      contributor: contributor,
-                      width: tileWidth,
-                    ),
-                ],
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _AboutContributor {
-  const _AboutContributor({
-    required this.login,
-    required this.avatarUrl,
-    required this.profileUrl,
-    required this.contributions,
-  });
-
-  factory _AboutContributor.fromGitHub(gh.Contributor contributor) {
-    final login = contributor.login!.trim();
-    return _AboutContributor(
-      login: login,
-      avatarUrl: contributor.avatarUrl?.trim(),
-      profileUrl: contributor.htmlUrl?.trim().isNotEmpty == true
-          ? contributor.htmlUrl!.trim()
-          : 'https://github.com/$login',
-      contributions: contributor.contributions ?? 0,
-    );
-  }
-
-  final String login;
-  final String? avatarUrl;
-  final String profileUrl;
-  final int contributions;
-}
-
-class _ContributorTile extends StatelessWidget {
-  const _ContributorTile({required this.contributor, required this.width});
-
-  final _AboutContributor contributor;
-  final double width;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return SizedBox(
-      width: width,
-      height: 60.0,
-      child: Material(
-        color: scheme.surfaceContainer,
-        borderRadius: AppRadius.smCircular,
-        child: InkWell(
-          borderRadius: AppRadius.smCircular,
-          onTap: () async {
-            final opened = await rust_utils.launchInBrowser(
-              uri: contributor.profileUrl,
-            );
-            if (!opened && context.mounted) {
-              showTextOnSnackBar('打开链接失败');
-            }
-          },
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12.0),
-            child: Row(
-              children: [
-                _ContributorAvatar(contributor: contributor),
-                const SizedBox(width: 10.0),
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        contributor.login,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: scheme.onSurface,
-                          fontSize: AppType.body,
-                          fontWeight: AppType.weightSemibold,
-                        ),
-                      ),
-                      Text(
-                        '${contributor.contributions} 次贡献',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: scheme.onSurfaceVariant,
-                          fontSize: AppType.caption,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Icon(Symbols.open_in_new, size: 16, color: scheme.outline),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ContributorAvatar extends StatelessWidget {
-  const _ContributorAvatar({required this.contributor});
-
-  final _AboutContributor contributor;
-
-  @override
-  Widget build(BuildContext context) {
-    final login = contributor.login;
-    final initials = login.substring(0, login.length > 2 ? 2 : login.length);
-    final avatarUrl = contributor.avatarUrl;
-    final scheme = Theme.of(context).colorScheme;
-    return CircleAvatar(
-      radius: 18,
-      backgroundColor: scheme.secondaryContainer,
-      foregroundColor: scheme.onSecondaryContainer,
-      child: avatarUrl?.isNotEmpty == true
-          ? ClipOval(
-              child: Image.network(
-                avatarUrl!,
-                width: 36,
-                height: 36,
-                fit: BoxFit.cover,
-                cacheWidth: 72,
-                cacheHeight: 72,
-                gaplessPlayback: true,
-                errorBuilder: (_, _, _) => Text(initials.toUpperCase()),
-              ),
-            )
-          : Text(initials.toUpperCase()),
-    );
-  }
-}
-
-class _SettingsSectionHeader extends StatelessWidget {
-  final String label;
-  const _SettingsSectionHeader(this.label);
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(left: 4),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: scheme.onSurfaceVariant,
-          fontSize: AppType.caption,
-          fontWeight: AppType.weightSemibold,
-          letterSpacing: 0,
-        ),
-      ),
-    );
-  }
-}
-
 class SettingsEmptyState extends StatelessWidget {
   const SettingsEmptyState({
     super.key,
@@ -3593,168 +3238,6 @@ class SettingsEmptyState extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _AboutVersionItem extends StatefulWidget {
-  const _AboutVersionItem();
-
-  @override
-  State<_AboutVersionItem> createState() => _AboutVersionItemState();
-}
-
-class _AboutVersionItemState extends State<_AboutVersionItem> {
-  bool _isChecking = false;
-
-  Future<void> _check() async {
-    if (_isChecking) return;
-    setState(() => _isChecking = true);
-
-    try {
-      final channel = await ensureUpdateChannel(context);
-      if (!mounted || channel == null) return;
-      final newest = await UpdateChecker.checkForUpdate(channel: channel);
-      if (!mounted) return;
-
-      if (newest != null &&
-          UpdateChecker.hasNewVersion(newest.tagName, AppSettings.version)) {
-        showDialog(
-          context: context,
-          builder: (context) =>
-              NewestUpdateView(info: newest, channel: channel),
-        );
-      } else {
-        showTextOnSnackBar('无新版本');
-      }
-    } catch (err, trace) {
-      logger.e(err, stackTrace: trace);
-      if (mounted) showTextOnSnackBar('网络异常');
-    } finally {
-      if (mounted) setState(() => _isChecking = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SettingsTile(
-      description: '当前版本',
-      subtitle: AppSettings.version,
-      action: FilledButton.tonalIcon(
-        onPressed: _isChecking ? null : _check,
-        icon: _isChecking
-            ? const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : const Icon(Symbols.update, size: 18),
-        label: Text(_isChecking ? '检查中' : '检查更新'),
-      ),
-    );
-  }
-}
-
-class _AboutUpdateChannelItem extends StatefulWidget {
-  const _AboutUpdateChannelItem();
-
-  @override
-  State<_AboutUpdateChannelItem> createState() =>
-      _AboutUpdateChannelItemState();
-}
-
-class _AboutUpdateChannelItemState extends State<_AboutUpdateChannelItem> {
-  bool _changing = false;
-
-  Future<void> _chooseChannel() async {
-    if (_changing) return;
-    setState(() => _changing = true);
-    try {
-      await chooseAndSaveUpdateChannel(context);
-    } finally {
-      if (mounted) setState(() => _changing = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final channel = UpdateChannel.parse(AppPreference.instance.updateChannel);
-    return SettingsTile(
-      description: '更新渠道',
-      subtitle: channel?.label ?? '首次检查更新时选择',
-      action: OutlinedButton.icon(
-        onPressed: _changing ? null : _chooseChannel,
-        icon: _changing
-            ? const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : const Icon(Symbols.swap_horiz, size: 18),
-        label: Text(
-          _changing
-              ? '保存中'
-              : channel == null
-              ? '选择渠道'
-              : '切换渠道',
-        ),
-      ),
-    );
-  }
-}
-
-class _AboutAutoUpdateItem extends StatefulWidget {
-  const _AboutAutoUpdateItem();
-
-  @override
-  State<_AboutAutoUpdateItem> createState() => _AboutAutoUpdateItemState();
-}
-
-class _AboutAutoUpdateItemState extends State<_AboutAutoUpdateItem> {
-  @override
-  Widget build(BuildContext context) {
-    final enabled = AppPreference.instance.autoCheckUpdate;
-    return SettingsTile(
-      description: '启动时自动检查更新',
-      subtitle: enabled ? '已开启' : '已关闭',
-      action: Switch(
-        value: enabled,
-        onChanged: (value) async {
-          setState(() => AppPreference.instance.autoCheckUpdate = value);
-          await AppPreference.instance.save();
-        },
-      ),
-    );
-  }
-}
-
-class _AboutLinkItem extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String url;
-  final String actionLabel;
-
-  const _AboutLinkItem({
-    required this.icon,
-    required this.title,
-    required this.url,
-    required this.actionLabel,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return SettingsTile(
-      description: title,
-      action: FilledButton.tonalIcon(
-        onPressed: () async {
-          final opened = await rust_utils.launchInBrowser(uri: url);
-          if (!opened) {
-            showTextOnSnackBar('打开链接失败');
-          }
-        },
-        icon: Icon(icon, size: 18),
-        label: Text(actionLabel),
       ),
     );
   }
@@ -3979,7 +3462,7 @@ class _AppearanceDisplayGroup extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: const [
-        _SettingsSectionHeader('显示模式'),
+        SettingsSectionHeader('显示模式'),
         SizedBox(height: 4.0),
         _ThemeOptionControl(),
       ],
@@ -3995,7 +3478,7 @@ class _AppearanceThemeGroup extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: const [
-        _SettingsSectionHeader('主题'),
+        SettingsSectionHeader('主题'),
         SizedBox(height: 4.0),
         _ThemeOptionControl(),
         SizedBox(height: 16.0),
@@ -4015,7 +3498,7 @@ class _AppearanceColorGroup extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: const [
-        _SettingsSectionHeader('配色'),
+        SettingsSectionHeader('配色'),
         SizedBox(height: 4.0),
         _ThemeColorModeControl(),
         SizedBox(height: 16.0),
@@ -4033,7 +3516,7 @@ class _AppearanceBackgroundGroup extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: const [
-        _SettingsSectionHeader('应用背景'),
+        SettingsSectionHeader('应用背景'),
         SizedBox(height: 4.0),
         _AppBackgroundControl(),
         SizedBox(height: 16.0),
@@ -4053,7 +3536,7 @@ class _AppearanceListGroup extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: const [
-        _SettingsSectionHeader('界面动效'),
+        SettingsSectionHeader('界面动效'),
         SizedBox(height: 4.0),
         _MotionEffectSwitch(effect: _MotionEffect.stackedScroll),
         SizedBox(height: 16.0),
@@ -4079,7 +3562,7 @@ class _AppearanceMonetGroup extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: const [
-        _SettingsSectionHeader('播放界面配色'),
+        SettingsSectionHeader('播放界面配色'),
         SizedBox(height: 4.0),
         _MonetProgressBarSwitch(),
         SizedBox(height: 16.0),
@@ -4139,7 +3622,7 @@ class _AppearanceProgressGroup extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: const [
-        _SettingsSectionHeader('进度与顶部歌词'),
+        SettingsSectionHeader('进度与顶部歌词'),
         SizedBox(height: 4.0),
         _WavyProgressBarSwitch(),
         SizedBox(height: 16.0),
@@ -4231,7 +3714,7 @@ class _AppearancePlayerGroup extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: const [
-        _SettingsSectionHeader('播放界面'),
+        SettingsSectionHeader('播放界面'),
         SizedBox(height: 4.0),
         _NowPlayingBackgroundSettings(),
         SizedBox(height: 16.0),
@@ -4261,7 +3744,7 @@ class _LyricSourceGroup extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: const [
-        _SettingsSectionHeader('来源'),
+        SettingsSectionHeader('来源'),
         SizedBox(height: 4.0),
         DefaultLyricSourceControl(),
       ],
@@ -4291,7 +3774,7 @@ class _LyricContentGroupState extends State<_LyricContentGroup> {
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: [
-        const _SettingsSectionHeader('歌曲信息'),
+        const SettingsSectionHeader('歌曲信息'),
         const SizedBox(height: 4.0),
         SettingsTile(
           description: '保留歌曲信息',
@@ -4307,7 +3790,7 @@ class _LyricContentGroupState extends State<_LyricContentGroup> {
           ),
         ),
         const SizedBox(height: 24.0),
-        const _SettingsSectionHeader('文字转换'),
+        const SettingsSectionHeader('文字转换'),
         const SizedBox(height: 4.0),
         SettingsTile(
           description: '歌词转换',
@@ -4349,7 +3832,7 @@ class _LyricWritingGroupState extends State<_LyricWritingGroup> {
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: [
-        const _SettingsSectionHeader('写入方式'),
+        const SettingsSectionHeader('写入方式'),
         const SizedBox(height: 4.0),
         if (!enableOnlineLyricWriting)
           const SettingsEmptyState(
@@ -4409,7 +3892,7 @@ class _LyricWritingGroupState extends State<_LyricWritingGroup> {
             ),
           ),
           const SizedBox(height: 24.0),
-          const _SettingsSectionHeader('自动写入'),
+          const SettingsSectionHeader('自动写入'),
           const SizedBox(height: 4.0),
           SettingsTile(
             description: '自动写入标签',
@@ -4481,7 +3964,7 @@ class _LyricEffectGroup extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: const [
-        _SettingsSectionHeader('显示效果'),
+        SettingsSectionHeader('显示效果'),
         SizedBox(height: 4.0),
         _GlowEffectSwitch(),
         SizedBox(height: 16.0),
@@ -4503,7 +3986,7 @@ class _PlaybackBehaviorGroup extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: const [
-        _SettingsSectionHeader('播放行为'),
+        SettingsSectionHeader('播放行为'),
         SizedBox(height: 4.0),
         RememberPlaybackPositionControl(),
         SizedBox(height: 16.0),
@@ -4523,7 +4006,7 @@ class _PlaybackLastFmGroup extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: const [
-        _SettingsSectionHeader('Last.fm'),
+        SettingsSectionHeader('Last.fm'),
         SizedBox(height: 4.0),
         LastFmSettingsPanel(),
       ],
@@ -4539,7 +4022,7 @@ class _TaskbarControlGroup extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: const [
-        _SettingsSectionHeader('任务栏'),
+        SettingsSectionHeader('任务栏'),
         SizedBox(height: 4.0),
         _TaskbarThumbnailControl(),
       ],
@@ -4555,7 +4038,7 @@ class _InAppHotkeyGroup extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: const [
-        _SettingsSectionHeader('应用内快捷键'),
+        SettingsSectionHeader('应用内快捷键'),
         SizedBox(height: 4.0),
         HotkeySettingsPanel(),
       ],
@@ -4571,7 +4054,7 @@ class _GlobalHotkeyGroup extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: const [
-        _SettingsSectionHeader('全局热键'),
+        SettingsSectionHeader('全局热键'),
         SizedBox(height: 4.0),
         GlobalHotkeySettingsPanel(),
       ],
@@ -4595,7 +4078,7 @@ class _DesktopBasicGroupState extends State<_DesktopBasicGroup>
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: [
-        const _SettingsSectionHeader('歌词内容'),
+        const SettingsSectionHeader('歌词内容'),
         const SizedBox(height: 4.0),
         SettingsTile(
           description: '歌词翻译',
@@ -4661,7 +4144,7 @@ class _DesktopDisplayGroupState extends State<_DesktopDisplayGroup>
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: [
-        const _SettingsSectionHeader('布局与动画'),
+        const SettingsSectionHeader('布局与动画'),
         const SizedBox(height: 4.0),
         if (showTranslationPosition) ...[
           SettingsTile(
@@ -4870,7 +4353,7 @@ class _DesktopWindowGroupState extends State<_DesktopWindowGroup>
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: [
-        const _SettingsSectionHeader('窗口行为'),
+        const SettingsSectionHeader('窗口行为'),
         const SizedBox(height: 4.0),
         SettingsTile(
           description: '暂停时隐藏',
@@ -4935,7 +4418,7 @@ class _DesktopStyleGroupState extends State<_DesktopStyleGroup>
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: [
-        const _SettingsSectionHeader('文字样式'),
+        const SettingsSectionHeader('文字样式'),
         const SizedBox(height: 8),
         const _DesktopLyricPreview(),
         const SizedBox(height: 16),
@@ -5092,7 +4575,7 @@ class _DesktopColorGroupState extends State<_DesktopColorGroup> {
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: [
-        const _SettingsSectionHeader('颜色'),
+        const SettingsSectionHeader('颜色'),
         const SizedBox(height: 4.0),
         SettingsTile(
           description: '跟随主题色',
@@ -5171,7 +4654,7 @@ class _AdvancedSystemGroup extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: const [
-        _SettingsSectionHeader('系统行为'),
+        SettingsSectionHeader('系统行为'),
         SizedBox(height: 4.0),
         _WindowCloseBehaviorControl(),
         SizedBox(height: 16.0),
@@ -5191,7 +4674,7 @@ class _AdvancedLibraryGroup extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: const [
-        _SettingsSectionHeader('媒体解析'),
+        SettingsSectionHeader('媒体解析'),
         SizedBox(height: 4.0),
         ArtistSeparatorEditor(),
       ],
@@ -5208,7 +4691,7 @@ class _AdvancedFontGroup extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: [
-        const _SettingsSectionHeader('字体'),
+        const SettingsSectionHeader('字体'),
         const SizedBox(height: 4.0),
         const _FontPreviewCard(),
         const SizedBox(height: 16.0),
@@ -5232,7 +4715,7 @@ class _AdvancedBackupGroup extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       children: const [
-        _SettingsSectionHeader('备份'),
+        SettingsSectionHeader('备份'),
         SizedBox(height: 4.0),
         BackupSettingsPanel(),
       ],
