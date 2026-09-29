@@ -40,7 +40,7 @@ if ([string]::IsNullOrWhiteSpace($PreviousPath)) {
     $PreviousPath = Read-Host "Previous portable package directory"
 }
 
-$currentAppDir = Resolve-AppDirectory $PSScriptRoot
+$currentAppDir = Resolve-AppDirectory (Split-Path -Parent $PSScriptRoot)
 $previousAppDir = Resolve-AppDirectory $PreviousPath
 if ($currentAppDir.Equals($previousAppDir, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "The previous and current package directories are the same."

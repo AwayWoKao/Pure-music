@@ -255,10 +255,10 @@ class _LibraryBenchmarkDriverState extends State<_LibraryBenchmarkDriver> {
         directory ??
         await Directory.systemTemp.createTemp('pure_music_library_benchmark_');
     if (directory == null || initialize) {
-      _createBenchmarkDatabase(targetDirectory, size);
       File(
         '${targetDirectory.path}${Platform.pathSeparator}index.json',
       ).writeAsStringSync('{"version":1,"size":$size}', flush: true);
+      _createBenchmarkDatabase(targetDirectory, size);
     }
 
     final rssBefore = ProcessInfo.currentRss;
@@ -625,8 +625,19 @@ void _createBenchmarkDatabase(Directory directory, int size) {
       INSERT INTO meta(key, value) VALUES('version', '110');
       INSERT INTO meta(key, value) VALUES('identity_backfill_v1', '1');
       INSERT INTO meta(key, value) VALUES('database_layout_version', '2');
-      BEGIN IMMEDIATE;
     ''');
+    final indexFile = File(
+      '${directory.path}${Platform.pathSeparator}index.json',
+    );
+    database.execute('INSERT INTO meta(key, value) VALUES(?, ?)', [
+      'index_source_modified',
+      _fileModifiedNanos(indexFile),
+    ]);
+    database.execute('INSERT INTO meta(key, value) VALUES(?, ?)', [
+      'index_source_size',
+      indexFile.lengthSync(),
+    ]);
+    database.execute('BEGIN IMMEDIATE;');
     final folderStatement = database.prepare(
       'INSERT INTO folders(path, modified, latest) VALUES(?1, ?2, ?3)',
     );
@@ -697,6 +708,30 @@ void _createBenchmarkDatabase(Directory directory, int size) {
   } finally {
     database.dispose();
   }
+}
+
+int _fileModifiedNanos(File file) {
+  final environment = <String, String>{
+    ...Platform.environment,
+    'PURE_MUSIC_INDEX_PATH': file.path,
+  };
+  final result = Process.runSync('powershell.exe', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-Command',
+    r'[System.IO.File]::GetLastWriteTimeUtc($env:PURE_MUSIC_INDEX_PATH).Ticks',
+  ], environment: environment);
+  if (result.exitCode != 0) {
+    throw StateError(
+      'Unable to read benchmark index timestamp: ${result.stderr}',
+    );
+  }
+  final ticks = int.tryParse(result.stdout.toString().trim());
+  if (ticks == null) {
+    throw StateError('Invalid benchmark index timestamp: ${result.stdout}');
+  }
+  const unixEpochTicks = 621355968000000000;
+  return (ticks - unixEpochTicks) * 100;
 }
 
 String _pageName(int page) => switch (page) {
