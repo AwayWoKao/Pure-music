@@ -1,4 +1,4 @@
-import 'package:flutter/painting.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pure_music/core/enums.dart';
 import 'package:pure_music/page/now_playing_page/component/lyrics_line_painter.dart';
@@ -416,6 +416,42 @@ void main() {
         );
       },
     );
+  });
+
+  group('lyricLineTransformMatrix', () {
+    Offset mapPoint(Matrix4 m, double x, double y) {
+      final s = m.storage;
+      return Offset(s[0] * x + s[4] * y + s[12], s[1] * x + s[5] * y + s[13]);
+    }
+
+    test('keeps the top anchor fixed under scale for every alignment', () {
+      const lineWidth = 320.0;
+      const scale = 1.3;
+      const offsetY = -7.5;
+      for (final align in [
+        LyricTextAlign.left,
+        LyricTextAlign.center,
+        LyricTextAlign.right,
+      ]) {
+        final anchorX = lineWidth * (lyricLineScaleAlignment(align).x + 1) / 2;
+        final matrix = lyricLineTransformMatrix(
+          scale: scale,
+          offsetY: offsetY,
+          anchorX: anchorX,
+          anchorY: 0.0,
+        );
+
+        final anchor = mapPoint(matrix, anchorX, 0);
+        expect(anchor.dx, closeTo(anchorX, 0.0001));
+        expect(anchor.dy, closeTo(offsetY, 0.0001));
+
+        // 行顶在缩放后只跟随整体位移，不出现中心缩放的上下窜动。
+        final topLeft = mapPoint(matrix, 0, 0);
+        expect(topLeft.dy, closeTo(offsetY, 0.0001));
+        final topRight = mapPoint(matrix, lineWidth, 0);
+        expect(topRight.dy, closeTo(offsetY, 0.0001));
+      }
+    });
   });
 
   group('lyricExitLift', () {

@@ -100,6 +100,37 @@ bool shouldFollowLyricLineScroll({
   return forceScroll || needsInitialScroll || mainLineChanged;
 }
 
+/// 更新与当前状态完全一致时只刷新显示位置，不重算滚动目标。
+@visibleForTesting
+bool shouldOnlyRefreshLyricDisplay({
+  required int renderableMainLine,
+  required int currentMainLine,
+  required Set<int> groupLines,
+  required Set<int> currentGroupLines,
+  required Set<int> mainActiveLines,
+  required Set<int> currentMainActiveLines,
+  required Set<int> backgroundActiveLines,
+  required Set<int> currentBackgroundActiveLines,
+  required Set<int> activeLines,
+  required Set<int> currentActiveLines,
+  required int? tailCatchUpLine,
+  required int? currentTailCatchUpLine,
+}) {
+  return renderableMainLine == currentMainLine &&
+      setEquals(currentGroupLines, groupLines) &&
+      setEquals(currentMainActiveLines, mainActiveLines) &&
+      setEquals(currentBackgroundActiveLines, backgroundActiveLines) &&
+      setEquals(currentActiveLines, activeLines) &&
+      currentTailCatchUpLine == tailCatchUpLine;
+}
+
+/// 缓存行高由 measureHeight 产出、已含 BG 预留，直接作为回退行高，
+/// 不得再叠加 BG 高度，否则含 BG 行会被算高两次。
+@visibleForTesting
+double lyricFallbackLineHeight({required double? cachedLineHeight}) {
+  return cachedLineHeight ?? 96.0;
+}
+
 @visibleForTesting
 bool shouldForceLyricScrollAfterOffsetsComputed({
   required bool needsInitialScroll,
@@ -2020,17 +2051,12 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
     if (lineBox != null && lineBox.hasSize && lineBox.size.height > 0) {
       return lineBox.size.height;
     }
-    final lineHeight =
-        _cachedHeights != null && index >= 0 && index < _cachedHeights!.length
-        ? _cachedHeights![index]
-        : 96.0;
-    final backgroundHeight =
-        _cachedBackgroundVocalHeights != null &&
-            index >= 0 &&
-            index < _cachedBackgroundVocalHeights!.length
-        ? _cachedBackgroundVocalHeights![index]
-        : 0.0;
-    return lineHeight + backgroundHeight;
+    return lyricFallbackLineHeight(
+      cachedLineHeight:
+          _cachedHeights != null && index >= 0 && index < _cachedHeights!.length
+          ? _cachedHeights![index]
+          : null,
+    );
   }
 
   double? _parallelLineHeightBudget() {
@@ -2352,12 +2378,20 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
       preferForward: preferForward,
     );
     if (renderableMainLine == null) return;
-    if (renderableMainLine == _mainLine &&
-        setEquals(_parallelGroupLines, nextGroupLines) &&
-        setEquals(_mainActiveLyricLines, nextMainActiveLines) &&
-        setEquals(_backgroundActiveLyricLines, nextBackgroundActiveLines) &&
-        setEquals(_activeLyricLines, nextActiveLines) &&
-        _tailHighlightCatchUpLine == nextTailHighlightCatchUpLine) {
+    if (shouldOnlyRefreshLyricDisplay(
+      renderableMainLine: renderableMainLine,
+      currentMainLine: _mainLine,
+      groupLines: nextGroupLines,
+      currentGroupLines: _parallelGroupLines,
+      mainActiveLines: nextMainActiveLines,
+      currentMainActiveLines: _mainActiveLyricLines,
+      backgroundActiveLines: nextBackgroundActiveLines,
+      currentBackgroundActiveLines: _backgroundActiveLyricLines,
+      activeLines: nextActiveLines,
+      currentActiveLines: _activeLyricLines,
+      tailCatchUpLine: nextTailHighlightCatchUpLine,
+      currentTailCatchUpLine: _tailHighlightCatchUpLine,
+    )) {
       if (resetVoiceLayout ||
           positionChanged &&
               (_needsInitialScroll ||

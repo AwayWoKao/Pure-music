@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:math' show max;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show ValueListenable;
+import 'package:flutter/foundation.dart'
+    show ValueListenable, visibleForTesting;
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/physics.dart';
 import 'package:provider/provider.dart';
@@ -22,6 +23,15 @@ import 'package:pure_music/page/now_playing_page/component/lyric_height_cache_ke
 import 'package:pure_music/page/now_playing_page/component/lyric_painter_params.dart';
 import 'package:pure_music/page/now_playing_page/component/lyrics_line_painter.dart';
 import 'package:pure_music/play_service/play_service.dart';
+
+/// 整行上抬状态：演唱中抬起；唱完后只要仍在当前组就保持，
+/// 直到下一行接替（组移走）才落下。
+@visibleForTesting
+bool lyricLineFloatTarget({
+  required bool mainHighlight,
+  required bool isHighlightActive,
+  required bool wasLatched,
+}) => mainHighlight || (wasLatched && isHighlightActive);
 
 class LyricsLineWidget extends StatefulWidget {
   const LyricsLineWidget({
@@ -101,7 +111,8 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
 
   late final AnimationController _scaleController;
   late final AnimationController _floatController;
-  late final Listenable _visualTransformListenable;
+  final ValueNotifier<double> _jumpOffset = ValueNotifier(0);
+  late Listenable _visualTransformListenable;
 
   // 缓存 Painter，避免每帧重建
   LyricsLinePainter? _cachedPainter;
@@ -113,6 +124,7 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
   final ValueNotifier<double> _heightNotifier = ValueNotifier(0.0);
   double? _frozenHeight;
   double? _departingPaintHeight;
+  bool _floatLatched = false;
 
   void _clearHeightCache() {
     _cachedLineHeight = null;
@@ -157,12 +169,23 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
     _scaleController.value = widget.distance == 0
         ? _config.mainLineScale * _config.activeLineScaleMultiplier
         : _config.subLineScale * _config.inactiveLineScaleMultiplier;
+    if (widget.usesAuthoredTiming) {
+      _floatLatched = lyricLineFloatTarget(
+        mainHighlight: _mainHighlightFor(widget),
+        isHighlightActive: widget.isHighlightActive,
+        wasLatched: false,
+      );
+    }
     _floatController = AnimationController.unbounded(vsync: this);
-    _floatController.value = _mainHighlightFor(widget) ? 1.0 : 0.0;
-    _visualTransformListenable = Listenable.merge([
-      _scaleController,
-      _floatController,
-    ]);
+    _floatController.value =
+        lyricLineFloatTarget(
+          mainHighlight: _mainHighlightFor(widget),
+          isHighlightActive: widget.isHighlightActive,
+          wasLatched: _floatLatched,
+        )
+        ? 1.0
+        : 0.0;
+    _bindVisualTransformListenable();
     _playerStateListener = _syncProgressTicker;
     if (widget.positionListenable == null) {
       PlayService.instance.playbackService.playerStateNotifier.addListener(
@@ -170,6 +193,17 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
       );
     }
     _syncProgressTicker();
+  }
+
+  void _bindVisualTransformListenable() {
+    final listeners = <Listenable>[
+      _scaleController,
+      _floatController,
+      _jumpOffset,
+    ];
+    final lineOffset = widget.lineOffsetProgressListenable;
+    if (lineOffset != null) listeners.add(lineOffset);
+    _visualTransformListenable = Listenable.merge(listeners);
   }
 
   void _animateScale() {
@@ -195,7 +229,14 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
   }
 
   void _animateFloat() {
-    final target = _mainHighlightFor(widget) ? 1.0 : 0.0;
+    final target =
+        lyricLineFloatTarget(
+          mainHighlight: _mainHighlightFor(widget),
+          isHighlightActive: widget.isHighlightActive,
+          wasLatched: _floatLatched,
+        )
+        ? 1.0
+        : 0.0;
     // 不在这里提前返回，让动画有机会完成
     final style = context.read<LyricViewController>().renderConfig.staggerStyle;
     if (style == LyricStaggerStyle.smooth) {
@@ -470,12 +511,29 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
       _frozenHeight = null;
     }
 
+    if (widget.lineOffsetProgressListenable !=
+        oldWidget.lineOffsetProgressListenable) {
+      _bindVisualTransformListenable();
+    }
+
     final isActive = widget.distance == 0;
     final wasActive = oldWidget.distance == 0;
     final isHighlightActive = _mainHighlightFor(widget);
     final wasHighlightActive = _mainHighlightFor(oldWidget);
-    if (widget.usesAuthoredTiming && isHighlightActive != wasHighlightActive) {
-      _animateFloat();
+    if (widget.usesAuthoredTiming) {
+      final wasFloatActive = lyricLineFloatTarget(
+        mainHighlight: wasHighlightActive,
+        isHighlightActive: oldWidget.isHighlightActive,
+        wasLatched: _floatLatched,
+      );
+      _floatLatched = lyricLineFloatTarget(
+        mainHighlight: isHighlightActive,
+        isHighlightActive: widget.isHighlightActive,
+        wasLatched: _floatLatched,
+      );
+      if (_floatLatched != wasFloatActive) {
+        _animateFloat();
+      }
     }
 
     if (isHighlightActive != wasHighlightActive ||
@@ -523,6 +581,7 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
     _tickerHoldTimer?.cancel();
     _scaleController.dispose();
     _floatController.dispose();
+    _jumpOffset.dispose();
     _currentTimeNotifier.dispose();
     _heightNotifier.dispose();
     _cachedPainter = null;
@@ -727,27 +786,48 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
                     : lineHeight;
                 _heightNotifier.value = resolvedHeight;
 
-                return ValueListenableBuilder<double>(
-                  valueListenable: _heightNotifier,
-                  builder: (context, h, _) {
-                    final paintHeight = max(h, _departingPaintHeight ?? h);
-                    return SizedBox(
-                      height: h,
-                      child: OverflowBox(
-                        alignment: Alignment.topCenter,
-                        minHeight: paintHeight,
-                        maxHeight: paintHeight,
-                        child: SizedBox(
-                          width: lineWidth,
-                          height: paintHeight,
-                          child: CustomPaint(
-                            painter: _cachedPainter,
-                            size: Size(lineWidth, paintHeight),
+                // 缩放、上抬、跳转和行偏移合成一个矩阵，锚点取文本对齐的行顶。
+                final anchorX = lineWidth * (layoutScaleAlignment.x + 1) / 2;
+                return AnimatedBuilder(
+                  animation: _visualTransformListenable,
+                  builder: (context, child) {
+                    final floatOffsetY = _floatController.value * -4.0;
+                    final jumpOffsetY = _jumpOffset.value;
+                    final lineOffsetY =
+                        widget.lineOffsetProgressListenable == null
+                        ? 0.0
+                        : widget.lineOffsetY *
+                              (widget.lineOffsetProgressListenable!.value);
+                    final transform = lyricLineTransformMatrix(
+                      scale: _scaleController.value,
+                      offsetY: floatOffsetY + jumpOffsetY + lineOffsetY,
+                      anchorX: anchorX,
+                      anchorY: 0.0,
+                    );
+                    return Transform(transform: transform, child: child!);
+                  },
+                  child: ValueListenableBuilder<double>(
+                    valueListenable: _heightNotifier,
+                    builder: (context, h, _) {
+                      final paintHeight = max(h, _departingPaintHeight ?? h);
+                      return SizedBox(
+                        height: h,
+                        child: OverflowBox(
+                          alignment: Alignment.topCenter,
+                          minHeight: paintHeight,
+                          maxHeight: paintHeight,
+                          child: SizedBox(
+                            width: lineWidth,
+                            height: paintHeight,
+                            child: CustomPaint(
+                              painter: _cachedPainter,
+                              size: Size(lineWidth, paintHeight),
+                            ),
                           ),
                         ),
-                      ),
-                    );
-                  },
+                      );
+                    },
+                  ),
                 );
               },
             );
@@ -755,38 +835,6 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
         );
       },
     );
-
-    inner = AnimatedBuilder(
-      animation: _visualTransformListenable,
-      builder: (context, child) {
-        final transform = Matrix4.identity()
-          ..translateByDouble(0.0, _floatController.value * -4.0, 0.0, 1.0)
-          ..scaleByDouble(
-            _scaleController.value,
-            _scaleController.value,
-            _scaleController.value,
-            1.0,
-          );
-        return Transform(
-          transform: transform,
-          alignment: layoutScaleAlignment,
-          child: child!,
-        );
-      },
-      child: inner,
-    );
-
-    final lineOffsetProgress = widget.lineOffsetProgressListenable;
-    if (lineOffsetProgress != null && widget.lineOffsetY != 0.0) {
-      inner = AnimatedBuilder(
-        animation: lineOffsetProgress,
-        builder: (context, child) => Transform.translate(
-          offset: Offset(0.0, widget.lineOffsetY * lineOffsetProgress.value),
-          child: child,
-        ),
-        child: inner,
-      );
-    }
 
     if (_isHovered && widget.onTap != null) {
       inner = Container(
@@ -805,6 +853,7 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
       generation: widget.jumpTriggerId,
       shiftY: widget.jumpDeltaY,
       delay: widget.staggerDelay,
+      offsetOutput: _jumpOffset,
       child: inner,
     );
 

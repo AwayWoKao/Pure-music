@@ -142,6 +142,20 @@ Alignment lyricLineScaleAlignment(LyricTextAlign align) {
   };
 }
 
+/// 缩放、上抬和跳转位移合成一个矩阵，锚点按文本对齐取行顶。
+Matrix4 lyricLineTransformMatrix({
+  required double scale,
+  required double offsetY,
+  required double anchorX,
+  required double anchorY,
+}) {
+  return Matrix4.identity()
+    ..translateByDouble(0.0, offsetY, 0.0, 1.0)
+    ..translateByDouble(anchorX, anchorY, 0.0, 1.0)
+    ..scaleByDouble(scale, scale, scale, 1.0)
+    ..translateByDouble(-anchorX, -anchorY, 0.0, 1.0);
+}
+
 enum LyricWordEffect { none, scale, scaleAndGlow }
 
 bool _isCjkSungSyllable(String grapheme) {
@@ -1632,7 +1646,7 @@ class LyricsLinePainter extends CustomPainter {
                   (params.usesAuthoredTiming ? 1.0 : visibility);
           canvas.clipRect(Rect.fromLTRB(0.0, 0.0, size.width, clipBottom));
         }
-        // 高度由 _bgHeightFactor 在 measureHeight 中控制，画布自然 clip
+        // 离场只做裁剪和透明度渐出，布局高度始终保持完整预留
 
         final bgTracks = _activeLineTracks(
           config,
@@ -2358,8 +2372,7 @@ class LyricsLinePainter extends CustomPainter {
       bgHeight += bgFontSize * 0.45 + bgRomanTp.height;
       recycleTextPainter(bgRomanTp);
     }
-    if (syncLine.bgTranslation != null &&
-        syncLine.bgTranslation!.isNotEmpty) {
+    if (syncLine.bgTranslation != null && syncLine.bgTranslation!.isNotEmpty) {
       final bgTransTp = _buildTextPainter(
         syncLine.bgTranslation!,
         scheme.onSurface,

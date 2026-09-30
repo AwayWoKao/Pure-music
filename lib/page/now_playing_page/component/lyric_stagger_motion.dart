@@ -78,6 +78,7 @@ class LyricStaggerTransition extends StatefulWidget {
     required this.shiftY,
     required this.delay,
     required this.child,
+    this.offsetOutput,
   });
 
   final bool enabled;
@@ -85,6 +86,7 @@ class LyricStaggerTransition extends StatefulWidget {
   final double shiftY;
   final Duration delay;
   final Widget child;
+  final ValueNotifier<double>? offsetOutput;
 
   @override
   State<LyricStaggerTransition> createState() => _LyricStaggerTransitionState();
@@ -99,7 +101,14 @@ class _LyricStaggerTransitionState extends State<LyricStaggerTransition>
   void initState() {
     super.initState();
     _controller = AnimationController.unbounded(vsync: this);
+    _controller.addListener(_publishOffset);
     _scheduleTransition();
+  }
+
+  void _publishOffset() {
+    final output = widget.offsetOutput;
+    if (output == null || output.value == _controller.value) return;
+    output.value = _controller.value;
   }
 
   @override
@@ -174,15 +183,21 @@ class _LyricStaggerTransitionState extends State<LyricStaggerTransition>
   @override
   void dispose() {
     _delayTimer?.cancel();
+    _controller.removeListener(_publishOffset);
     _controller.dispose();
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) => AnimatedBuilder(
-    animation: _controller,
-    builder: (context, child) =>
-        Transform.translate(offset: Offset(0, _controller.value), child: child),
-    child: widget.child,
-  );
+  Widget build(BuildContext context) {
+    if (widget.offsetOutput != null) return widget.child;
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) => Transform.translate(
+        offset: Offset(0, _controller.value),
+        child: child,
+      ),
+      child: widget.child,
+    );
+  }
 }

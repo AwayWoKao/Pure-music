@@ -35,7 +35,7 @@ double lyricTransitionEnterOpacity(double progress) {
 }
 
 double lyricTransitionExitOpacity(double progress) {
-  return Curves.easeOutCubic.transform(
+  return Curves.easeInOutCubic.transform(
     ((1.0 - progress) / _transitionExitFraction).clamp(0.0, 1.0),
   );
 }
