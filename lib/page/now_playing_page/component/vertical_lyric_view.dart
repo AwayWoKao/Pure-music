@@ -2538,6 +2538,13 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
       _syncToPlaybackPosition(forceScroll: false);
       return;
     }
+    // 播放中的回退行只可能来自用户拖动进度条，防抖队列会把它丢弃，
+    // 这里直接强制定位回目标行。
+    if (playbackService.playerState == PlayerState.playing &&
+        update.primaryIndex < _mainLine) {
+      _queuePlaybackResync(forceScroll: true);
+      return;
+    }
     _enqueueLyricLineUpdate(update);
   }
 
