@@ -718,6 +718,11 @@ class LyricsLinePainter extends CustomPainter {
     );
   }
 
+  bool _isBgInActiveWindow(SyncLyricLine syncLine) {
+    return lyricLineHasBackgroundVocal(syncLine) &&
+        _bgHeightFactor(syncLine) > 0.001;
+  }
+
   double _bgEndMs(SyncLyricLine syncLine) {
     var end =
         (syncLine.bgEnd ??
@@ -2595,10 +2600,11 @@ class LyricsLinePainter extends CustomPainter {
         }
       }
 
-      // BG 高度按完整内容一次性预留，播放进度只控制绘制透明度。
-      if (reserveBackgroundVocalHeight &&
-          lyricLineHasBackgroundVocal(syncLine)) {
-        height += _measureBackgroundVocalHeight(syncLine, lineWidth, fontSize);
+      // 高度随进出因子伸缩：进场把下文顶开，离场随淡出收回。
+      if (reserveBackgroundVocalHeight && _isBgInActiveWindow(syncLine)) {
+        height +=
+            _measureBackgroundVocalHeight(syncLine, lineWidth, fontSize) *
+            _bgHeightFactor(syncLine);
       }
 
       return height;

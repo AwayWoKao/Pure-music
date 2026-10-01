@@ -166,7 +166,7 @@ class _LyricStaggerTransitionState extends State<LyricStaggerTransition>
     if (!mounted || !widget.enabled || generation != widget.generation) return;
     final spring = SpringDescription.withDampingRatio(
       mass: 1,
-      stiffness: 200,
+      stiffness: 100,
       ratio: 0.9,
     );
     _controller.animateWith(

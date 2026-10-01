@@ -21,7 +21,6 @@ const _config = LyricRenderConfig(
 const _lineWidth = 320.0;
 const _beforeBackgroundMs = 10350.0;
 const _backgroundActiveMs = 10500.0;
-const _afterBackgroundMs = 12000.0;
 
 const _scheme = ColorScheme.dark();
 
@@ -51,12 +50,16 @@ double _measureHeight({
   required bool isMainLine,
   bool isHighlightActive = false,
   bool isBackgroundActive = false,
+  double? exitVisibility,
 }) {
   final line = _backgroundVocalLine();
   return LyricsLinePainter(
     params: LyricPainterParams(
       line: line,
       currentTimeMs: currentTimeMs,
+      backgroundVocalVisibilityListenable: exitVisibility == null
+          ? null
+          : ValueNotifier<double>(exitVisibility),
       blurSigma: 0.0,
       config: _config,
       isMainLine: isMainLine,
@@ -98,13 +101,14 @@ void main() {
       currentTimeMs: _backgroundActiveMs,
       isMainLine: false,
       isHighlightActive: false,
+      isBackgroundActive: true,
     );
 
     expect(ended, closeTo(active, 0.001));
     expect(active, greaterThan(0));
   });
 
-  test('background vocal trigger does not grow the layout height', () {
+  test('background vocal trigger grows the layout height', () {
     final beforeTrigger = _measureHeight(
       currentTimeMs: _beforeBackgroundMs,
       isMainLine: true,
@@ -117,11 +121,11 @@ void main() {
       isBackgroundActive: true,
     );
 
-    expect(afterTrigger, closeTo(beforeTrigger, 0.001));
+    expect(afterTrigger, greaterThan(beforeTrigger));
   });
 
-  test('background vocal boundaries keep one layout height', () {
-    // bgStart 10400、bgEnd 11500：开始前、开始时、结束时、结束后 400ms。
+  test('background vocal window pushes and releases the layout height', () {
+    // bgStart 10400、bgEnd 11500：进场把下文顶开，出场随离场淡出收回。
     final beforeStart = _measureHeight(
       currentTimeMs: 10350,
       isMainLine: true,
@@ -133,22 +137,42 @@ void main() {
       isHighlightActive: true,
       isBackgroundActive: true,
     );
+    final midEntry = _measureHeight(
+      currentTimeMs: 10600,
+      isMainLine: true,
+      isHighlightActive: true,
+      isBackgroundActive: true,
+    );
     final atEnd = _measureHeight(
       currentTimeMs: 11500,
       isMainLine: true,
       isHighlightActive: true,
       isBackgroundActive: true,
     );
-    final afterEnd = _measureHeight(
-      currentTimeMs: 11900,
-      isMainLine: false,
-      isHighlightActive: false,
-      isBackgroundActive: false,
+    final activeFull = _measureHeight(
+      currentTimeMs: _backgroundActiveMs,
+      isMainLine: true,
+      isBackgroundActive: true,
+    );
+    final halfExit = _measureHeight(
+      currentTimeMs: _backgroundActiveMs,
+      isMainLine: true,
+      isBackgroundActive: true,
+      exitVisibility: 0.5,
+    );
+    final endedExit = _measureHeight(
+      currentTimeMs: _backgroundActiveMs,
+      isMainLine: true,
+      isBackgroundActive: true,
+      exitVisibility: 0.0,
     );
 
     expect(atStart, closeTo(beforeStart, 0.001));
+    expect(midEntry, greaterThan(atStart));
     expect(atEnd, closeTo(beforeStart, 0.001));
-    expect(afterEnd, closeTo(beforeStart, 0.001));
+    expect(activeFull, greaterThan(beforeStart));
+    expect(halfExit, lessThan(activeFull));
+    expect(endedExit, closeTo(beforeStart, 0.001));
   });
 
   test('scale and displacement keep one stable layout height state', () {
@@ -159,7 +183,7 @@ void main() {
       isBackgroundActive: false,
     );
     final second = _measureHeight(
-      currentTimeMs: _afterBackgroundMs,
+      currentTimeMs: _backgroundActiveMs,
       isMainLine: false,
       isHighlightActive: false,
       isBackgroundActive: true,

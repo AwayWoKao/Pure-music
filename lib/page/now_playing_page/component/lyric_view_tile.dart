@@ -22,28 +22,65 @@ const _activeAlphaBase = 0.22;
 const _staggerStep = 1 / 3;
 const _breathingStep = 1 / 180;
 const _staleInterludeTick = Duration(milliseconds: 200);
-const _transitionEnterFraction = 0.12;
-const _transitionExitFraction = 0.18;
+// 进出场按固定时长换算成进度比例，动画节奏不随间奏长短变化。
+const _transitionEnterDurationMs = 500.0;
+const _transitionExitDurationMs = 500.0;
+const _transitionFractionCap = 0.25;
+
+double _transitionFraction(double lengthMs, double windowMs) =>
+    (windowMs / lengthMs).clamp(1e-6, _transitionFractionCap);
 
 bool shouldIgnoreStaleInterludeTick(Duration delta) =>
     delta > _staleInterludeTick;
 
-double lyricTransitionEnterOpacity(double progress) {
+double lyricTransitionEnterOpacity(double progress, double enterFraction) {
   return Curves.easeOutCubic.transform(
-    (progress / _transitionEnterFraction).clamp(0.0, 1.0),
+    (progress / enterFraction).clamp(0.0, 1.0),
   );
 }
 
-double lyricTransitionExitOpacity(double progress) {
-  return Curves.easeInOutCubic.transform(
-    ((1.0 - progress) / _transitionExitFraction).clamp(0.0, 1.0),
-  );
+double _dotExitProgress(
+  double progress,
+  int staggerIndex,
+  double exitFraction,
+) {
+  if (progress >= 1.0) return 1.0;
+  final start = 1.0 - exitFraction * (staggerIndex + 1) / 3;
+  if (progress <= start) return 0.0;
+  return ((progress - start) / (exitFraction / 3)).clamp(0.0, 1.0);
 }
 
-double lyricTransitionOpacity(double progress) {
-  final normalized = progress.clamp(0.0, 1.0);
-  return lyricTransitionEnterOpacity(normalized) *
-      lyricTransitionExitOpacity(normalized);
+/// 出场按点亮的反向逐个熄灭：dot3 先走、dot1 最后走。
+double lyricTransitionDotExitOpacity(
+  double progress,
+  int staggerIndex,
+  double exitFraction,
+) {
+  return 1.0 -
+      Curves.easeInCubic.transform(
+        _dotExitProgress(progress, staggerIndex, exitFraction),
+      );
+}
+
+/// 熄灭同步收缩半径，避免最后一个点以原大小残留。
+double lyricTransitionDotShrinkFactor(
+  double progress,
+  int staggerIndex,
+  double exitFraction,
+) {
+  return 1.0 - _dotExitProgress(progress, staggerIndex, exitFraction);
+}
+
+/// 出场窗口内行高整体收起，progress 到 1 时归零，交接无跳变。
+double lyricTransitionCollapseFactor(double progress, double exitFraction) {
+  if (progress >= 1.0) return 0.0;
+  final windowStart = 1.0 - exitFraction;
+  if (progress <= windowStart) return 1.0;
+  final exitProgress = ((progress - windowStart) / exitFraction).clamp(
+    0.0,
+    1.0,
+  );
+  return 1.0 - Curves.easeInCubic.transform(exitProgress);
 }
 
 /// 歌词间奏表示
@@ -57,6 +94,9 @@ class LyricTransitionTile extends StatefulWidget {
   final bool compact;
   final bool useMaterialYouColor;
   final bool animateVisibilityWithProgress;
+
+  /// 行内上下留白，随出场一起收起，由外层行组件传入。
+  final double verticalPadding;
   const LyricTransitionTile({
     super.key,
     this.lrcLine,
@@ -67,6 +107,7 @@ class LyricTransitionTile extends StatefulWidget {
     this.compact = false,
     this.useMaterialYouColor = true,
     this.animateVisibilityWithProgress = true,
+    this.verticalPadding = 0.0,
   });
 
   @override
@@ -147,18 +188,36 @@ class _LyricTransitionTileState extends State<LyricTransitionTile> {
       );
     }
 
-    return SizedBox(
-      width: double.infinity,
-      height: transitionTileHeight,
-      child: CustomPaint(
-        painter: LyricTransitionPainter(
-          scheme,
-          controller,
-          alignment: align,
-          useMaterialYouColor: widget.useMaterialYouColor,
-          animateVisibilityWithProgress: widget.animateVisibilityWithProgress,
-        ),
-      ),
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) {
+        final progress = controller.progress.clamp(0.0, 1.0);
+        // 时间窗未开始时高度归零，避免未来间奏行露出空行。
+        final collapse = !widget.animateVisibilityWithProgress
+            ? 1.0
+            : progress <= 0
+            ? 0.0
+            : lyricTransitionCollapseFactor(progress, controller.exitFraction);
+        return Padding(
+          padding: EdgeInsets.symmetric(
+            vertical: widget.verticalPadding * collapse,
+          ),
+          child: SizedBox(
+            width: double.infinity,
+            height: transitionTileHeight * collapse,
+            child: CustomPaint(
+              painter: LyricTransitionPainter(
+                scheme,
+                controller,
+                alignment: align,
+                useMaterialYouColor: widget.useMaterialYouColor,
+                animateVisibilityWithProgress:
+                    widget.animateVisibilityWithProgress,
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -189,34 +248,60 @@ class LyricTransitionPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final progress = controller.progress.clamp(0.0, 1.0);
-    final opacityEnvelope = animateVisibilityWithProgress
-        ? lyricTransitionOpacity(progress)
+    final enterFraction = controller.enterFraction;
+    final exitFraction = controller.exitFraction;
+    final enterOpacity = animateVisibilityWithProgress
+        ? lyricTransitionEnterOpacity(progress, enterFraction)
+        : 1.0;
+    final collapse = animateVisibilityWithProgress
+        ? lyricTransitionCollapseFactor(progress, exitFraction)
         : 1.0;
     final alphaBase = animateVisibilityWithProgress
         ? _alphaBase
         : _activeAlphaBase;
     final alphaRange = 1.0 - alphaBase;
+    final exit1 = animateVisibilityWithProgress
+        ? lyricTransitionDotExitOpacity(progress, 0, exitFraction)
+        : 1.0;
+    final exit2 = animateVisibilityWithProgress
+        ? lyricTransitionDotExitOpacity(progress, 1, exitFraction)
+        : 1.0;
+    final exit3 = animateVisibilityWithProgress
+        ? lyricTransitionDotExitOpacity(progress, 2, exitFraction)
+        : 1.0;
+    final shrink1 = animateVisibilityWithProgress
+        ? lyricTransitionDotShrinkFactor(progress, 0, exitFraction)
+        : 1.0;
+    final shrink2 = animateVisibilityWithProgress
+        ? lyricTransitionDotShrinkFactor(progress, 1, exitFraction)
+        : 1.0;
+    final shrink3 = animateVisibilityWithProgress
+        ? lyricTransitionDotShrinkFactor(progress, 2, exitFraction)
+        : 1.0;
 
+    // 点亮进度按进场窗口归一，三个点在窗口内依次亮完。
+    final enterT = (progress / enterFraction).clamp(0.0, 1.0);
     final a1 =
         (255 *
-                opacityEnvelope *
-                (alphaBase + min(controller.progress * 3, 1) * alphaRange))
+                enterOpacity *
+                exit1 *
+                (alphaBase + min(enterT * 3, 1) * alphaRange))
             .round()
             .clamp(0, 255);
     final a2 =
         (255 *
-                opacityEnvelope *
+                enterOpacity *
+                exit2 *
                 (alphaBase +
-                    min(max(controller.progress - _staggerStep, 0) * 3, 1) *
-                        alphaRange))
+                    min(max(enterT - _staggerStep, 0) * 3, 1) * alphaRange))
             .round()
             .clamp(0, 255);
     final a3 =
         (255 *
-                opacityEnvelope *
+                enterOpacity *
+                exit3 *
                 (alphaBase +
-                    min(max(controller.progress - 2 * _staggerStep, 0) * 3, 1) *
-                        alphaRange))
+                    min(max(enterT - 2 * _staggerStep, 0) * 3, 1) * alphaRange))
             .round()
             .clamp(0, 255);
     final transitionColor = useMaterialYouColor
@@ -229,8 +314,9 @@ class LyricTransitionPainter extends CustomPainter {
     final cy = size.height / 2;
     if (compact) {
       final r =
-          _compactBaseRadius +
-          controller.sizeFactor * _compactSizeFactorMultiplier;
+          (_compactBaseRadius +
+              controller.sizeFactor * _compactSizeFactorMultiplier) *
+          collapse;
       final gap = _circleGapMultiplier * r;
       final double x1, x2, x3;
       switch (alignment) {
@@ -247,11 +333,11 @@ class LyricTransitionPainter extends CustomPainter {
           x2 = x3 - gap;
           x1 = x2 - gap;
       }
-      canvas.drawCircle(Offset(x1, cy), r, circlePaint1);
-      canvas.drawCircle(Offset(x2, cy), r, circlePaint2);
-      canvas.drawCircle(Offset(x3, cy), r, circlePaint3);
+      canvas.drawCircle(Offset(x1, cy), r * shrink1, circlePaint1);
+      canvas.drawCircle(Offset(x2, cy), r * shrink2, circlePaint2);
+      canvas.drawCircle(Offset(x3, cy), r * shrink3, circlePaint3);
     } else {
-      final rWithFactor = radius + controller.sizeFactor;
+      final rWithFactor = (radius + controller.sizeFactor) * collapse;
       final gap = _circleGapMultiplier * rWithFactor;
       final double x1, x2, x3;
       switch (alignment) {
@@ -268,9 +354,9 @@ class LyricTransitionPainter extends CustomPainter {
           x2 = x3 - gap;
           x1 = x2 - gap;
       }
-      canvas.drawCircle(Offset(x1, cy), rWithFactor, circlePaint1);
-      canvas.drawCircle(Offset(x2, cy), rWithFactor, circlePaint2);
-      canvas.drawCircle(Offset(x3, cy), rWithFactor, circlePaint3);
+      canvas.drawCircle(Offset(x1, cy), rWithFactor * shrink1, circlePaint1);
+      canvas.drawCircle(Offset(x2, cy), rWithFactor * shrink2, circlePaint2);
+      canvas.drawCircle(Offset(x3, cy), rWithFactor * shrink3, circlePaint3);
     }
   }
 
@@ -437,6 +523,10 @@ class LyricTransitionTileController extends ChangeNotifier {
 
   double progress = 0;
 
+  /// 进出场固定时长换算出的进度比例，构造时按行时长算好。
+  double enterFraction = 1e-6;
+  double exitFraction = 1e-6;
+
   double sizeFactor = 0;
   double k = 1;
   late final bool _enableBreathing;
@@ -450,6 +540,11 @@ class LyricTransitionTileController extends ChangeNotifier {
     bool enableBreathing = true,
   ]) {
     _enableBreathing = enableBreathing;
+    final lengthMs =
+        (lrcLine?.length.inMilliseconds ?? syncLine!.length.inMilliseconds)
+            .toDouble();
+    enterFraction = _transitionFraction(lengthMs, _transitionEnterDurationMs);
+    exitFraction = _transitionFraction(lengthMs, _transitionExitDurationMs);
     _register();
   }
 
@@ -469,6 +564,8 @@ class LyricTransitionTileController extends ChangeNotifier {
     if (_disposed || !_enableBreathing || !_isPlaying || stepScale <= 0) {
       return;
     }
+    // 退场窗口冻结呼吸，残留的最后一个点不再脉动。
+    if (progress >= 1.0 - exitFraction) return;
     sizeFactor += k * _breathingStep * stepScale;
     if (sizeFactor > 1) {
       k = -1;

@@ -124,11 +124,78 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
   final ValueNotifier<double> _heightNotifier = ValueNotifier(0.0);
   double? _frozenHeight;
   double? _departingPaintHeight;
+  double _lastBgHeightUpdateMs = -1e9;
+  double _lastBackgroundVocalHeightFactor = -1.0;
   bool _floatLatched = false;
 
   void _clearHeightCache() {
     _cachedLineHeight = null;
     _heightCacheKey = null;
+  }
+
+  void _applyMeasuredHeight(double measuredHeight) {
+    if (widget.freezeHeight) {
+      _frozenHeight ??= measuredHeight;
+      if ((_frozenHeight! - _heightNotifier.value).abs() > 0.01) {
+        _cachedLineHeight = _frozenHeight;
+        _heightNotifier.value = _frozenHeight!;
+      }
+      return;
+    }
+    if ((measuredHeight - _heightNotifier.value).abs() <= 0.01) return;
+    _cachedLineHeight = measuredHeight;
+    _heightNotifier.value = measuredHeight;
+  }
+
+  void _updateBackgroundVocalHeight() {
+    if (!widget.reserveBackgroundVocalHeight) return;
+    if (!mounted ||
+        _cachedPainter == null ||
+        _heightCacheKey == null ||
+        _heightCacheKey!.lineWidth <= 0) {
+      return;
+    }
+    final factor = widget.backgroundVocalVisibilityListenable?.value;
+    if (factor != null) {
+      if ((factor - _lastBackgroundVocalHeightFactor).abs() <= 0.002) return;
+      _lastBackgroundVocalHeightFactor = factor;
+    }
+    final height = _cachedPainter!.measureHeight(
+      _heightCacheKey!.lineWidth,
+      reserveBackgroundVocalHeight: true,
+    );
+    _applyMeasuredHeight(height);
+  }
+
+  double _backgroundVocalHeightFactor(
+    SyncLyricLine line,
+    double currentTimeMs,
+  ) {
+    final start = (line.bgStart ?? line.bg?.start ?? line.start).inMilliseconds
+        .toDouble();
+    if (currentTimeMs < start) return 0.0;
+    final progress =
+        ((currentTimeMs - start) /
+                lyricBackgroundVocalEntryDuration.inMilliseconds)
+            .clamp(0.0, 1.0)
+            .toDouble();
+    return Curves.easeOutBack.transform(progress);
+  }
+
+  double _bgEndMs(SyncLyricLine syncLine) {
+    var end =
+        (syncLine.bgEnd ??
+                syncLine.bg?.end ??
+                (syncLine.start + syncLine.length))
+            .inMilliseconds
+            .toDouble();
+    if (syncLine.bgWords.isNotEmpty) {
+      final last = syncLine.bgWords.last;
+      final lastEnd = (last.start.inMilliseconds + last.length.inMilliseconds)
+          .toDouble();
+      if (lastEnd > end) end = lastEnd;
+    }
+    return end;
   }
 
   Duration _lineMedianWordDuration(LyricLine line) {
@@ -186,6 +253,9 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
         ? 1.0
         : 0.0;
     _bindVisualTransformListenable();
+    widget.backgroundVocalVisibilityListenable?.addListener(
+      _updateBackgroundVocalHeight,
+    );
     _playerStateListener = _syncProgressTicker;
     if (widget.positionListenable == null) {
       PlayService.instance.playbackService.playerStateNotifier.addListener(
@@ -462,6 +532,31 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
       if (_currentTimeNotifier.value != _currentTimeMs) {
         _currentTimeNotifier.value = _currentTimeMs;
       }
+      if (syncLine.bg != null || (syncLine.bgText?.isNotEmpty == true)) {
+        final bgStart =
+            (syncLine.bgStart ?? syncLine.bg?.start ?? syncLine.start)
+                .inMilliseconds
+                .toDouble();
+        final bgEnd = _bgEndMs(syncLine);
+        if (_currentTimeMs >= bgStart - 400 && _currentTimeMs < bgEnd + 5000) {
+          final factor = _backgroundVocalHeightFactor(syncLine, _currentTimeMs);
+          if ((factor - _lastBackgroundVocalHeightFactor).abs() > 0.002 &&
+              (_currentTimeMs - _lastBgHeightUpdateMs).abs() > 8) {
+            _lastBgHeightUpdateMs = _currentTimeMs;
+            _lastBackgroundVocalHeightFactor = factor;
+            if (widget.reserveBackgroundVocalHeight &&
+                _cachedPainter != null &&
+                _heightCacheKey != null &&
+                _heightCacheKey!.lineWidth > 0) {
+              final h = _cachedPainter!.measureHeight(
+                _heightCacheKey!.lineWidth,
+                reserveBackgroundVocalHeight: true,
+              );
+              _applyMeasuredHeight(h);
+            }
+          }
+        }
+      }
     } else if (_currentTimeNotifier.value != _currentTimeMs) {
       _currentTimeNotifier.value = _currentTimeMs;
     }
@@ -560,6 +655,16 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
       updateKeepAlive();
     }
 
+    if (widget.backgroundVocalVisibilityListenable !=
+        oldWidget.backgroundVocalVisibilityListenable) {
+      oldWidget.backgroundVocalVisibilityListenable?.removeListener(
+        _updateBackgroundVocalHeight,
+      );
+      widget.backgroundVocalVisibilityListenable?.addListener(
+        _updateBackgroundVocalHeight,
+      );
+    }
+
     if (widget.line != oldWidget.line) {
       _cachedPainter = null;
       _liftCache.values = const [];
@@ -567,6 +672,7 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
       _frozenHeight = null;
       _pendingSeekMs = null;
       _pendingSeekAt = null;
+      _lastBackgroundVocalHeightFactor = -1.0;
     }
   }
 
@@ -582,6 +688,9 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
     _scaleController.dispose();
     _floatController.dispose();
     _jumpOffset.dispose();
+    widget.backgroundVocalVisibilityListenable?.removeListener(
+      _updateBackgroundVocalHeight,
+    );
     _currentTimeNotifier.dispose();
     _heightNotifier.dispose();
     _cachedPainter = null;
@@ -622,35 +731,31 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
         ? 0.0
         : (isCurrentLine ? 0.0 : renderConfig.blurSigmaForDistance(dist));
 
-    final isTransitionLine = _isTransitionLine(widget.line, isCurrentLine);
+    // 间奏行按自身时间窗渲染到底，不随主行切换销毁，退场才能收完。
+    final isTransitionLine = _isTransitionLine(widget.line);
     if (isTransitionLine) {
-      if (!isCurrentLine) {
-        return const SizedBox.shrink();
-      }
-
       final verticalPad = widget.line is SyncLyricLine
           ? renderConfig.syncVerticalPadding(isMainLine: true)
           : renderConfig.lrcVerticalPadding();
 
-      final transitionContent = SizedBox(
-        height: transitionTileHeight,
-        child: widget.line is SyncLyricLine
-            ? LyricTransitionTile(
-                key: ValueKey(widget.line),
-                syncLine: widget.line as SyncLyricLine,
-                positionMs: _currentTimeMs,
-                alignment: effectiveTextAlign,
-                useMaterialYouColor:
-                    AppSettings.instance.useMaterialYouForTransition,
-              )
-            : LyricTransitionTile(
-                key: ValueKey(widget.line),
-                lrcLine: widget.line as LrcLine,
-                alignment: effectiveTextAlign,
-                useMaterialYouColor:
-                    AppSettings.instance.useMaterialYouForTransition,
-              ),
-      );
+      final transitionTile = widget.line is SyncLyricLine
+          ? LyricTransitionTile(
+              key: ValueKey(widget.line),
+              syncLine: widget.line as SyncLyricLine,
+              positionMs: _currentTimeMs,
+              alignment: effectiveTextAlign,
+              useMaterialYouColor:
+                  AppSettings.instance.useMaterialYouForTransition,
+              verticalPadding: verticalPad,
+            )
+          : LyricTransitionTile(
+              key: ValueKey(widget.line),
+              lrcLine: widget.line as LrcLine,
+              alignment: effectiveTextAlign,
+              useMaterialYouColor:
+                  AppSettings.instance.useMaterialYouForTransition,
+              verticalPadding: verticalPad,
+            );
 
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: transitionTileMargin),
@@ -658,13 +763,10 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
           onTap: widget.onTap,
           color: scheme.onSurface.withValues(alpha: 0.08),
           child: Padding(
-            padding: EdgeInsets.only(
-              left: transitionTileMargin,
-              right: transitionTileMargin,
-              top: verticalPad,
-              bottom: verticalPad,
+            padding: const EdgeInsets.symmetric(
+              horizontal: transitionTileMargin,
             ),
-            child: Align(alignment: scaleAlignment, child: transitionContent),
+            child: Align(alignment: scaleAlignment, child: transitionTile),
           ),
         ),
       );
@@ -875,8 +977,7 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
     );
   }
 
-  bool _isTransitionLine(LyricLine line, bool isMainLine) {
-    if (!isMainLine) return false;
+  bool _isTransitionLine(LyricLine line) {
     if (line is SyncLyricLine) {
       return line.words.isEmpty && line.length > const Duration(seconds: 3);
     } else if (line is LrcLine) {
