@@ -406,6 +406,7 @@ class DesktopLyricConfigMessage extends Message {
   final int? playedColor;
   final int? unplayedColor;
   final bool? followThemeColor;
+  final bool? iconFollowThemeColor;
   final bool? useLightOutline;
   final bool? useVerticalDisplayMode;
   final bool? showDoubleLine;
@@ -435,6 +436,7 @@ class DesktopLyricConfigMessage extends Message {
     this.playedColor,
     this.unplayedColor,
     this.followThemeColor,
+    this.iconFollowThemeColor,
     this.useLightOutline,
     this.useVerticalDisplayMode,
     this.showDoubleLine,
@@ -466,6 +468,7 @@ class DesktopLyricConfigMessage extends Message {
       playedColor: (json['playedColor'] as num?)?.toInt(),
       unplayedColor: (json['unplayedColor'] as num?)?.toInt(),
       followThemeColor: json['followThemeColor'] as bool?,
+      iconFollowThemeColor: json['iconFollowThemeColor'] as bool?,
       useLightOutline: json['useLightOutline'] as bool?,
       useVerticalDisplayMode: json['useVerticalDisplayMode'] as bool?,
       showDoubleLine: json['showDoubleLine'] as bool?,
@@ -502,6 +505,8 @@ class DesktopLyricConfigMessage extends Message {
         if (playedColor != null) 'playedColor': playedColor,
         if (unplayedColor != null) 'unplayedColor': unplayedColor,
         if (followThemeColor != null) 'followThemeColor': followThemeColor,
+        if (iconFollowThemeColor != null)
+          'iconFollowThemeColor': iconFollowThemeColor,
         if (useLightOutline != null) 'useLightOutline': useLightOutline,
         if (useVerticalDisplayMode != null)
           'useVerticalDisplayMode': useVerticalDisplayMode,

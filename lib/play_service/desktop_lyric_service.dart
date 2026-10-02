@@ -438,6 +438,7 @@ class DesktopLyricService extends ChangeNotifier {
     int? playedColor,
     int? unplayedColor,
     bool? followThemeColor,
+    bool? iconFollowThemeColor,
     bool? useLightOutline,
     bool? useVerticalDisplayMode,
     bool? showDoubleLine,
@@ -468,6 +469,7 @@ class DesktopLyricService extends ChangeNotifier {
         playedColor: playedColor,
         unplayedColor: unplayedColor,
         followThemeColor: followThemeColor,
+        iconFollowThemeColor: iconFollowThemeColor,
         useLightOutline: useLightOutline,
         useVerticalDisplayMode: useVerticalDisplayMode,
         showDoubleLine: showDoubleLine,
@@ -505,6 +507,7 @@ class DesktopLyricService extends ChangeNotifier {
     );
     sendConfig(
       followThemeColor: AppSettings.instance.desktopFollowThemeColor,
+      iconFollowThemeColor: AppSettings.instance.desktopIconFollowThemeColor,
       useLightOutline: shouldUseLightDesktopLyricOutline(colors.played),
       playedColor: colors.played.toARGB32(),
       unplayedColor: colors.unplayed.toARGB32(),
@@ -953,6 +956,7 @@ class DesktopLyricService extends ChangeNotifier {
       playedColor: colors.played.toARGB32(),
       unplayedColor: colors.unplayed.toARGB32(),
       followThemeColor: settings.desktopFollowThemeColor,
+      iconFollowThemeColor: settings.desktopIconFollowThemeColor,
       useLightOutline: shouldUseLightDesktopLyricOutline(colors.played),
       useVerticalDisplayMode: settings.desktopUseVerticalDisplayMode,
       showDoubleLine: showDoubleLine,

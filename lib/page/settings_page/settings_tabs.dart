@@ -3431,6 +3431,7 @@ void syncDesktopLyricConfig(BuildContext context) {
     playedColor: colors.played.toARGB32(),
     unplayedColor: colors.unplayed.toARGB32(),
     followThemeColor: settings.desktopFollowThemeColor,
+    iconFollowThemeColor: settings.desktopIconFollowThemeColor,
     useLightOutline: shouldUseLightDesktopLyricOutline(colors.played),
     useVerticalDisplayMode: settings.desktopUseVerticalDisplayMode,
     showDoubleLine: showDoubleLine,
@@ -4583,6 +4584,16 @@ class _DesktopColorGroupState extends State<_DesktopColorGroup> {
             value: settings.desktopFollowThemeColor,
             onChanged: (v) => _update(() {
               settings.desktopFollowThemeColor = v;
+            }),
+          ),
+        ),
+        const SizedBox(height: 16),
+        SettingsTile(
+          description: '图标跟随主题色',
+          action: Switch(
+            value: settings.desktopIconFollowThemeColor,
+            onChanged: (v) => _update(() {
+              settings.desktopIconFollowThemeColor = v;
             }),
           ),
         ),

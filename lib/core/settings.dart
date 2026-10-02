@@ -252,6 +252,7 @@ class AppSettings {
   int? desktopPlayedColor;
   int? desktopUnplayedColor;
   bool desktopFollowThemeColor = true;
+  bool desktopIconFollowThemeColor = true;
   DesktopLyricBrightnessMode desktopLyricBrightnessMode =
       DesktopLyricBrightnessMode.follow;
   ZhConversionMode zhConversionMode = ZhConversionMode.none;
@@ -972,6 +973,14 @@ class AppSettings {
       );
     }
 
+    final difc = settingsMap['DesktopIconFollowThemeColor'];
+    if (difc != null) {
+      _instance.desktopIconFollowThemeColor = normalizedBoolSetting(
+        difc,
+        defaultValue: true,
+      );
+    }
+
     _instance.desktopLyricBrightnessMode =
         DesktopLyricBrightnessMode.fromString(
           settingsMap['DesktopLyricBrightnessMode']?.toString(),
@@ -1082,6 +1091,7 @@ class AppSettings {
         'DesktopPlayedColor': desktopPlayedColor,
         'DesktopUnplayedColor': desktopUnplayedColor,
         'DesktopFollowThemeColor': desktopFollowThemeColor,
+        'DesktopIconFollowThemeColor': desktopIconFollowThemeColor,
         'DesktopLyricBrightnessMode': desktopLyricBrightnessMode.name,
         'ZhConversionMode': zhConversionMode.name,
         'PromptWriteLyricToTagDelay': promptWriteLyricToTagDelay,
