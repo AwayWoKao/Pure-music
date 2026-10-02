@@ -1154,6 +1154,7 @@ class LyricsLinePainter extends CustomPainter {
       bool applyScale = false,
       Color? glowColor,
       double glowAlpha = 0.0,
+      double glowHold = 0.0,
       bool paintText = true,
     }) {
       final wc = word.chars;
@@ -1240,7 +1241,11 @@ class LyricsLinePainter extends CustomPainter {
             nearGlowStyle != null &&
             farGlowPaint != null &&
             farGlowStyle != null) {
-          final pulse = _lyricEffectParabola(info.charProgress);
+          // 拖尾保持：词尾后已点亮的字继续留光，不再按逐字脉冲归零
+          var pulse = _lyricEffectParabola(info.charProgress);
+          if (glowHold > 0.0) {
+            pulse = max(pulse, info.charProgress * glowHold);
+          }
           final adjustedAlpha = resolvedGlowColor!.a * glowAlpha * pulse;
           if (adjustedAlpha > 0.02) {
             farGlowPaint.color = resolvedGlowColor.withValues(
@@ -1459,17 +1464,35 @@ class LyricsLinePainter extends CustomPainter {
       }
 
       final glowColor = playedTextColor;
-      double glowAlphaFor(_WordPaintInfo word) {
+      // 尾部加速会把行尾若干词压进同一窗口快速点亮，辉光若随各词词尾熄灭
+      // 会连成碎闪；窗口内的词改为保持到高亮铺满点，再一起淡出。
+      const glowHoldFadeMs = 200.0;
+      double? glowHoldFillMs;
+      double? glowHoldWindowStartMs;
+      if (!params.usesAuthoredTiming) {
+        final lw = syncLine.words.last;
+        final lastWordEndMs =
+            (lw.start.inMilliseconds + lw.length.inMilliseconds).toDouble();
+        final double? deadline = accelerateTailHighlight
+            ? lastWordEndMs + lyricHighlightFinishLeadMs
+            : highlightDeadlineMs;
+        if (deadline != null &&
+            lastWordEndMs >= deadline - lyricHighlightFinishLeadMs) {
+          glowHoldFillMs = deadline - lyricHighlightFinishLeadMs;
+          glowHoldWindowStartMs = deadline - lyricHighlightCatchUpDurationMs;
+        }
+      }
+
+      (double alpha, double hold) glowFor(_WordPaintInfo word) {
         if (!config.enableGlow ||
             effectFor(
                   wordIndex: word.first.wordIndex,
                   wordDurationSec: word.wordDurationSec,
                 ) !=
                 LyricWordEffect.scaleAndGlow) {
-          return 0.0;
+          return (0.0, 0.0);
         }
-        final progress = word.wordProgress;
-        if (progress <= 0.0 || progress >= 1.0) return 0.0;
+        if (word.wordProgress <= 0.0) return (0.0, 0.0);
         final duration = Duration(
           microseconds: (word.wordDurationSec * Duration.microsecondsPerSecond)
               .round(),
@@ -1478,11 +1501,28 @@ class LyricsLinePainter extends CustomPainter {
           duration,
           lineMedianWordDuration,
         );
-        return 0.30 + 0.14 * strength;
+        final base = 0.30 + 0.14 * strength;
+        final fillMs = glowHoldFillMs;
+        final windowStartMs = glowHoldWindowStartMs;
+        if (fillMs != null && windowStartMs != null) {
+          final w = syncLine.words[word.first.wordIndex];
+          final wordEndMs =
+              (w.start.inMilliseconds + w.length.inMilliseconds).toDouble();
+          if (wordEndMs >= windowStartMs) {
+            final realNow = _effectiveCurrentTimeMs;
+            if (realNow >= fillMs + glowHoldFadeMs) return (0.0, 0.0);
+            final fade = realNow < fillMs
+                ? 1.0
+                : 1.0 - (realNow - fillMs) / glowHoldFadeMs;
+            return (base * fade, fade);
+          }
+        }
+        if (word.wordProgress >= 1.0) return (0.0, 0.0);
+        return (base, 0.0);
       }
 
       for (final wc in words) {
-        final glowAlpha = glowAlphaFor(wc);
+        final (glowAlpha, glowHold) = glowFor(wc);
         if (glowAlpha > 0.02) {
           paintWord(
             wc,
@@ -1491,6 +1531,7 @@ class LyricsLinePainter extends CustomPainter {
             applyScale: config.enableGlow,
             glowColor: glowColor,
             glowAlpha: glowAlpha,
+            glowHold: glowHold,
             paintText: false,
           );
         }
