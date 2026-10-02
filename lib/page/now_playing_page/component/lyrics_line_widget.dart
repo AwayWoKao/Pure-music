@@ -563,35 +563,31 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
         ? 0.0
         : (isCurrentLine ? 0.0 : renderConfig.blurSigmaForDistance(dist));
 
-    final isTransitionLine = _isTransitionLine(widget.line, isCurrentLine);
+    // 间奏行按自身时间窗渲染到底，不随主行切换销毁，退场才能收完。
+    final isTransitionLine = _isTransitionLine(widget.line);
     if (isTransitionLine) {
-      if (!isCurrentLine) {
-        return const SizedBox.shrink();
-      }
-
       final verticalPad = widget.line is SyncLyricLine
           ? renderConfig.syncVerticalPadding(isMainLine: true)
           : renderConfig.lrcVerticalPadding();
 
-      final transitionContent = SizedBox(
-        height: transitionTileHeight,
-        child: widget.line is SyncLyricLine
-            ? LyricTransitionTile(
-                key: ValueKey(widget.line),
-                syncLine: widget.line as SyncLyricLine,
-                positionMs: _currentTimeMs,
-                alignment: effectiveTextAlign,
-                useMaterialYouColor:
-                    AppSettings.instance.useMaterialYouForTransition,
-              )
-            : LyricTransitionTile(
-                key: ValueKey(widget.line),
-                lrcLine: widget.line as LrcLine,
-                alignment: effectiveTextAlign,
-                useMaterialYouColor:
-                    AppSettings.instance.useMaterialYouForTransition,
-              ),
-      );
+      final transitionTile = widget.line is SyncLyricLine
+          ? LyricTransitionTile(
+              key: ValueKey(widget.line),
+              syncLine: widget.line as SyncLyricLine,
+              positionMs: _currentTimeMs,
+              alignment: effectiveTextAlign,
+              useMaterialYouColor:
+                  AppSettings.instance.useMaterialYouForTransition,
+              verticalPadding: verticalPad,
+            )
+          : LyricTransitionTile(
+              key: ValueKey(widget.line),
+              lrcLine: widget.line as LrcLine,
+              alignment: effectiveTextAlign,
+              useMaterialYouColor:
+                  AppSettings.instance.useMaterialYouForTransition,
+              verticalPadding: verticalPad,
+            );
 
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: transitionTileMargin),
@@ -599,13 +595,10 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
           onTap: widget.onTap,
           color: scheme.onSurface.withValues(alpha: 0.08),
           child: Padding(
-            padding: EdgeInsets.only(
-              left: transitionTileMargin,
-              right: transitionTileMargin,
-              top: verticalPad,
-              bottom: verticalPad,
+            padding: const EdgeInsets.symmetric(
+              horizontal: transitionTileMargin,
             ),
-            child: Align(alignment: scaleAlignment, child: transitionContent),
+            child: Align(alignment: scaleAlignment, child: transitionTile),
           ),
         ),
       );
@@ -826,8 +819,7 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
     );
   }
 
-  bool _isTransitionLine(LyricLine line, bool isMainLine) {
-    if (!isMainLine) return false;
+  bool _isTransitionLine(LyricLine line) {
     if (line is SyncLyricLine) {
       return line.words.isEmpty && line.length > const Duration(seconds: 3);
     } else if (line is LrcLine) {

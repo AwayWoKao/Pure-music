@@ -5,6 +5,8 @@ import 'package:pure_music/lyric/lrc.dart';
 import 'package:pure_music/lyric/lyric.dart';
 import 'package:pure_music/native/bass/bass_player.dart';
 import 'package:pure_music/play_service/play_service.dart';
+import 'package:pure_music/play_service/lyric_service.dart'
+    show lyricWordPreSwitchMs;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
@@ -26,6 +28,9 @@ const _staleInterludeTick = Duration(milliseconds: 200);
 const _transitionEnterDurationMs = 500.0;
 const _transitionExitDurationMs = 500.0;
 const _transitionFractionCap = 0.25;
+// 切行定位测量发生在行尾前 lyricWordPreSwitchMs，退场额外提前一点收完，
+// 留出一帧余量，避免测量后行高还在变化导致下一句位置偏高。
+const _exitSettleMarginMs = 100.0;
 
 double _transitionFraction(double lengthMs, double windowMs) =>
     (windowMs / lengthMs).clamp(1e-6, _transitionFractionCap);
@@ -43,9 +48,10 @@ double _dotExitProgress(
   double progress,
   int staggerIndex,
   double exitFraction,
+  double exitEnd,
 ) {
-  if (progress >= 1.0) return 1.0;
-  final start = 1.0 - exitFraction * (staggerIndex + 1) / 3;
+  if (progress >= exitEnd) return 1.0;
+  final start = exitEnd - exitFraction * (staggerIndex + 1) / 3;
   if (progress <= start) return 0.0;
   return ((progress - start) / (exitFraction / 3)).clamp(0.0, 1.0);
 }
@@ -55,10 +61,11 @@ double lyricTransitionDotExitOpacity(
   double progress,
   int staggerIndex,
   double exitFraction,
+  double exitEnd,
 ) {
   return 1.0 -
       Curves.easeInCubic.transform(
-        _dotExitProgress(progress, staggerIndex, exitFraction),
+        _dotExitProgress(progress, staggerIndex, exitFraction, exitEnd),
       );
 }
 
@@ -67,14 +74,26 @@ double lyricTransitionDotShrinkFactor(
   double progress,
   int staggerIndex,
   double exitFraction,
+  double exitEnd,
 ) {
-  return 1.0 - _dotExitProgress(progress, staggerIndex, exitFraction);
+  return 1.0 - _dotExitProgress(progress, staggerIndex, exitFraction, exitEnd);
 }
 
-/// 出场窗口内行高整体收起，progress 到 1 时归零，交接无跳变。
-double lyricTransitionCollapseFactor(double progress, double exitFraction) {
-  if (progress >= 1.0) return 0.0;
-  final windowStart = 1.0 - exitFraction;
+/// 进场窗口内行高从 0 展开到满，避免行高一帧弹出、点亮显得凭空开始。
+double lyricTransitionEnterFactor(double progress, double enterFraction) {
+  return Curves.easeOutCubic.transform(
+    (progress / enterFraction).clamp(0.0, 1.0),
+  );
+}
+
+/// 出场窗口内行高整体收起，progress 到 exitEnd 时归零，交接无跳变。
+double lyricTransitionCollapseFactor(
+  double progress,
+  double exitFraction,
+  double exitEnd,
+) {
+  if (progress >= exitEnd) return 0.0;
+  final windowStart = exitEnd - exitFraction;
   if (progress <= windowStart) return 1.0;
   final exitProgress = ((progress - windowStart) / exitFraction).clamp(
     0.0,
@@ -192,12 +211,15 @@ class _LyricTransitionTileState extends State<LyricTransitionTile> {
       listenable: controller,
       builder: (context, _) {
         final progress = controller.progress.clamp(0.0, 1.0);
-        // 时间窗未开始时高度归零，避免未来间奏行露出空行。
+        // 时间窗未开始时高度为 0，随后按进场窗口展开，退场窗口收起。
         final collapse = !widget.animateVisibilityWithProgress
             ? 1.0
-            : progress <= 0
-            ? 0.0
-            : lyricTransitionCollapseFactor(progress, controller.exitFraction);
+            : lyricTransitionEnterFactor(progress, controller.enterFraction) *
+                  lyricTransitionCollapseFactor(
+                    progress,
+                    controller.exitFraction,
+                    controller.exitEndFraction,
+                  );
         return Padding(
           padding: EdgeInsets.symmetric(
             vertical: widget.verticalPadding * collapse,
@@ -250,42 +272,44 @@ class LyricTransitionPainter extends CustomPainter {
     final progress = controller.progress.clamp(0.0, 1.0);
     final enterFraction = controller.enterFraction;
     final exitFraction = controller.exitFraction;
+    final exitEnd = controller.exitEndFraction;
     final enterOpacity = animateVisibilityWithProgress
         ? lyricTransitionEnterOpacity(progress, enterFraction)
         : 1.0;
     final collapse = animateVisibilityWithProgress
-        ? lyricTransitionCollapseFactor(progress, exitFraction)
+        ? lyricTransitionEnterFactor(progress, enterFraction) *
+              lyricTransitionCollapseFactor(progress, exitFraction, exitEnd)
         : 1.0;
     final alphaBase = animateVisibilityWithProgress
         ? _alphaBase
         : _activeAlphaBase;
     final alphaRange = 1.0 - alphaBase;
     final exit1 = animateVisibilityWithProgress
-        ? lyricTransitionDotExitOpacity(progress, 0, exitFraction)
+        ? lyricTransitionDotExitOpacity(progress, 0, exitFraction, exitEnd)
         : 1.0;
     final exit2 = animateVisibilityWithProgress
-        ? lyricTransitionDotExitOpacity(progress, 1, exitFraction)
+        ? lyricTransitionDotExitOpacity(progress, 1, exitFraction, exitEnd)
         : 1.0;
     final exit3 = animateVisibilityWithProgress
-        ? lyricTransitionDotExitOpacity(progress, 2, exitFraction)
+        ? lyricTransitionDotExitOpacity(progress, 2, exitFraction, exitEnd)
         : 1.0;
     final shrink1 = animateVisibilityWithProgress
-        ? lyricTransitionDotShrinkFactor(progress, 0, exitFraction)
+        ? lyricTransitionDotShrinkFactor(progress, 0, exitFraction, exitEnd)
         : 1.0;
     final shrink2 = animateVisibilityWithProgress
-        ? lyricTransitionDotShrinkFactor(progress, 1, exitFraction)
+        ? lyricTransitionDotShrinkFactor(progress, 1, exitFraction, exitEnd)
         : 1.0;
     final shrink3 = animateVisibilityWithProgress
-        ? lyricTransitionDotShrinkFactor(progress, 2, exitFraction)
+        ? lyricTransitionDotShrinkFactor(progress, 2, exitFraction, exitEnd)
         : 1.0;
 
-    // 点亮进度按进场窗口归一，三个点在窗口内依次亮完。
-    final enterT = (progress / enterFraction).clamp(0.0, 1.0);
+    // 三个点按整段间奏进度依次点亮（各占三分之一），节奏与上游一致；
+    // 进场只做整体淡入和行高展开，不接管点亮进度。
     final a1 =
         (255 *
                 enterOpacity *
                 exit1 *
-                (alphaBase + min(enterT * 3, 1) * alphaRange))
+                (alphaBase + min(progress * 3, 1) * alphaRange))
             .round()
             .clamp(0, 255);
     final a2 =
@@ -293,7 +317,7 @@ class LyricTransitionPainter extends CustomPainter {
                 enterOpacity *
                 exit2 *
                 (alphaBase +
-                    min(max(enterT - _staggerStep, 0) * 3, 1) * alphaRange))
+                    min(max(progress - _staggerStep, 0) * 3, 1) * alphaRange))
             .round()
             .clamp(0, 255);
     final a3 =
@@ -301,7 +325,8 @@ class LyricTransitionPainter extends CustomPainter {
                 enterOpacity *
                 exit3 *
                 (alphaBase +
-                    min(max(enterT - 2 * _staggerStep, 0) * 3, 1) * alphaRange))
+                    min(max(progress - 2 * _staggerStep, 0) * 3, 1) *
+                        alphaRange))
             .round()
             .clamp(0, 255);
     final transitionColor = useMaterialYouColor
@@ -527,6 +552,9 @@ class LyricTransitionTileController extends ChangeNotifier {
   double enterFraction = 1e-6;
   double exitFraction = 1e-6;
 
+  /// 退场结束点：行尾前 lyricWordPreSwitchMs + 余量，保证切行定位测量时行高已收完。
+  double exitEndFraction = 1.0;
+
   double sizeFactor = 0;
   double k = 1;
   late final bool _enableBreathing;
@@ -545,6 +573,9 @@ class LyricTransitionTileController extends ChangeNotifier {
             .toDouble();
     enterFraction = _transitionFraction(lengthMs, _transitionEnterDurationMs);
     exitFraction = _transitionFraction(lengthMs, _transitionExitDurationMs);
+    exitEndFraction =
+        ((lengthMs - lyricWordPreSwitchMs - _exitSettleMarginMs) / lengthMs)
+            .clamp(0.0, 1.0);
     _register();
   }
 
@@ -565,7 +596,7 @@ class LyricTransitionTileController extends ChangeNotifier {
       return;
     }
     // 退场窗口冻结呼吸，残留的最后一个点不再脉动。
-    if (progress >= 1.0 - exitFraction) return;
+    if (progress >= exitEndFraction - exitFraction) return;
     sizeFactor += k * _breathingStep * stepScale;
     if (sizeFactor > 1) {
       k = -1;
