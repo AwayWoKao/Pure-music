@@ -142,20 +142,6 @@ Alignment lyricLineScaleAlignment(LyricTextAlign align) {
   };
 }
 
-/// 缩放、上抬和跳转位移合成一个矩阵，锚点按文本对齐取行顶。
-Matrix4 lyricLineTransformMatrix({
-  required double scale,
-  required double offsetY,
-  required double anchorX,
-  required double anchorY,
-}) {
-  return Matrix4.identity()
-    ..translateByDouble(0.0, offsetY, 0.0, 1.0)
-    ..translateByDouble(anchorX, anchorY, 0.0, 1.0)
-    ..scaleByDouble(scale, scale, scale, 1.0)
-    ..translateByDouble(-anchorX, -anchorY, 0.0, 1.0);
-}
-
 enum LyricWordEffect { none, scale, scaleAndGlow }
 
 bool _isCjkSungSyllable(String grapheme) {
@@ -716,11 +702,6 @@ class LyricsLinePainter extends CustomPainter {
       isBackgroundVisible: params.isBackgroundVisible,
       exitVisibility: backgroundVocalVisibilityListenable?.value,
     );
-  }
-
-  bool _isBgInActiveWindow(SyncLyricLine syncLine) {
-    return lyricLineHasBackgroundVocal(syncLine) &&
-        _bgHeightFactor(syncLine) > 0.001;
   }
 
   double _bgEndMs(SyncLyricLine syncLine) {
@@ -1651,7 +1632,7 @@ class LyricsLinePainter extends CustomPainter {
                   (params.usesAuthoredTiming ? 1.0 : visibility);
           canvas.clipRect(Rect.fromLTRB(0.0, 0.0, size.width, clipBottom));
         }
-        // 离场只做裁剪和透明度渐出，布局高度始终保持完整预留
+        // 高度由 _bgHeightFactor 在 measureHeight 中控制，画布自然 clip
 
         final bgTracks = _activeLineTracks(
           config,
@@ -2377,7 +2358,8 @@ class LyricsLinePainter extends CustomPainter {
       bgHeight += bgFontSize * 0.45 + bgRomanTp.height;
       recycleTextPainter(bgRomanTp);
     }
-    if (syncLine.bgTranslation != null && syncLine.bgTranslation!.isNotEmpty) {
+    if (syncLine.bgTranslation != null &&
+        syncLine.bgTranslation!.isNotEmpty) {
       final bgTransTp = _buildTextPainter(
         syncLine.bgTranslation!,
         scheme.onSurface,
@@ -2600,11 +2582,10 @@ class LyricsLinePainter extends CustomPainter {
         }
       }
 
-      // 高度随进出因子伸缩：进场把下文顶开，离场随淡出收回。
-      if (reserveBackgroundVocalHeight && _isBgInActiveWindow(syncLine)) {
-        height +=
-            _measureBackgroundVocalHeight(syncLine, lineWidth, fontSize) *
-            _bgHeightFactor(syncLine);
+      // BG 高度按完整内容一次性预留，播放进度只控制绘制透明度。
+      if (reserveBackgroundVocalHeight &&
+          lyricLineHasBackgroundVocal(syncLine)) {
+        height += _measureBackgroundVocalHeight(syncLine, lineWidth, fontSize);
       }
 
       return height;
