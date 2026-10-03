@@ -256,10 +256,10 @@ void main() {
     expect(_springReadout(tester), closeTo(1, 0.0001));
   });
 
-  testWidgets('sidebar spring lays out the body against the live rail width', (
+  testWidgets('sidebar spring slides the body with the rail mid-flight', (
     tester,
   ) async {
-    Widget build(double progress) {
+    Widget build(double progress, {double? targetProgress}) {
       return MaterialApp(
         home: Center(
           child: SizedBox(
@@ -267,6 +267,7 @@ void main() {
             height: 80,
             child: SpringRailScaffold(
               progress: progress,
+              targetProgress: targetProgress,
               collapsedWidth: 80,
               expandedWidth: 240,
               rail: const SizedBox(key: ValueKey('rail')),
@@ -277,20 +278,25 @@ void main() {
       );
     }
 
+    double bodyLeft() =>
+        tester.getTopLeft(find.byKey(const ValueKey('body'))).dx -
+        tester.getTopLeft(find.byType(SpringRailScaffold)).dx;
+
     await tester.pumpWidget(build(0));
     expect(tester.getSize(find.byKey(const ValueKey('rail'))).width, 80);
     expect(tester.getSize(find.byKey(const ValueKey('body'))).width, 320);
+    expect(bodyLeft(), 80);
 
-    await tester.pumpWidget(build(0.4));
+    await tester.pumpWidget(build(0.4, targetProgress: 1));
     final railWidth = tester.getSize(find.byKey(const ValueKey('rail'))).width;
-    final bodyWidth = tester.getSize(find.byKey(const ValueKey('body'))).width;
     expect(railWidth, closeTo(144, 0.01));
-    expect(bodyWidth, closeTo(400 - railWidth, 0.01));
-    expect(find.byType(OverflowBox), findsNothing);
+    expect(tester.getSize(find.byKey(const ValueKey('body'))).width, 320);
+    expect(bodyLeft(), closeTo(railWidth, 0.01));
 
     await tester.pumpWidget(build(1));
     expect(tester.getSize(find.byKey(const ValueKey('rail'))).width, 240);
     expect(tester.getSize(find.byKey(const ValueKey('body'))).width, 160);
+    expect(bodyLeft(), 240);
   });
 
   testWidgets('sidebar animation preserves body state across layout changes', (

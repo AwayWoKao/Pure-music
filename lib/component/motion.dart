@@ -193,7 +193,8 @@ class SidebarMotionScope extends InheritedWidget {
 
   @override
   bool updateShouldNotify(SidebarMotionScope oldWidget) {
-    return railWidth != oldWidget.railWidth ||
+    // 动画中宽度每帧都变；只在开始/结束或目标变化时通知，避免订阅者跟帧重建。
+    return isAnimating != oldWidget.isAnimating ||
         targetRailWidth != oldWidget.targetRailWidth;
   }
 }
@@ -245,26 +246,29 @@ class _SidebarFrozenViewportState extends State<SidebarFrozenViewport> {
   @override
   Widget build(BuildContext context) {
     final motion = SidebarMotionScope.maybeOf(context);
+    final windowWidth = MediaQuery.sizeOf(context).width;
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
         final freeze = widget.enabled && (motion?.isAnimating ?? false);
         if (!freeze) {
           _lastStableWidth = width;
-          _lastTotalWidth = motion == null ? null : width + motion.railWidth;
+          _lastTotalWidth = windowWidth;
           _layoutChild = widget.child;
           _wasFrozen = false;
         } else {
-          final totalWidth = motion == null ? null : width + motion.railWidth;
-          if (totalWidth != null &&
-              _lastTotalWidth != null &&
-              (totalWidth - _lastTotalWidth!).abs() > 1.0) {
+          if (_lastTotalWidth != null &&
+              (windowWidth - _lastTotalWidth!).abs() > 1.0) {
             _lastStableWidth = width;
           }
-          _lastTotalWidth = totalWidth;
+          _lastTotalWidth = windowWidth;
           if (!_wasFrozen) {
             _layoutChild ??= widget.child;
             _wasFrozen = true;
+          }
+          // 收起时外壳会一次性拉宽；允许变宽，避免把将要滑入的内容冻在窄宽度。
+          if (_lastStableWidth != null && width > _lastStableWidth! + 1.0) {
+            _lastStableWidth = width;
           }
         }
         final layoutWidth = freeze ? (_lastStableWidth ?? width) : width;
@@ -274,7 +278,7 @@ class _SidebarFrozenViewportState extends State<SidebarFrozenViewport> {
   }
 }
 
-/// Sprung rail + body whose constraints follow the rail on every frame.
+/// 弹簧侧栏：动画中正文保持较宽布局并随侧栏平移，停稳后再提交窄布局。
 class SpringRailScaffold extends StatelessWidget {
   const SpringRailScaffold({
     super.key,
@@ -309,14 +313,38 @@ class SpringRailScaffold extends StatelessWidget {
               0.0,
               constraints.maxWidth,
             );
+        final animating = (railWidth - targetRailWidth).abs() > 0.001;
+        // 飞行中始终按收起宽度排正文，整页当一层跟着侧栏滑；停稳后才跟真实宽度。
+        final layoutRailWidth = animating ? collapsedWidth : railWidth;
+        final bodyLayoutWidth = math.max(
+          0.0,
+          constraints.maxWidth - layoutRailWidth,
+        );
+        final slide = railWidth - layoutRailWidth;
         return SidebarMotionScope(
           railWidth: railWidth,
           targetRailWidth: targetRailWidth,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+          child: Stack(
+            clipBehavior: Clip.hardEdge,
             children: [
-              SizedBox(width: railWidth, child: rail),
-              Expanded(child: body),
+              Positioned(
+                left: layoutRailWidth,
+                top: 0,
+                bottom: 0,
+                width: bodyLayoutWidth,
+                child: Transform.translate(
+                  offset: Offset(slide, 0),
+                  filterQuality: FilterQuality.none,
+                  child: body,
+                ),
+              ),
+              Positioned(
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: railWidth,
+                child: rail,
+              ),
             ],
           ),
         );

@@ -77,7 +77,7 @@ void main() {
       );
       await tester.pump();
 
-      expect(tester.getSize(find.byKey(contentKey)).width, 160);
+      expect(tester.getSize(find.byKey(contentKey)).width, 240);
 
       key.currentState!.setMotion(
         railWidth: 80,
