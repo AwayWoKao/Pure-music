@@ -66,10 +66,8 @@ Future<void> readPlaylists() async {
       playlists
         ..clear()
         ..addAll(fromJson);
-      logger.i(
-        '[perf] playlists load=${stopwatch.elapsedMilliseconds}ms '
-        'count=${playlists.length} migrated=true',
-      );
+      log.library.debug('legacy', '[perf] playlists load=${stopwatch.elapsedMilliseconds}ms '
+        'count=${playlists.length} migrated=true',);
       return;
     }
 
@@ -77,12 +75,10 @@ Future<void> readPlaylists() async {
     playlists
       ..clear()
       ..addAll(fromDatabase);
-    logger.i(
-      '[perf] playlists load=${stopwatch.elapsedMilliseconds}ms '
-      'count=${playlists.length} migrated=false',
-    );
+    log.library.debug('legacy', '[perf] playlists load=${stopwatch.elapsedMilliseconds}ms '
+      'count=${playlists.length} migrated=false',);
   } catch (err, trace) {
-    logger.e(err, stackTrace: trace);
+    log.library.error('legacy', err.toString(), stackTrace: trace);
     rethrow;
   }
 }
@@ -127,7 +123,7 @@ Future<bool> savePlaylists() async {
     _writePlaylistsToDb(db, playlists);
     return true;
   } catch (err, trace) {
-    logger.e(err, stackTrace: trace);
+    log.library.error('legacy', err.toString(), stackTrace: trace);
     return false;
   }
 }

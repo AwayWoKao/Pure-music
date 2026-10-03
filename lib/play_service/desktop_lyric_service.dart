@@ -96,7 +96,7 @@ class _WinJobObject {
       // 1) 创建 Job Object
       final job = _createJobObject(nullptr, nullptr);
       if (job == nullptr) {
-        logger.w('[desktop lyric] CreateJobObjectW failed');
+        log.desktopLyric.warn('legacy', '[desktop lyric] CreateJobObjectW failed');
         return null;
       }
 
@@ -121,7 +121,7 @@ class _WinJobObject {
       calloc.free(infoPtr);
 
       if (ret == 0) {
-        logger.w('[desktop lyric] SetInformationJobObject failed, closing job');
+        log.desktopLyric.warn('legacy', '[desktop lyric] SetInformationJobObject failed, closing job');
         _closeHandle(job);
         return null;
       }
@@ -133,7 +133,7 @@ class _WinJobObject {
         childPid,
       );
       if (process == nullptr) {
-        logger.w('[desktop lyric] OpenProcess failed, closing job');
+        log.desktopLyric.warn('legacy', '[desktop lyric] OpenProcess failed, closing job');
         _closeHandle(job);
         return null;
       }
@@ -141,23 +141,19 @@ class _WinJobObject {
       try {
         final assignRet = _assignProcessToJobObject(job, process);
         if (assignRet == 0) {
-          logger.w(
-            '[desktop lyric] AssignProcessToJobObject failed '
-            '(进程可能已属于其他 Job)，退化至仅靠心跳超时',
-          );
+          log.desktopLyric.warn('legacy', '[desktop lyric] AssignProcessToJobObject failed '
+            '(进程可能已属于其他 Job)，退化至仅靠心跳超时',);
           _closeHandle(job);
           return null;
         }
 
-        logger.i(
-          '[desktop lyric] Job Object created, child PID=$childPid secured',
-        );
+        log.desktopLyric.info('legacy', '[desktop lyric] Job Object created, child PID=$childPid secured',);
         return job;
       } finally {
         _closeHandle(process);
       }
     } catch (e) {
-      logger.w('[desktop lyric] WinJobObject init error: $e');
+      log.desktopLyric.warn('legacy', '[desktop lyric] WinJobObject init error: $e');
       return null;
     }
   }
@@ -186,7 +182,7 @@ class DesktopLyricService extends ChangeNotifier {
   static const int _maxStdoutBufferSize = 65536;
   late final msg.MessageFrameDecoder _stdoutDecoder = msg.MessageFrameDecoder(
     maxBufferLength: _maxStdoutBufferSize,
-    onOverflow: () => logger.w('[desktop lyric] stdout buffer truncated'),
+    onOverflow: () => log.desktopLyric.warn('legacy', '[desktop lyric] stdout buffer truncated'),
   );
   static const int _maxSendQueueSize = 128;
   int _sendQueueSize = 0;
@@ -221,14 +217,14 @@ class DesktopLyricService extends ChangeNotifier {
   void _monitorProcessExit(Process process, int generation) {
     process.exitCode
         .then((code) {
-          logger.i('[desktop lyric] process exited with code: $code');
+          log.desktopLyric.info('legacy', '[desktop lyric] process exited with code: $code');
           _cleanupAfterExit(
             expectedProcess: process,
             expectedGeneration: generation,
           );
         })
         .catchError((e) {
-          logger.w('[desktop lyric] process exit monitoring error: $e');
+          log.desktopLyric.warn('legacy', '[desktop lyric] process exit monitoring error: $e');
         });
   }
 
@@ -283,9 +279,7 @@ class DesktopLyricService extends ChangeNotifier {
       'desktop_lyric.exe',
     );
     if (!File(desktopLyricPath).existsSync()) {
-      logger.e(
-        '[desktop lyric] desktop_lyric.exe not found: $desktopLyricPath',
-      );
+      log.desktopLyric.error('legacy', '[desktop lyric] desktop_lyric.exe not found: $desktopLyricPath',);
       _isStarting = false;
       return;
     }
@@ -311,7 +305,7 @@ class DesktopLyricService extends ChangeNotifier {
         ),
       ]);
     } catch (e) {
-      logger.e('[desktop lyric] failed to start process: $e');
+      log.desktopLyric.error('legacy', '[desktop lyric] failed to start process: $e');
       _isStarting = false;
       return;
     }
@@ -325,7 +319,7 @@ class DesktopLyricService extends ChangeNotifier {
 
     _stderrSubscription = process.stderr
         .transform(utf8.decoder)
-        .listen((event) => logger.e('[desktop lyric] $event'));
+        .listen((event) => log.desktopLyric.error('legacy', '[desktop lyric] $event'));
 
     _desktopLyricSubscription = process.stdout.transform(utf8.decoder).listen((
       event,
@@ -367,10 +361,7 @@ class DesktopLyricService extends ChangeNotifier {
             process.stdin.writeln(message.buildMessageJson());
             await process.stdin.flush();
           } catch (err, trace) {
-            logger.e(
-              '[desktop lyric] send message error: $err',
-              stackTrace: trace,
-            );
+            log.desktopLyric.error('legacy', '[desktop lyric] send message error: $err', stackTrace: trace,);
             _cleanupAfterExit(
               expectedProcess: process,
               expectedGeneration: generation,
@@ -378,7 +369,7 @@ class DesktopLyricService extends ChangeNotifier {
           }
         })
         .catchError((e) {
-          logger.w('[desktop lyric] send queue error: $e');
+          log.desktopLyric.warn('legacy', '[desktop lyric] send queue error: $e');
         })
         .whenComplete(() {
           if (generation == _processGeneration && _sendQueueSize > 0) {
@@ -414,7 +405,7 @@ class DesktopLyricService extends ChangeNotifier {
           }
         }
       } catch (e) {
-        logger.w('[desktop lyric] killDesktopLyric error: $e');
+        log.desktopLyric.warn('legacy', '[desktop lyric] killDesktopLyric error: $e');
       }
     }
 
@@ -576,18 +567,12 @@ class DesktopLyricService extends ChangeNotifier {
             ),
           )
           .toList();
-      logger.i(
-        '[desktop lyric] sendLyricLineMessage: line is SyncLyricLine, words count = ${words.length}, progressMs=$progressMs',
-      );
+      log.desktopLyric.info('legacy', '[desktop lyric] sendLyricLineMessage: line is SyncLyricLine, words count = ${words.length}, progressMs=$progressMs',);
       if (words.isNotEmpty) {
-        logger.i(
-          '[desktop lyric] first word: ${words[0].content}, startMs=${words[0].startMs}, lengthMs=${words[0].lengthMs}',
-        );
+        log.desktopLyric.info('legacy', '[desktop lyric] first word: ${words[0].content}, startMs=${words[0].startMs}, lengthMs=${words[0].lengthMs}',);
       }
     } else {
-      logger.i(
-        '[desktop lyric] sendLyricLineMessage: line is ${line.runtimeType}, words = null',
-      );
+      log.desktopLyric.info('legacy', '[desktop lyric] sendLyricLineMessage: line is ${line.runtimeType}, words = null',);
     }
 
     String? nextContent;
@@ -796,7 +781,7 @@ class DesktopLyricService extends ChangeNotifier {
         }
       }
     } catch (err) {
-      logger.e('[desktop lyric] $err');
+      log.desktopLyric.error('legacy', '[desktop lyric] $err');
     }
   }
 

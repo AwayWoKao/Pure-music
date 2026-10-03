@@ -100,7 +100,7 @@ class LibraryPageSnapshotCoordinator {
           orders: orders,
         );
       } catch (error, trace) {
-        logger.w('页面顺序缓存写入失败', error: error, stackTrace: trace);
+        log.library.warn('legacy', '页面顺序缓存写入失败', error: error, stackTrace: trace);
       } finally {
         if (identical(_pendingWrite, future)) _pendingWrite = null;
       }

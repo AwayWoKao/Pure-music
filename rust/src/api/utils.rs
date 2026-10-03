@@ -10,7 +10,7 @@ use windows::{
     Win32::UI::{Shell::IInitializeWithWindow, WindowsAndMessaging::GetForegroundWindow},
 };
 
-use super::logger::log_to_dart;
+
 
 /// path: 文件或文件夹的绝对路径。
 /// 会打开父级目录并选择路径指向的项。
@@ -18,7 +18,7 @@ pub fn show_in_explorer(path: String) -> bool {
     match _show_in_explorer(path) {
         Ok(val) => val,
         Err(err) => {
-            log_to_dart(format!("fail to show in explorer: {}", err));
+            log::warn!(target: "util", "fail to show in explorer: {}", err);
             false
         }
     }
@@ -59,7 +59,7 @@ pub fn launch_in_browser(uri: String) -> bool {
     match _launch_in_browser(uri) {
         Ok(val) => val,
         Err(err) => {
-            log_to_dart(format!("fail to launch in browser: {}", err));
+            log::warn!(target: "util", "fail to launch in browser: {}", err);
             false
         }
     }
@@ -69,7 +69,7 @@ fn _launch_in_browser(uri: String) -> Result<bool, windows::core::Error> {
     let uri = uri.trim();
     let lower = uri.to_ascii_lowercase();
     if !lower.starts_with("https://") && !lower.starts_with("http://") {
-        log_to_dart("blocked unsupported browser uri".to_string());
+        log::warn!(target: "util", "blocked unsupported browser uri");
         return Ok(false);
     }
 

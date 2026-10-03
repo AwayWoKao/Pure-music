@@ -1823,6 +1823,7 @@ dependencies = [
  "image",
  "kmeans_colors",
  "lofty",
+ "log",
  "md-5",
  "midly",
  "ndsd-read",

@@ -135,7 +135,7 @@ class TaskbarThumbnailService {
         'playing': _playerStateNotifier?.value == PlayerState.playing,
       });
     } catch (error, stackTrace) {
-      logger.w('[taskbar-thumbnail] set playing error: $error\n$stackTrace');
+      log.app.warn('legacy', '[taskbar-thumbnail] set playing error: $error\n$stackTrace');
     }
   }
 
@@ -146,9 +146,7 @@ class TaskbarThumbnailService {
         'enabled': _playbackControlsEnabled,
       });
     } catch (error, stackTrace) {
-      logger.w(
-        '[taskbar-thumbnail] set playback controls error: $error\n$stackTrace',
-      );
+      log.app.warn('legacy', '[taskbar-thumbnail] set playback controls error: $error\n$stackTrace',);
     }
   }
 
@@ -159,9 +157,7 @@ class TaskbarThumbnailService {
         'scale': _coverScale,
       });
     } catch (error, stackTrace) {
-      logger.w(
-        '[taskbar-thumbnail] set cover scale error: $error\n$stackTrace',
-      );
+      log.app.warn('legacy', '[taskbar-thumbnail] set cover scale error: $error\n$stackTrace',);
     }
   }
 
@@ -174,7 +170,7 @@ class TaskbarThumbnailService {
         'canSkip': hasTrack && (_playlistNotifier?.value.length ?? 0) > 1,
       });
     } catch (error, stackTrace) {
-      logger.w('[taskbar-thumbnail] set controls error: $error\n$stackTrace');
+      log.app.warn('legacy', '[taskbar-thumbnail] set controls error: $error\n$stackTrace');
     }
   }
 
@@ -185,7 +181,7 @@ class TaskbarThumbnailService {
         'title': _nowPlayingNotifier?.value?.title ?? '',
       });
     } catch (error, stackTrace) {
-      logger.w('[taskbar-thumbnail] set title error: $error\n$stackTrace');
+      log.app.warn('legacy', '[taskbar-thumbnail] set title error: $error\n$stackTrace');
     }
   }
 
@@ -217,7 +213,7 @@ class TaskbarThumbnailService {
         return;
       }
       if (!enabled) {
-        logger.w('[taskbar-thumbnail] enable failed');
+        log.app.warn('legacy', '[taskbar-thumbnail] enable failed');
         return;
       }
       _enabled = true;
@@ -228,7 +224,7 @@ class TaskbarThumbnailService {
       if (_coverPreviewEnabled) unawaited(_activateCoverPreview());
       _onPlayerStateChanged();
     } catch (error, stackTrace) {
-      logger.w('[taskbar-thumbnail] enable error: $error\n$stackTrace');
+      log.app.warn('legacy', '[taskbar-thumbnail] enable error: $error\n$stackTrace');
     } finally {
       if (generation == _lifecycleGeneration) _pendingEnable = false;
     }
@@ -252,9 +248,7 @@ class TaskbarThumbnailService {
           }) ??
           false;
     } catch (error, stackTrace) {
-      logger.w(
-        '[taskbar-thumbnail] set cover preview error: $error\n$stackTrace',
-      );
+      log.app.warn('legacy', '[taskbar-thumbnail] set cover preview error: $error\n$stackTrace',);
       return false;
     }
   }
@@ -272,7 +266,7 @@ class TaskbarThumbnailService {
     try {
       await _channel.invokeMethod<void>('disable');
     } catch (error, stackTrace) {
-      logger.w('[taskbar-thumbnail] disable error: $error\n$stackTrace');
+      log.app.warn('legacy', '[taskbar-thumbnail] disable error: $error\n$stackTrace');
     }
   }
 
@@ -305,7 +299,7 @@ class TaskbarThumbnailService {
         await _pushDefaultCover(() => _isCurrentCover(generation));
       }
     } catch (error, stackTrace) {
-      logger.w('[taskbar-thumbnail] cover update error: $error\n$stackTrace');
+      log.app.warn('legacy', '[taskbar-thumbnail] cover update error: $error\n$stackTrace');
     }
   }
 
@@ -317,7 +311,7 @@ class TaskbarThumbnailService {
         height: _coverSize,
       );
     } catch (error, stackTrace) {
-      logger.w('[taskbar-thumbnail] cover load error: $error\n$stackTrace');
+      log.app.warn('legacy', '[taskbar-thumbnail] cover load error: $error\n$stackTrace');
       return null;
     }
   }
@@ -357,7 +351,7 @@ class TaskbarThumbnailService {
         source.dispose();
       }
     } catch (error, stackTrace) {
-      logger.w('[taskbar-thumbnail] cover decode error: $error\n$stackTrace');
+      log.app.warn('legacy', '[taskbar-thumbnail] cover decode error: $error\n$stackTrace');
       return false;
     }
   }
@@ -418,7 +412,7 @@ class TaskbarThumbnailService {
         'height': _fallbackCoverSize,
       });
     } catch (error, stackTrace) {
-      logger.w('[taskbar-thumbnail] default cover error: $error\n$stackTrace');
+      log.app.warn('legacy', '[taskbar-thumbnail] default cover error: $error\n$stackTrace');
     }
   }
 

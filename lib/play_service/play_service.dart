@@ -1,6 +1,6 @@
 import 'package:pure_music/core/cache.dart';
 import 'package:pure_music/core/database.dart';
-import 'package:pure_music/core/matcher.dart' hide logger;
+import 'package:pure_music/core/matcher.dart';
 import 'package:pure_music/core/settings.dart';
 import 'package:pure_music/core/theme.dart';
 import 'package:pure_music/core/system_volume_service.dart';
@@ -51,11 +51,11 @@ class PlayService {
         await desktopLyric.killDesktopLyric().timeout(
           const Duration(seconds: 1),
           onTimeout: () {
-            logger.w('desktopLyricService.close timeout');
+            log.app.warn('legacy', 'desktopLyricService.close timeout');
           },
         );
       } catch (e) {
-        logger.w('desktopLyricService.close error: $e');
+        log.app.warn('legacy', 'desktopLyricService.close error: $e');
       }
     }
 
@@ -64,11 +64,11 @@ class PlayService {
       await AudioEchoLogRecorder.instance.stop().timeout(
         const Duration(seconds: 1),
         onTimeout: () {
-          logger.w('AudioEchoLogRecorder.stop timeout');
+          log.app.warn('legacy', 'AudioEchoLogRecorder.stop timeout');
         },
       );
     } catch (e) {
-      logger.w('AudioEchoLogRecorder.stop error: $e');
+      log.app.warn('legacy', 'AudioEchoLogRecorder.stop error: $e');
     }
 
     LyricViewController.disposeIfInitialized();
@@ -77,7 +77,7 @@ class PlayService {
       try {
         lyric.dispose();
       } catch (e) {
-        logger.w('lyricService.dispose error: $e');
+        log.app.warn('legacy', 'lyricService.dispose error: $e');
       }
     }
 
@@ -86,7 +86,7 @@ class PlayService {
       try {
         await playback.close();
       } catch (e) {
-        logger.w('playbackService.close error: $e');
+        log.app.warn('legacy', 'playbackService.close error: $e');
       }
     }
 

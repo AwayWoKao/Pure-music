@@ -413,7 +413,7 @@ class AudioLibrary {
         try {
           await library_db.migrateIndexJsonToSqlite(indexPath: supportPath);
         } catch (err, trace) {
-          logger.e(err, stackTrace: trace);
+          log.library.error('legacy', err.toString(), stackTrace: trace);
         }
       }
 
@@ -478,8 +478,7 @@ class AudioLibrary {
           pageCachePath: pageCachePath,
           objectBatchSize: objectBatchSize,
         );
-        logger.i(
-          '[perf] library sqlite total=${stopwatch.elapsedMilliseconds}ms '
+        log.library.debug('legacy', '[perf] library sqlite total=${stopwatch.elapsedMilliseconds}ms '
           'read=${sqliteReadStopwatch.elapsedMilliseconds}ms '
           'convert=${conversionStopwatch.elapsedMilliseconds}ms '
           'collections=${installMetrics.collectionsMilliseconds}ms '
@@ -489,15 +488,14 @@ class AudioLibrary {
           'pooledTexts=$pooledTextCount '
           'pooledArtistLists=$pooledArtistListCount '
           'rssRead=${_rssMegabytes(rssAfterRead)}MB '
-          'rssConvert=${_rssMegabytes(rssAfterConversion)}MB',
-        );
+          'rssConvert=${_rssMegabytes(rssAfterConversion)}MB',);
         libraryVersion.value++;
         instance._publishArtistAlbumVersionIfReady(
           instance._collectionGeneration,
         );
         return;
       } catch (err, trace) {
-        logger.w('SQLite 曲库读取失败，回退到 JSON 索引', error: err, stackTrace: trace);
+        log.library.warn('legacy', 'SQLite 曲库读取失败，回退到 JSON 索引', error: err, stackTrace: trace);
       }
 
       final jsonReadStopwatch = Stopwatch()..start();
@@ -559,8 +557,7 @@ class AudioLibrary {
         pageCachePath: pageCachePath,
         objectBatchSize: objectBatchSize,
       );
-      logger.i(
-        '[perf] library json total=${stopwatch.elapsedMilliseconds}ms '
+      log.library.debug('legacy', '[perf] library json total=${stopwatch.elapsedMilliseconds}ms '
         'read=${jsonReadStopwatch.elapsedMilliseconds}ms '
         'decode=${jsonDecodeStopwatch.elapsedMilliseconds}ms '
         'convert=${conversionStopwatch.elapsedMilliseconds}ms '
@@ -571,14 +568,13 @@ class AudioLibrary {
         'pooledTexts=$pooledTextCount '
         'pooledArtistLists=$pooledArtistListCount '
         'rssDecode=${_rssMegabytes(rssAfterDecode)}MB '
-        'rssConvert=${_rssMegabytes(rssAfterConversion)}MB',
-      );
+        'rssConvert=${_rssMegabytes(rssAfterConversion)}MB',);
       libraryVersion.value++;
       instance._publishArtistAlbumVersionIfReady(
         instance._collectionGeneration,
       );
     } catch (err, trace) {
-      logger.e(err, stackTrace: trace);
+      log.library.error('legacy', err.toString(), stackTrace: trace);
       rethrow;
     }
   }
@@ -836,9 +832,7 @@ class AudioLibrary {
     if (cached == null ||
         generation != _collectionGeneration ||
         spec.context != _pageOrderCacheContext()) {
-      logger.i(
-        '[perf] page order cache miss elapsed=${stopwatch.elapsedMilliseconds}ms',
-      );
+      log.library.debug('legacy', '[perf] page order cache miss elapsed=${stopwatch.elapsedMilliseconds}ms',);
       return (audios: false, artists: false, albums: false);
     }
 
@@ -901,11 +895,9 @@ class AudioLibrary {
       }
     }
     stopwatch.stop();
-    logger.i(
-      '[perf] page order cache hit audios=$restoredAudios '
+    log.library.debug('legacy', '[perf] page order cache hit audios=$restoredAudios '
       'artists=$restoredArtists albums=$restoredAlbums '
-      'elapsed=${stopwatch.elapsedMilliseconds}ms',
-    );
+      'elapsed=${stopwatch.elapsedMilliseconds}ms',);
     return (
       audios: restoredAudios,
       artists: restoredArtists,
@@ -973,10 +965,8 @@ class AudioLibrary {
         hasPlaybackSession: PlayService.hasInitializedPlaybackSession,
       );
       if (delay > Duration.zero) {
-        logger.i(
-          '[perf] secondary page preparation deferred=${delay.inMilliseconds}ms '
-          'playback=${PlayService.hasInitializedPlaybackSession}',
-        );
+        log.library.debug('legacy', '[perf] secondary page preparation deferred=${delay.inMilliseconds}ms '
+          'playback=${PlayService.hasInitializedPlaybackSession}',);
         await Future<void>.delayed(delay);
       }
       if (generation != _collectionGeneration) return;
@@ -986,7 +976,7 @@ class AudioLibrary {
         _schedulePageOrderCacheWrite(spec);
       }
     } catch (error, trace) {
-      logger.w('后台页面顺序准备失败', error: error, stackTrace: trace);
+      log.library.warn('legacy', '后台页面顺序准备失败', error: error, stackTrace: trace);
     }
   }
 
@@ -1667,10 +1657,8 @@ class AudioLibrary {
     if (collectionsChanged || pageOrderChanged) {
       _buildCollections();
     } else {
-      logger.i(
-        '[perf] library collections rebuild=skipped '
-        'collectionMetadataOnly=true',
-      );
+      log.library.debug('legacy', '[perf] library collections rebuild=skipped '
+        'collectionMetadataOnly=true',);
     }
   }
 
@@ -1774,7 +1762,7 @@ class AudioLibrary {
       if (audio._releaseRetainedCoverCache()) evicted++;
     }
     if (evicted > 0) {
-      logger.i('[mem] evicted $evicted cold cover caches');
+      log.memory.debug('legacy', '[mem] evicted $evicted cold cover caches');
     }
   }
 
@@ -1805,7 +1793,7 @@ class AudioLibrary {
       }
     }
     if (evicted > 0) {
-      logger.i('[mem] evicted $evicted covers on song change');
+      log.memory.debug('legacy', '[mem] evicted $evicted covers on song change');
     }
   }
 

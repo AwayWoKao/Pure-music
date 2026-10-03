@@ -476,9 +476,7 @@ class UpdateChecker {
       if (info.tagName.isEmpty) return null;
       return info;
     } catch (error) {
-      logger.w(
-        '[UpdateChecker] ${channel.name} release API failed: ${error.runtimeType}',
-      );
+      log.update.warn('legacy', '[UpdateChecker] ${channel.name} release API failed: ${error.runtimeType}',);
       return null;
     }
   }
@@ -516,9 +514,7 @@ class UpdateChecker {
       if (info.tagName.isEmpty) return null;
       return info;
     } catch (error) {
-      logger.w(
-        '[UpdateChecker] ${channel.name} fallback failed: ${error.runtimeType}',
-      );
+      log.update.warn('legacy', '[UpdateChecker] ${channel.name} fallback failed: ${error.runtimeType}',);
       return null;
     }
   }

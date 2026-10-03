@@ -47,7 +47,7 @@ class _ArtistsPageState extends State<ArtistsPage> {
           });
         },
         onError: (Object error, StackTrace trace) {
-          logger.e('艺术家页面后台准备失败', error: error, stackTrace: trace);
+          log.library.error('legacy', '艺术家页面后台准备失败', error: error, stackTrace: trace);
           if (!mounted || !identical(_preparation, future)) return;
           setState(() {
             _preparation = null;

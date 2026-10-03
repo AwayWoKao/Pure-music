@@ -111,20 +111,14 @@ final class SmartTransitionCoordinator {
             _handleNativeEvent,
             onError: (Object error, StackTrace trace) {
               _lastFallbackReason = 'native_event_stream: $error';
-              logger.w(
-                '[smart transition] native event stream failed',
-                error: error,
-                stackTrace: trace,
-              );
+              log.playback.warn('legacy', '[smart transition] native event stream failed', error: error,
+                stackTrace: trace,);
             },
           );
     } catch (error, trace) {
       _lastFallbackReason = 'native_event_init: $error';
-      logger.w(
-        '[smart transition] native event stream unavailable',
-        error: error,
-        stackTrace: trace,
-      );
+      log.playback.warn('legacy', '[smart transition] native event stream unavailable', error: error,
+        stackTrace: trace,);
     }
   }
 
@@ -336,20 +330,14 @@ final class SmartTransitionCoordinator {
     try {
       cancel('close');
     } catch (error, trace) {
-      logger.w(
-        '[smart transition] close cancellation failed',
-        error: error,
-        stackTrace: trace,
-      );
+      log.playback.warn('legacy', '[smart transition] close cancellation failed', error: error,
+        stackTrace: trace,);
     }
     try {
       native.closeSmartTransitionEvents();
     } catch (error, trace) {
-      logger.w(
-        '[smart transition] event stream close failed',
-        error: error,
-        stackTrace: trace,
-      );
+      log.playback.warn('legacy', '[smart transition] event stream close failed', error: error,
+        stackTrace: trace,);
     }
     final subscription = _eventSubscription;
     _eventSubscription = null;
@@ -393,11 +381,8 @@ final class SmartTransitionCoordinator {
       _startIncomingAnalysisIfReady(pending);
     } catch (error, trace) {
       if (!_isCurrent(pending)) return;
-      logger.w(
-        '[smart transition] outgoing analysis failed',
-        error: error,
-        stackTrace: trace,
-      );
+      log.playback.warn('legacy', '[smart transition] outgoing analysis failed', error: error,
+        stackTrace: trace,);
       _fallback(pending, 'outgoing_analysis: $error');
     }
   }
@@ -441,11 +426,8 @@ final class SmartTransitionCoordinator {
       await _planAndArm(pending);
     } catch (error, trace) {
       if (!_isCurrent(pending)) return;
-      logger.w(
-        '[smart transition] incoming analysis failed',
-        error: error,
-        stackTrace: trace,
-      );
+      log.playback.warn('legacy', '[smart transition] incoming analysis failed', error: error,
+        stackTrace: trace,);
       _fallback(pending, 'incoming_analysis: $error');
     }
   }
@@ -566,18 +548,13 @@ final class SmartTransitionCoordinator {
         },
       );
       _scheduleStartRecovery(pending);
-      logger.i(
-        '[smart transition] plan id=${pending.transitionId} '
+      log.playback.info('legacy', '[smart transition] plan id=${pending.transitionId} '
         'mode=${plan['mode']} confidence=${plan['confidence']} '
-        'cue=${plan['outgoing_cue_ms']} duration=${plan['duration_ms']}',
-      );
+        'cue=${plan['outgoing_cue_ms']} duration=${plan['duration_ms']}',);
     } catch (error, trace) {
       if (!_isCurrent(pending)) return;
-      logger.w(
-        '[smart transition] planning or arm failed',
-        error: error,
-        stackTrace: trace,
-      );
+      log.playback.warn('legacy', '[smart transition] planning or arm failed', error: error,
+        stackTrace: trace,);
       _fallback(pending, 'plan_or_arm: $error');
     }
   }
@@ -625,11 +602,8 @@ final class SmartTransitionCoordinator {
       );
       _applySnapshot(pending, snapshot);
     } catch (error, trace) {
-      logger.w(
-        '[smart transition] invalid native event',
-        error: error,
-        stackTrace: trace,
-      );
+      log.playback.warn('legacy', '[smart transition] invalid native event', error: error,
+        stackTrace: trace,);
     }
   }
 
@@ -793,11 +767,8 @@ final class SmartTransitionCoordinator {
         );
       }
     } catch (error, trace) {
-      logger.w(
-        '[smart transition] snapshot reconciliation failed',
-        error: error,
-        stackTrace: trace,
-      );
+      log.playback.warn('legacy', '[smart transition] snapshot reconciliation failed', error: error,
+        stackTrace: trace,);
     }
   }
 
@@ -855,7 +826,7 @@ final class SmartTransitionCoordinator {
     _pending = null;
     _lastFallbackReason = reason;
     _state = 'fallback';
-    logger.i('[smart transition] fallback id=${pending.transitionId} $reason');
+    log.playback.info('legacy', '[smart transition] fallback id=${pending.transitionId} $reason');
     if (_validateTarget(pending.target)) {
       _prepareFallback(pending.target, reason);
     }

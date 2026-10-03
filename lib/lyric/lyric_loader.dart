@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
+import 'package:pure_music/core/log/log_record.dart';
 import 'package:pure_music/core/utils.dart';
 import 'package:pure_music/lyric/lrc.dart';
 import 'package:pure_music/lyric/lyric.dart';
@@ -20,6 +21,22 @@ import 'package:fl_charset/fl_charset.dart';
 // ──────────────────────────────────────────────
 // 支持的歌词扩展名（按优先级从高到低）
 // ──────────────────────────────────────────────
+LogRecord lyricLoadRecord({
+  required bool found,
+  required String source,
+  required int lines,
+  required int elapsedMs,
+}) {
+  return LogRecord(
+    time: DateTime.now(),
+    level: LogLevel.info,
+    module: LogModule.lyric,
+    event: found ? 'lyric.loaded' : 'lyric.missing',
+    message: found ? '歌词已加载' : '没有歌词',
+    fields: {'source': source, 'lines': lines, 'elapsedMs': elapsedMs},
+  );
+}
+
 const supportedLyricFileExtensions = [
   '.yrc',
   '.qrc',
@@ -120,7 +137,10 @@ Future<_ExternalLyricResult?> _findLyricInDirectory(
 
         final content = await _safeReadFile(entity.path);
         if (content != null && content.trim().isNotEmpty) {
-          logger.i('lyric_loader: fuzzy match OK: $ext');
+          log.lyric.debug(
+            'lyric.candidate',
+            'lyric_loader: fuzzy match OK: $ext',
+          );
           best = _ExternalLyricResult(content: content, ext: ext);
           bestPriority = priority;
         }
@@ -128,7 +148,7 @@ Future<_ExternalLyricResult?> _findLyricInDirectory(
     }
     return best;
   } catch (e) {
-    logger.e('lyric_loader: directory scan failed: ${e.runtimeType}');
+    log.lyric.error('legacy', 'lyric_loader: directory scan failed: ${e.runtimeType}');
     return null;
   }
 }
@@ -187,7 +207,7 @@ Future<String?> _safeReadFile(String filePath) async {
     // 终极 fallback：容忍乱码
     return utf8.decode(bytes, allowMalformed: true);
   } catch (e) {
-    logger.e('lyric_loader: file read failed: ${e.runtimeType}');
+    log.lyric.error('legacy', 'lyric_loader: file read failed: ${e.runtimeType}');
     return null;
   }
 }
@@ -199,10 +219,14 @@ Future<_ExternalLyricResult?> _loadExternalLyric(String audioPath) async {
   final paths = _candidatePaths(audioPath, supportedLyricFileExtensions);
   final songName = p.basenameWithoutExtension(audioPath);
 
-  logger.i('lyric_loader: checking ${paths.length} candidate paths');
+  log.lyric.debug(
+    'lyric.candidate',
+    'lyric_loader: checking ${paths.length} candidate paths',
+  );
   for (final path in paths) {
     final content = await _safeReadFile(path);
-    logger.i(
+    log.lyric.debug(
+      'lyric.candidate',
       'lyric_loader: candidate ${content != null ? 'found(len=${content.length})' : 'not found'}',
     );
     if (content == null || content.trim().isEmpty) continue;
@@ -235,7 +259,10 @@ Future<_ExternalLyricResult?> _loadExternalLyric(String audioPath) async {
     );
   }
 
-  logger.i('lyric_loader: exact match failed, trying fuzzy match...（all exts）');
+  log.lyric.debug(
+    'lyric.candidate',
+    'lyric_loader: exact match failed, trying fuzzy match...（all exts）',
+  );
   // ── 精确同名文件未找到，尝试同目录模糊匹配（所有支持格式，按优先级）──
   final dir = Directory(p.dirname(audioPath));
   final fuzzy = await _findLyricInDirectory(
@@ -343,7 +370,8 @@ Future<({Lyric lyric, bool isExternal})?> loadLyricFromAudio(
   String audioPath, {
   String? separator = '┃',
 }) async {
-  logger.i('lyric_loader: loading');
+  final watch = Stopwatch()..start();
+  log.lyric.debug('lyric.candidate', 'lyric_loader: loading');
 
   // ── 第 1 步：外挂歌词文件 ──
   final external = await _loadExternalLyric(audioPath);
@@ -361,27 +389,44 @@ Future<({Lyric lyric, bool isExternal})?> loadLyricFromAudio(
         RegExp(r'<(\d+:\d+\.\d+|\d+)>').hasMatch(embeddedRaw);
 
     if (embeddedHasWordTags) {
-      logger.i(
+      log.lyric.debug(
+        'lyric.candidate',
         'lyric_loader: embedded has word tags, preferring over external',
       );
     } else {
-      logger.i(
+      log.lyric.debug(
+        'lyric.candidate',
         'lyric_loader: found external ${external.ext}, content len=${external.content.length}',
       );
       final lyric = _parseExternalToPureLyric(external, separator: separator);
       if (lyric != null && lyric.lines.isNotEmpty) {
-        logger.i('lyric_loader: loaded external ${external.ext}');
+        log.lyric.debug(
+          'lyric.candidate',
+          'lyric_loader: loaded external ${external.ext}',
+        );
         final stripped = _stripMetadata(lyric);
-        logger.i(
+        log.lyric.debug(
+          'lyric.candidate',
           'lyric_loader: external return lines=${stripped?.lines.length ?? "null"}',
         );
-        if (stripped != null) return (lyric: stripped, isExternal: true);
+        if (stripped != null) {
+          _reportLyricLoad(
+            found: true,
+            source: 'external',
+            lines: stripped.lines.length,
+            elapsedMs: watch.elapsedMilliseconds,
+          );
+          return (lyric: stripped, isExternal: true);
+        }
       } else {
-        logger.i('lyric_loader: external ${external.ext} parse FAILED');
+        log.lyric.debug(
+          'lyric.candidate',
+          'lyric_loader: external ${external.ext} parse FAILED',
+        );
       }
     }
   } else {
-    logger.i('lyric_loader: no external lyric found');
+    log.lyric.debug('lyric.candidate', 'lyric_loader: no external lyric found');
   }
 
   // ── 第 2 步：内嵌歌词 ──
@@ -390,29 +435,70 @@ Future<({Lyric lyric, bool isExternal})?> loadLyricFromAudio(
         ? embeddedRaw
         : await getLyricFromPath(path: audioPath);
     if (embedded != null && embedded.isNotEmpty) {
-      logger.i('lyric_loader: embedded lyric found, len=${embedded.length}');
+      log.lyric.debug(
+        'lyric.candidate',
+        'lyric_loader: embedded lyric found, len=${embedded.length}',
+      );
       final lyric = _parseEmbeddedToPureLyric(embedded, separator: separator);
       if (lyric != null && lyric.lines.isNotEmpty) {
-        logger.i(
+        log.lyric.debug(
+          'lyric.candidate',
           'lyric_loader: loaded embedded lyric, lines=${lyric.lines.length}',
         );
         final stripped = _stripMetadata(lyric);
-        logger.i(
+        log.lyric.debug(
+          'lyric.candidate',
           'lyric_loader: embedded return lines=${stripped?.lines.length ?? "null"}',
         );
-        if (stripped != null) return (lyric: stripped, isExternal: false);
+        if (stripped != null) {
+          _reportLyricLoad(
+            found: true,
+            source: 'embedded',
+            lines: stripped.lines.length,
+            elapsedMs: watch.elapsedMilliseconds,
+          );
+          return (lyric: stripped, isExternal: false);
+        }
       } else {
-        logger.i('lyric_loader: embedded lyric parse FAILED');
+        log.lyric.debug(
+          'lyric.candidate',
+          'lyric_loader: embedded lyric parse FAILED',
+        );
       }
     } else {
-      logger.i('lyric_loader: no embedded lyric found');
+      log.lyric.debug(
+        'lyric.candidate',
+        'lyric_loader: no embedded lyric found',
+      );
     }
   } catch (e) {
-    logger.e('lyric_loader: embedded lyric failed: ${e.runtimeType}');
+    log.lyric.error('legacy', 'lyric_loader: embedded lyric failed: ${e.runtimeType}');
   }
 
-  logger.i('lyric_loader: returning null');
+  log.lyric.debug('lyric.candidate', 'lyric_loader: returning null');
+  _reportLyricLoad(
+    found: false,
+    source: 'none',
+    lines: 0,
+    elapsedMs: watch.elapsedMilliseconds,
+  );
   return null;
+}
+
+void _reportLyricLoad({
+  required bool found,
+  required String source,
+  required int lines,
+  required int elapsedMs,
+}) {
+  log.write(
+    lyricLoadRecord(
+      found: found,
+      source: source,
+      lines: lines,
+      elapsedMs: elapsedMs,
+    ),
+  );
 }
 
 /// 只加载指定的歌词文件，不搜索其他文件或回退到音频内嵌歌词。

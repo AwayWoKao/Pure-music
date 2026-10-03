@@ -63,11 +63,8 @@ class SmartSortFeatureCache {
         }
       }
     } catch (error, trace) {
-      logger.w(
-        '[smart sort] feature cache load failed',
-        error: error,
-        stackTrace: trace,
-      );
+      log.app.warn('legacy', '[smart sort] feature cache load failed', error: error,
+        stackTrace: trace,);
     }
     final memory = _store;
     if (memory != null) loaded.addAll(memory);
@@ -130,11 +127,8 @@ class SmartSortFeatureCache {
         await writeTextFileAtomically(filePath, content);
       } catch (error, trace) {
         _dirty = true;
-        logger.w(
-          '[smart sort] feature cache save failed',
-          error: error,
-          stackTrace: trace,
-        );
+        log.app.warn('legacy', '[smart sort] feature cache save failed', error: error,
+          stackTrace: trace,);
         return;
       }
     }

@@ -36,7 +36,7 @@ import 'package:pure_music/core/cache.dart';
 import 'package:pure_music/core/immersive.dart';
 import 'package:pure_music/core/memory_monitor.dart';
 import 'package:pure_music/core/mouse_back_exit.dart';
-import 'package:pure_music/core/matcher.dart' hide logger;
+import 'package:pure_music/core/matcher.dart';
 import 'package:pure_music/core/preference.dart';
 import 'package:pure_music/core/route_visibility.dart';
 import 'package:pure_music/core/settings.dart';
@@ -243,7 +243,10 @@ class _EntryState extends State<Entry>
   @override
   void onWindowMinimize() {
     MemoryMonitorService.instance.trimTrayHidden();
-    logger.i('[mem] window minimized - trimmed invisible caches');
+    log.memory.debug(
+      'legacy',
+      '[mem] window minimized - trimmed invisible caches',
+    );
     PlayService.existingPlaybackService?.startSmtcKeepAlive();
   }
 
@@ -344,11 +347,8 @@ class _EntryState extends State<Entry>
     try {
       newest = await UpdateChecker.checkForUpdate(channel: channel);
     } catch (err, trace) {
-      logger.w(
-        '[UpdateChecker] automatic check failed',
-        error: err,
-        stackTrace: trace,
-      );
+      log.app.warn('legacy', '[UpdateChecker] automatic check failed', error: err,
+        stackTrace: trace,);
     } finally {
       // 请求后无论是否弹窗都记录节流时间
       AppPreference.instance.lastUpdateCheckTime = DateTime.now()
@@ -383,7 +383,7 @@ class _EntryState extends State<Entry>
     PaintingBinding.instance.imageCache.clear();
     PaintingBinding.instance.imageCache.clearLiveImages();
     clearLyricCaches();
-    logger.w('[mem] low memory - cleared all caches');
+    log.app.warn('legacy', '[mem] low memory - cleared all caches');
   }
 
   ThemeData fromSchemeAndFontFamily({

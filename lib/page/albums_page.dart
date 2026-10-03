@@ -47,7 +47,7 @@ class _AlbumsPageState extends State<AlbumsPage> {
           });
         },
         onError: (Object error, StackTrace trace) {
-          logger.e('专辑页面后台准备失败', error: error, stackTrace: trace);
+          log.library.error('legacy', '专辑页面后台准备失败', error: error, stackTrace: trace);
           if (!mounted || !identical(_preparation, future)) return;
           setState(() {
             _preparation = null;

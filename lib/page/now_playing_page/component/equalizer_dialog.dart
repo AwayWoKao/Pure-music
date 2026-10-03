@@ -153,7 +153,7 @@ class _EqualizerDialogState extends State<EqualizerDialog> {
             if (!saved) showTextOnSnackBar('保存均衡器预设失败');
           }
         } catch (e, trace) {
-          logger.e('导入均衡器预设失败', error: e, stackTrace: trace);
+          log.app.error('legacy', '导入均衡器预设失败', error: e, stackTrace: trace);
           if (mounted) {
             showTextOnSnackBar('导入均衡器预设失败，请查看日志');
           }
@@ -280,7 +280,7 @@ class _EqualizerDialogState extends State<EqualizerDialog> {
           );
           if (bytes == null) {
             failed++;
-            logger.w('跳过过大或发生变化的 EQ 文件：${file.path}');
+            log.app.warn('legacy', '跳过过大或发生变化的 EQ 文件：${file.path}');
             continue;
           }
           totalBytes += bytes.length;
@@ -306,7 +306,7 @@ class _EqualizerDialogState extends State<EqualizerDialog> {
           );
         } catch (error, trace) {
           failed++;
-          logger.w('跳过无效的 EQ 文件：${file.path}', error: error, stackTrace: trace);
+          log.app.warn('legacy', '跳过无效的 EQ 文件：${file.path}', error: error, stackTrace: trace);
         }
       }
 
@@ -333,7 +333,7 @@ class _EqualizerDialogState extends State<EqualizerDialog> {
             : '已导入 ${imported.length} 个，跳过 $failed 个无效文件',
       );
     } catch (error, trace) {
-      logger.e('批量导入均衡器预设失败', error: error, stackTrace: trace);
+      log.app.error('legacy', '批量导入均衡器预设失败', error: error, stackTrace: trace);
       if (mounted) {
         showTextOnSnackBar('批量导入均衡器预设失败，请查看日志');
       }

@@ -3,13 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart' as crypto;
-import 'package:logger/logger.dart';
-
-final logger = Logger(
-  filter: ProductionFilter(),
-  printer: SimplePrinter(colors: false),
-  level: Level.debug,
-);
+import 'package:pure_music/core/log/app_log.dart';
 
 class KgSession {
   String? dfid;
@@ -130,7 +124,7 @@ Future<void> _ensureInit() async {
       request.write(bodyBase64);
 
       final response = await request.close();
-      logger.d('[KG] init HTTP ${response.statusCode}');
+      log.onlineLyric.debug('legacy', '[KG] init HTTP ${response.statusCode}');
 
       final responseBodyBytes = await response
           .fold<BytesBuilder>(BytesBuilder(), (b, d) => b..add(d))
@@ -147,13 +141,13 @@ Future<void> _ensureInit() async {
           _session.mid = deviceMid;
           _session.isInitialized = true;
           _session.initTime = DateTime.now().millisecondsSinceEpoch;
-          logger.d('[KG] init succeeded');
+          log.onlineLyric.debug('legacy', '[KG] init succeeded');
         } else {
-          logger.e('[KG] init failed: code=${resp['error_code']}');
+          log.onlineLyric.error('legacy', '[KG] init failed: code=${resp['error_code']}');
         }
       }
     } catch (e) {
-      logger.e('[KG] init failed: ${e.runtimeType}');
+      log.onlineLyric.error('legacy', '[KG] init failed: ${e.runtimeType}');
     }
   });
 }
@@ -201,7 +195,7 @@ Future<List<Map<String, dynamic>>> kgSearch(
   int limit = 10,
 }) async {
   try {
-    logger.d('[KG] search started: limit=$limit');
+    log.onlineLyric.debug('legacy', '[KG] search started: limit=$limit');
     await _ensureInit();
 
     final params = _buildSignedParams({
@@ -222,7 +216,7 @@ Future<List<Map<String, dynamic>>> kgSearch(
       'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/45.0.2454.101 Safari/537.36',
     );
     final response = await request.close();
-    logger.d('[KG] status: ${response.statusCode}');
+    log.onlineLyric.debug('legacy', '[KG] status: ${response.statusCode}');
 
     final responseBodyBytes = await response
         .fold<BytesBuilder>(BytesBuilder(), (b, d) => b..add(d))
@@ -230,26 +224,26 @@ Future<List<Map<String, dynamic>>> kgSearch(
     client.close();
 
     if (responseBodyBytes.isEmpty) {
-      logger.e('[KG] empty response body');
+      log.onlineLyric.error('legacy', '[KG] empty response body');
       return [];
     }
 
     final respStr = utf8.decode(responseBodyBytes);
     final resp = jsonDecode(respStr);
-    logger.d(
+    log.onlineLyric.debug('legacy',
       '[KG] status=${resp['status']}, data=${resp['data'] != null ? "present" : "null"}',
     );
     if (resp['status'] != 1 || resp['data'] == null) {
-      logger.e('[KG] API error: status=${resp['status']}');
+      log.onlineLyric.error('legacy', '[KG] API error: status=${resp['status']}');
       return [];
     }
 
     final lists = resp['data']['lists'] as List?;
     if (lists == null) {
-      logger.e('[KG] no lists in response');
+      log.onlineLyric.error('legacy', '[KG] no lists in response');
       return [];
     }
-    logger.d('[KG] got ${lists.length} items');
+    log.onlineLyric.debug('legacy', '[KG] got ${lists.length} items');
 
     return lists
         .map((song) {
@@ -271,7 +265,7 @@ Future<List<Map<String, dynamic>>> kgSearch(
         .toList()
         .cast<Map<String, dynamic>>();
   } catch (e) {
-    logger.e('[KG] search failed: ${e.runtimeType}');
+    log.onlineLyric.error('legacy', '[KG] search failed: ${e.runtimeType}');
     return [];
   }
 }
@@ -280,7 +274,7 @@ Future<Map<String, dynamic>?> kgLyric(String hash) async {
   try {
     await _ensureInit();
     if (_session.dfid == null) {
-      logger.e('[KG] lyric: dfid is null');
+      log.onlineLyric.error('legacy', '[KG] lyric: dfid is null');
       return null;
     }
 
@@ -303,22 +297,22 @@ Future<Map<String, dynamic>?> kgLyric(String hash) async {
       'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/45.0.2454.101 Safari/537.36',
     );
     var response = await request.close();
-    logger.d('[KG] lyric: search HTTP ${response.statusCode}');
+    log.onlineLyric.debug('legacy', '[KG] lyric: search HTTP ${response.statusCode}');
     var responseBodyBytes = await response
         .fold<BytesBuilder>(BytesBuilder(), (b, d) => b..add(d))
         .then((b) => b.takeBytes());
     client.close();
 
     if (responseBodyBytes.isEmpty) {
-      logger.d('[KG] lyric: search response body empty');
+      log.onlineLyric.debug('legacy', '[KG] lyric: search response body empty');
       return null;
     }
 
     final searchResp = jsonDecode(utf8.decode(responseBodyBytes));
     final candidates = searchResp['candidates'] as List?;
-    logger.d('[KG] lyric: candidates count=${candidates?.length}');
+    log.onlineLyric.debug('legacy', '[KG] lyric: candidates count=${candidates?.length}');
     if (candidates == null || candidates.isEmpty) {
-      logger.d('[KG] lyric: no candidates');
+      log.onlineLyric.debug('legacy', '[KG] lyric: no candidates');
       return null;
     }
 
@@ -349,29 +343,29 @@ Future<Map<String, dynamic>?> kgLyric(String hash) async {
       'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/45.0.2454.101 Safari/537.36',
     );
     response = await request.close();
-    logger.d('[KG] lyric: download HTTP ${response.statusCode}');
+    log.onlineLyric.debug('legacy', '[KG] lyric: download HTTP ${response.statusCode}');
     responseBodyBytes = await response
         .fold<BytesBuilder>(BytesBuilder(), (b, d) => b..add(d))
         .then((b) => b.takeBytes());
     client.close();
 
     if (responseBodyBytes.isEmpty) {
-      logger.d('[KG] lyric: download response body empty');
+      log.onlineLyric.debug('legacy', '[KG] lyric: download response body empty');
       return null;
     }
 
     final downloadResp = jsonDecode(utf8.decode(responseBodyBytes));
-    logger.d(
+    log.onlineLyric.debug('legacy',
       '[KG] lyric: resp keys=${downloadResp.keys.toList()}, code=${downloadResp['code']}',
     );
     final content = downloadResp['content'];
     final contentType = downloadResp['contenttype'];
-    logger.d(
+    log.onlineLyric.debug('legacy',
       '[KG] lyric: content length=${content?.toString().length}, contentType=$contentType',
     );
 
     if (content == null || content.isEmpty) {
-      logger.d('[KG] lyric: content null or empty');
+      log.onlineLyric.debug('legacy', '[KG] lyric: content null or empty');
       return null;
     }
 
@@ -380,7 +374,7 @@ Future<Map<String, dynamic>?> kgLyric(String hash) async {
       try {
         lyricText = KgCryptoUtils.decryptKrc(content);
       } catch (e) {
-        logger.e('[KG] lyric decode failed: ${e.runtimeType}');
+        log.onlineLyric.error('legacy', '[KG] lyric decode failed: ${e.runtimeType}');
       }
     } else {
       try {
@@ -400,7 +394,7 @@ Future<Map<String, dynamic>?> kgLyric(String hash) async {
       'contentType': contentType,
     };
   } catch (e) {
-    logger.e('[KG] lyric failed: ${e.runtimeType}');
+    log.onlineLyric.error('legacy', '[KG] lyric failed: ${e.runtimeType}');
     return null;
   }
 }

@@ -2,11 +2,11 @@
 
 import 'dart:async';
 import 'dart:collection';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:pure_music/core/application_log.dart';
 import 'package:pure_music/core/design_tokens.dart';
-import 'package:logger/logger.dart';
+
+export 'log/diagnostic_redaction.dart';
+export 'log/app_log.dart' show log, LogMemory;
 import 'package:pinyin/pinyin.dart';
 
 extension StringHMMSS on Duration {
@@ -598,95 +598,3 @@ void hideLyricWritePrompt() {
   _lyricWriteEntry?.remove();
   _lyricWriteEntry = null;
 }
-
-final _diagnosticWindowsPathPattern = RegExp(
-  r'(?:[A-Za-z]:\\|\\\\)[^|"\r\n]*?(?=\s+\((?:error|code)\b|[|"\r\n]|$)',
-  caseSensitive: false,
-);
-final _diagnosticUnixPathPattern = RegExp(
-  r'/(?:Users|home)/[^|"\r\n]*?(?=\s+\((?:error|code)\b|[|"\r\n]|$)',
-  caseSensitive: false,
-);
-final _diagnosticUrlQueryPattern = RegExp(
-  r'(https?://[^\s?|]+)\?[^\s|]+',
-  caseSensitive: false,
-);
-final _diagnosticSecretFieldPattern = RegExp(
-  r'\b(access[_-]?key|auth[_-]?token|token|device[_-]?id|session[_-]?id)\s*[:=]\s*[^&\s|]+',
-  caseSensitive: false,
-);
-
-String redactDiagnosticData(String text) {
-  return text
-      .replaceAll(_diagnosticWindowsPathPattern, '[local path]')
-      .replaceAll(_diagnosticUnixPathPattern, '[local path]')
-      .replaceAllMapped(
-        _diagnosticUrlQueryPattern,
-        (match) => '${match.group(1)}?[redacted]',
-      )
-      .replaceAllMapped(
-        _diagnosticSecretFieldPattern,
-        (match) => '${match.group(1)}=[redacted]',
-      );
-}
-
-/// 自定义 MemoryOutput：限制最大条目数，防止无限膨胀
-class _BoundedMemoryOutput extends LogOutput {
-  _BoundedMemoryOutput({this.secondOutput});
-
-  final LogOutput? secondOutput;
-
-  static const _maxEvents = 500;
-  final _buffer = <OutputEvent>[];
-  int _firstEventIndex = 0;
-  int _nextEventIndex = 0;
-
-  List<OutputEvent> get buffer => List.unmodifiable(_buffer);
-  int get firstEventIndex => _firstEventIndex;
-  int get nextEventIndex => _nextEventIndex;
-
-  @override
-  Future<void> init() async {
-    await secondOutput?.init();
-  }
-
-  OutputEvent? eventAt(int index) {
-    final localIndex = index - _firstEventIndex;
-    if (localIndex < 0 || localIndex >= _buffer.length) return null;
-    return _buffer[localIndex];
-  }
-
-  @override
-  void output(OutputEvent event) {
-    _buffer.add(event);
-    _nextEventIndex++;
-    while (_buffer.length > _maxEvents) {
-      _buffer.removeAt(0);
-      _firstEventIndex++;
-    }
-    secondOutput?.output(event);
-  }
-
-  @override
-  Future<void> destroy() async {
-    await secondOutput?.destroy();
-  }
-
-  void clear() {
-    _buffer.clear();
-    _firstEventIndex = _nextEventIndex;
-  }
-}
-
-final loggerMemoryOutput = _BoundedMemoryOutput(
-  secondOutput: MultiOutput([
-    if (kDebugMode) ConsoleOutput(),
-    applicationLogOutput,
-  ]),
-);
-final logger = Logger(
-  filter: ProductionFilter(),
-  printer: SimplePrinter(colors: false),
-  output: loggerMemoryOutput,
-  level: Level.all,
-);

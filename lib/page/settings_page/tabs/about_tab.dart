@@ -92,8 +92,8 @@ class _AboutContributorsSectionState extends State<_AboutContributorsSection> {
       if (!mounted) return;
       setState(() => _contributors = contributors);
     } catch (error, trace) {
-      logger.w('[About] contributors request failed: ${error.runtimeType}');
-      logger.d(trace.toString());
+      log.settings.warn('legacy', '[About] contributors request failed: ${error.runtimeType}');
+      log.settings.debug('legacy', trace.toString());
     }
   }
 
@@ -339,7 +339,7 @@ class _AboutVersionItemState extends State<_AboutVersionItem> {
         showTextOnSnackBar('无新版本');
       }
     } catch (err, trace) {
-      logger.e(err, stackTrace: trace);
+      log.settings.error('legacy', err.toString(), stackTrace: trace);
       if (mounted) showTextOnSnackBar('网络异常');
     } finally {
       if (mounted) setState(() => _isChecking = false);

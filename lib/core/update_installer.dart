@@ -83,9 +83,7 @@ class UpdateInstaller {
       cancelToken: cancelToken,
     );
     if (expected == null) {
-      logger.w(
-        '[UpdateInstaller] release has no sha256 metadata; skip verification',
-      );
+      log.update.warn('legacy', '[UpdateInstaller] release has no sha256 metadata; skip verification',);
     } else {
       try {
         final ok = await _verifySha256(savePath, expected);
@@ -263,9 +261,7 @@ class UpdateInstaller {
       return hash.toLowerCase();
     } on DioException catch (error) {
       if (error.response?.statusCode == 404) {
-        logger.w(
-          '[UpdateInstaller] checksum asset is missing; skip verification',
-        );
+        log.update.warn('legacy', '[UpdateInstaller] checksum asset is missing; skip verification',);
         return null;
       }
       rethrow;
@@ -285,7 +281,7 @@ class UpdateInstaller {
     final digest = await sha256.bind(file.openRead()).first;
     final actual = digest.toString().toLowerCase();
     final target = expected.trim().toLowerCase();
-    logger.i('[UpdateInstaller] sha256 match=${actual == target}');
+    log.update.info('legacy', '[UpdateInstaller] sha256 match=${actual == target}');
     return actual == target;
   }
 

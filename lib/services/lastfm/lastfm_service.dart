@@ -139,7 +139,7 @@ class LastFmService extends ChangeNotifier {
       try {
         await _api.updateNowPlaying(_credentials, track);
       } catch (error, trace) {
-        logger.w('Last.fm now playing 失败: $title', error: error, stackTrace: trace);
+        log.lastfm.warn('legacy', 'Last.fm now playing 失败: $title', error: error, stackTrace: trace);
       }
       await _flushPendingLocked();
     });
@@ -202,7 +202,7 @@ class LastFmService extends ChangeNotifier {
         notifyListeners();
         await _persistOutbox();
         if (!accepted) {
-          logger.w('Last.fm 忽略了这条记录: ${next.track}');
+          log.lastfm.warn('legacy', 'Last.fm 忽略了这条记录: ${next.track}');
         }
       } on LastFmApiException catch (error, trace) {
         if (error.requiresReauthentication) {
@@ -214,10 +214,10 @@ class LastFmService extends ChangeNotifier {
           notifyListeners();
           await _persistCredentials();
         }
-        logger.w('Last.fm scrobble 仍在队列: ${next.track}', error: error, stackTrace: trace);
+        log.lastfm.warn('legacy', 'Last.fm scrobble 仍在队列: ${next.track}', error: error, stackTrace: trace);
         return;
       } catch (error, trace) {
-        logger.w('Last.fm scrobble 仍在队列: ${next.track}', error: error, stackTrace: trace);
+        log.lastfm.warn('legacy', 'Last.fm scrobble 仍在队列: ${next.track}', error: error, stackTrace: trace);
         return;
       }
     }
@@ -237,7 +237,7 @@ class LastFmService extends ChangeNotifier {
         unawaited(flushPendingScrobbles());
       }
     } catch (error, trace) {
-      logger.e('读取 Last.fm 状态失败', error: error, stackTrace: trace);
+      log.lastfm.error('legacy', '读取 Last.fm 状态失败', error: error, stackTrace: trace);
       _loaded = true;
     }
   }
@@ -253,7 +253,7 @@ class LastFmService extends ChangeNotifier {
       _ensureSchema(db);
       _writeMeta(db, 'lastfm_credentials', json.encode(_credentials.toMap()));
     } catch (error, trace) {
-      logger.e('保存 Last.fm 凭据失败', error: error, stackTrace: trace);
+      log.lastfm.error('legacy', '保存 Last.fm 凭据失败', error: error, stackTrace: trace);
     }
   }
 
@@ -267,7 +267,7 @@ class LastFmService extends ChangeNotifier {
         json.encode(_pending.map((item) => item.toMap()).toList()),
       );
     } catch (error, trace) {
-      logger.e('保存 Last.fm 队列失败', error: error, stackTrace: trace);
+      log.lastfm.error('legacy', '保存 Last.fm 队列失败', error: error, stackTrace: trace);
     }
   }
 

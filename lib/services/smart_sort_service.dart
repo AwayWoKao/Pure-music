@@ -94,11 +94,8 @@ class SmartSortService {
         if (isCancelled?.call() ?? false) {
           throw const SmartSortCancelledException();
         }
-        logger.w(
-          '[smart sort] analyze failed, use neutral features for ${audio.path}',
-          error: error,
-          stackTrace: trace,
-        );
+        log.app.warn('legacy', '[smart sort] analyze failed, use neutral features for ${audio.path}', error: error,
+          stackTrace: trace,);
         final neutralFeatures = jsonEncode({
           'integratedRmsDbfs': -42.0,
           'bpm': 0.0,

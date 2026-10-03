@@ -57,12 +57,12 @@ class SleepTimerService {
         _timer?.cancel();
         _timer = null;
         if (autoExtendNotifier.value) {
-          logger.i('[sleep_timer] expired, entering extending state');
+          log.playback.info('legacy', '[sleep_timer] expired, entering extending state');
           _setState(SleepTimerState.extending);
           _onEnterExtending?.call();
           showTextOnSnackBar('睡眠定时结束，等待当前歌曲播完');
         } else {
-          logger.i('[sleep_timer] expired, pausing playback');
+          log.playback.info('legacy', '[sleep_timer] expired, pausing playback');
           _setState(SleepTimerState.idle);
           _onExpired?.call();
           showTextOnSnackBar('睡眠定时结束，已暂停播放');
@@ -76,7 +76,7 @@ class SleepTimerService {
   /// 歌曲自然播完时调用（由 PlaybackService 在 extending 状态下调用）
   void onSongCompleted() {
     if (!isExtending) return;
-    logger.i('[sleep_timer] song completed while extending, pausing');
+    log.playback.info('legacy', '[sleep_timer] song completed while extending, pausing');
     _cancel();
     _onExpired?.call();
     showTextOnSnackBar('睡眠定时结束，已暂停播放');
@@ -85,14 +85,14 @@ class SleepTimerService {
   /// 用户手动暂停时调用
   void onManualPause() {
     if (!isExtending) return;
-    logger.i('[sleep_timer] manual pause while extending, cancelling');
+    log.playback.info('legacy', '[sleep_timer] manual pause while extending, cancelling');
     _cancel();
   }
 
   /// 切歌时调用
   void onSongChanged(String newPath) {
     if (!isExtending) return;
-    logger.i('[sleep_timer] song changed while extending, cancelling');
+    log.playback.info('legacy', '[sleep_timer] song changed while extending, cancelling');
     _cancel();
   }
 

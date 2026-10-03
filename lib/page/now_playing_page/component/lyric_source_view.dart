@@ -13,6 +13,7 @@ import 'package:pure_music/services/online_lyric/api/net_lyric_api.dart'
     as net_api;
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
+import 'package:pure_music/core/log/app_log.dart';
 import 'package:path/path.dart' as p;
 
 LyricSourceType _lyricSourceTypeFromResultSource(ResultSource source) {
@@ -317,7 +318,7 @@ class _ManualLyricSearchDialogState extends State<ManualLyricSearchDialog> {
         _hasMore = page.hasMore;
       });
     } catch (e, trace) {
-      logger.w('Lyric source search failed: $e', stackTrace: trace);
+      log.app.warn('legacy', 'Lyric source search failed: $e', stackTrace: trace);
       if (!mounted || searchGeneration != _searchGeneration) return;
       if (mounted) {
         ScaffoldMessenger.of(
@@ -547,7 +548,7 @@ class _ManualLyricSearchDialogState extends State<ManualLyricSearchDialog> {
       }
       Navigator.pop(context);
     } catch (error, trace) {
-      logger.w('Apply lyric source failed: $error', stackTrace: trace);
+      log.app.warn('legacy', 'Apply lyric source failed: $error', stackTrace: trace);
       if (mounted) {
         ScaffoldMessenger.of(
           context,
@@ -929,7 +930,7 @@ class _SetLyricSourceDialogState extends State<SetLyricSourceDialog> {
         .timeout(
           const Duration(seconds: 20),
           onTimeout: () {
-            logger.w('SetLyricSourceDialog uniSearch timeout');
+            log.app.warn('legacy', 'SetLyricSourceDialog uniSearch timeout');
             return [];
           },
         )
@@ -1011,7 +1012,7 @@ class _SetLyricSourceDialogState extends State<SetLyricSourceDialog> {
       }
       Navigator.pop(context);
     } catch (error, trace) {
-      logger.w('Apply lyric source failed: $error', stackTrace: trace);
+      log.app.warn('legacy', 'Apply lyric source failed: $error', stackTrace: trace);
       if (mounted) {
         ScaffoldMessenger.of(
           context,
@@ -1055,7 +1056,7 @@ class _SetLyricSourceDialogState extends State<SetLyricSourceDialog> {
       }
       Navigator.pop(context);
     } catch (error, trace) {
-      logger.w('Apply local lyric file failed: $error', stackTrace: trace);
+      log.app.warn('legacy', 'Apply local lyric file failed: $error', stackTrace: trace);
       if (mounted) {
         ScaffoldMessenger.of(
           context,
@@ -1076,10 +1077,7 @@ class _SetLyricSourceDialogState extends State<SetLyricSourceDialog> {
       if (nowPlaying == null || nowPlaying.path != widget.audio.path) return;
       Navigator.pop(context);
     } catch (error, trace) {
-      logger.w(
-        'Restore automatic local lyric failed: $error',
-        stackTrace: trace,
-      );
+      log.app.warn('legacy', 'Restore automatic local lyric failed: $error', stackTrace: trace,);
       if (mounted) {
         ScaffoldMessenger.of(
           context,

@@ -243,7 +243,7 @@ class AppPreference {
       await writeTextFileAtomically(appPreferencePath, prefJson);
       return true;
     } catch (err, trace) {
-      logger.e(err, stackTrace: trace);
+      log.settings.error('legacy', err.toString(), stackTrace: trace);
       return false;
     }
   }
@@ -260,7 +260,7 @@ class AppPreference {
       await writeTextFileAtomically(playbackPrefPath, prefJson);
       return true;
     } catch (err, trace) {
-      logger.e(err, stackTrace: trace);
+      log.settings.error('legacy', err.toString(), stackTrace: trace);
       return false;
     }
   }
@@ -279,7 +279,7 @@ class AppPreference {
         instance.playbackPref = PlaybackPreference.fromMap(prefMap);
       }
     } catch (err, trace) {
-      logger.e(err, stackTrace: trace);
+      log.settings.error('legacy', err.toString(), stackTrace: trace);
     }
   }
 
@@ -299,10 +299,10 @@ class AppPreference {
       await instance.loadPlaybackOnly();
 
       if (instance.userFolders.isEmpty) {
-        logger.i('userFolders is empty, will be set after first folder scan');
+        log.settings.info('legacy', 'userFolders is empty, will be set after first folder scan');
       }
     } catch (err, trace) {
-      logger.e(err, stackTrace: trace);
+      log.settings.error('legacy', err.toString(), stackTrace: trace);
     }
   }
 

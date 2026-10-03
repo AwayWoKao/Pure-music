@@ -792,13 +792,16 @@ class Lrc extends Lyric {
     final shouldKeepMetadata =
         keepMetadata ?? AppSettings.instance.keepLyricMetadata;
     if (_isTtml(lrc)) {
-      logger.i('[lrc] fromLrcTextAuto: TTML detected');
-      return Ttml.fromTtmlText(lrc, separator: separator);
+      log.lyric.debug('lyric.line', '[lrc] fromLrcTextAuto: TTML detected');
+      final parsed = Ttml.fromTtmlText(lrc, separator: separator);
+      _reportParsed(parsed, 'ttml');
+      return parsed;
     }
 
     // 智能检测 LRC 子格式（逐字 / 增强 / 普通）
     final lrcFormat = detectLrcFormat(lrc);
-    logger.i(
+    log.lyric.debug(
+      'lyric.line',
       '[lrc] fromLrcTextAuto: format=${lrcFormat.name} sep=${separator ?? 'null'}',
     );
     if (lrcFormat == LrcFormatType.wordByWord) {
@@ -917,7 +920,8 @@ class Lrc extends Lyric {
         // 插入开头前奏和中间间奏空白行（与 enhanced/Lyricify 对齐）
         final withInterludes = _insertInterludesForWordByWord(combined);
         final result = Lyric(withInterludes, source);
-        logger.i(
+        log.lyric.debug(
+          'lyric.line',
           '[lrc] fromLrcTextAuto: wordByWord combined -> ${combined.length} lines, after interludes -> ${withInterludes.length} lines',
         );
         for (
@@ -925,27 +929,37 @@ class Lrc extends Lyric {
           i < (withInterludes.length > 3 ? 3 : withInterludes.length);
           i++
         ) {
-          logger.i(
+          log.lyric.debug(
+            'lyric.line',
             '[lrc]   line[$i] start=${withInterludes[i].start.inMilliseconds}ms trans=${withInterludes[i].translation ?? 'null'} roman=${withInterludes[i].romanLyric ?? 'null'}',
           );
         }
+        _reportParsed(result, 'wordByWord');
         return result;
       }
     }
 
     final hasWordTags = RegExp(r'<(\d+:\d+\.\d+|\d+)>').hasMatch(lrc);
-    logger.i('[lrc] fromLrcTextAuto: hasWordTags=$hasWordTags');
+    log.lyric.debug(
+      'lyric.line',
+      '[lrc] fromLrcTextAuto: hasWordTags=$hasWordTags',
+    );
     if (!hasWordTags) {
       if (_isLyricifyFormat(lrc)) {
-        logger.i('[lrc] fromLrcTextAuto: Lyricify format');
-        return _parseLyricify(
+        log.lyric.debug('lyric.line', '[lrc] fromLrcTextAuto: Lyricify format');
+        final parsed = _parseLyricify(
           lrc,
           source,
           separator: separator,
           keepMetadata: shouldKeepMetadata,
         );
+        _reportParsed(parsed, 'lyricify');
+        return parsed;
       }
-      logger.i('[lrc] fromLrcTextAuto: standard LRC -> fromLrcText');
+      log.lyric.debug(
+        'lyric.line',
+        '[lrc] fromLrcTextAuto: standard LRC -> fromLrcText',
+      );
       final result = fromLrcText(
         lrc,
         source,
@@ -953,21 +967,29 @@ class Lrc extends Lyric {
         keepMetadata: shouldKeepMetadata,
       );
       if (result != null) {
-        logger.i('[lrc] fromLrcText result: ${result.lines.length} lines');
+        log.lyric.debug(
+          'lyric.line',
+          '[lrc] fromLrcText result: ${result.lines.length} lines',
+        );
         for (
           int i = 0;
           i < (result.lines.length > 3 ? 3 : result.lines.length);
           i++
         ) {
           final l = result.lines[i];
-          logger.i(
+          log.lyric.debug(
+            'lyric.line',
             '[lrc]   line[$i] start=${l.start.inMilliseconds}ms content="${l is LrcLine ? l.content : (l is SyncLyricLine ? l.words.map((w) => w.content).join() : (l is UnsyncLyricLine ? l.content : ''))}" trans=${l.translation ?? 'null'} roman=${l.romanLyric ?? 'null'}',
           );
         }
       }
+      _reportParsed(result, 'lrc');
       return result;
     }
-    logger.i('[lrc] fromLrcTextAuto: enhanced LRC -> _parseEnhancedLrcText');
+    log.lyric.debug(
+      'lyric.line',
+      '[lrc] fromLrcTextAuto: enhanced LRC -> _parseEnhancedLrcText',
+    );
     final result = _parseEnhancedLrcText(
       lrc,
       source,
@@ -975,18 +997,23 @@ class Lrc extends Lyric {
       keepMetadata: shouldKeepMetadata,
     );
     if (result != null) {
-      logger.i('[lrc] enhanced result: ${result.lines.length} lines');
+      log.lyric.debug(
+        'lyric.line',
+        '[lrc] enhanced result: ${result.lines.length} lines',
+      );
       for (
         int i = 0;
         i < (result.lines.length > 3 ? 3 : result.lines.length);
         i++
       ) {
         final l = result.lines[i];
-        logger.i(
+        log.lyric.debug(
+          'lyric.line',
           '[lrc]   line[$i] start=${l.start.inMilliseconds}ms words=${l is SyncLyricLine ? l.words.length : 'N/A'} trans=${l.translation ?? 'null'} roman=${l.romanLyric ?? 'null'}',
         );
       }
     }
+    _reportParsed(result, 'enhanced');
     return result;
   }
 
@@ -1361,7 +1388,8 @@ class Lrc extends Lyric {
       final firstLineStart = firstLine.start;
       const introStart = Duration.zero;
 
-      logger.i(
+      log.lyric.debug(
+        'lyric.line',
         '[lrc] _parseLyricify: maxMetadataTimeMs=$maxMetadataTimeMs, firstLineStart=${firstLineStart.inMilliseconds}ms, introStart=${introStart.inMilliseconds}ms',
       );
 
@@ -1372,7 +1400,8 @@ class Lrc extends Lyric {
           firstLineStart == introStart;
 
       if (firstLineStart > introStart && !firstLineIsIntroBlank) {
-        logger.i(
+        log.lyric.debug(
+          'lyric.line',
           '[lrc] _parseLyricify: inserting intro blank line from ${introStart.inMilliseconds}ms to ${firstLineStart.inMilliseconds}ms',
         );
         finalLines.insert(
@@ -2207,7 +2236,8 @@ class Lrc extends Lyric {
         firstLineStart = firstLyricWordStart;
       }
 
-      logger.i(
+      log.lyric.debug(
+        'lyric.line',
         '[lrc] _parseEnhancedLrcText: maxMetadataTimeMs=$maxMetadataTimeMs, firstLineStart=${firstLineStart.inMilliseconds}ms, introStart=${introStart.inMilliseconds}ms',
       );
 
@@ -2218,7 +2248,8 @@ class Lrc extends Lyric {
           firstLineStart == introStart;
 
       if (firstLineStart > introStart && !firstLineIsIntroBlank) {
-        logger.i(
+        log.lyric.debug(
+          'lyric.line',
           '[lrc] _parseEnhancedLrcText: inserting intro blank line from ${introStart.inMilliseconds}ms to ${firstLineStart.inMilliseconds}ms',
         );
         finalLines.insert(
@@ -2230,6 +2261,15 @@ class Lrc extends Lyric {
 
     cleanLyricBlankLines(finalLines);
     return EnhancedLrc(finalLines.cast<EnhancedLrcLine>(), source);
+  }
+
+  static void _reportParsed(Lyric? parsed, String formatName) {
+    if (parsed == null) return;
+    log.lyric.info(
+      'lyric.parsed',
+      '歌词解析完成',
+      fields: {'lines': parsed.lines.length, 'format': formatName},
+    );
   }
 
   /// 智能清理空白行：
@@ -2247,11 +2287,15 @@ class Lrc extends Lyric {
     String? separator = '┃',
   }) async {
     final raw = await getLyricFromPath(path: belongTo.path);
-    logger.i(
+    log.lyric.debug(
+      'lyric.candidate',
       'lrc: fromAudioPath raw=${raw?.substring(0, raw.length > 80 ? 80 : raw.length)}',
     );
     if (raw == null || raw.isEmpty) {
-      logger.i('lrc: fromAudioPath -> null (no lyric)');
+      log.lyric.debug(
+        'lyric.candidate',
+        'lrc: fromAudioPath -> null (no lyric)',
+      );
       return null;
     }
     final parsed = Lrc.fromLrcTextAuto(
@@ -2259,7 +2303,10 @@ class Lrc extends Lyric {
       LyricFormat.local,
       separator: separator,
     );
-    logger.i('lrc: fromAudioPath parsed=${parsed?.lines.length} lines');
+    log.lyric.debug(
+      'lyric.candidate',
+      'lrc: fromAudioPath parsed=${parsed?.lines.length} lines',
+    );
     return parsed;
   }
 }

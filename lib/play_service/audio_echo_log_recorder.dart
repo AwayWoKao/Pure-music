@@ -7,6 +7,7 @@ import 'package:pure_music/core/preference.dart';
 import 'package:pure_music/library/audio_library.dart';
 import 'package:pure_music/play_service/play_service.dart';
 import 'package:pure_music/core/utils.dart';
+import 'package:pure_music/core/log/log_format.dart';
 
 class AudioEchoLogRecorder {
   AudioEchoLogRecorder._();
@@ -24,8 +25,7 @@ class AudioEchoLogRecorder {
   Future<void> _writeQueue = Future.value();
   Timer? _logFlushTimer;
   Timer? _snapshotTimer;
-  int _lastEventIndex = 0;
-  int _lastLineIndex = 0;
+  Object? _lastFlushedRecord;
   bool _fullRecording = false;
 
   String? get currentLogPath => _file?.path;
@@ -62,8 +62,7 @@ class AudioEchoLogRecorder {
     _latestLogPath = file.path;
     _sink = sink;
     _fullRecording = full;
-    _lastEventIndex = 0;
-    _lastLineIndex = 0;
+    _lastFlushedRecord = null;
 
     _writeLine('RECORDER|startedAt=${DateTime.now().toIso8601String()}');
     _writeLine('RECORDER|mode=${full ? 'full' : 'background'}');
@@ -213,26 +212,26 @@ class AudioEchoLogRecorder {
   void _flushLoggerMemoryDelta() {
     if (_sink == null || !_fullRecording) return;
 
-    final firstIndex = loggerMemoryOutput.firstEventIndex;
-    final nextIndex = loggerMemoryOutput.nextEventIndex;
-    if (nextIndex <= firstIndex) return;
-
-    if (_lastEventIndex < firstIndex || _lastEventIndex > nextIndex) {
-      _lastEventIndex = firstIndex;
-      _lastLineIndex = 0;
+    final records = LogMemory.instance.records;
+    if (records.isEmpty) {
+      _lastFlushedRecord = null;
+      return;
     }
 
-    for (int i = _lastEventIndex; i < nextIndex; i++) {
-      final event = loggerMemoryOutput.eventAt(i);
-      if (event == null) continue;
-      final lines = event.lines;
-      final startLine = (i == _lastEventIndex) ? _lastLineIndex : 0;
-      for (int j = startLine; j < lines.length; j++) {
-        _writeLine(lines[j]);
+    var start = 0;
+    final lastFlushedRecord = _lastFlushedRecord;
+    if (lastFlushedRecord != null) {
+      final lastIndex = records.indexWhere(
+        (record) => identical(record, lastFlushedRecord),
+      );
+      if (lastIndex >= 0) start = lastIndex + 1;
+    }
+    for (final record in records.skip(start)) {
+      for (final line in formatRecord(record).split('\n')) {
+        _writeLine(line);
       }
-      _lastLineIndex = 0;
     }
-    _lastEventIndex = nextIndex;
+    _lastFlushedRecord = records.last;
   }
 
   void _writeLine(String line) {

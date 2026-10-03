@@ -64,13 +64,13 @@ class _FoldersPageState extends State<FoldersPage> {
           (path) => AudioLibrary.instance.audioByPath(path) != null,
         );
       } else {
-        logger.i('[perf] library refresh reload=skipped indexUnchanged=true');
+        log.library.debug('legacy', '[perf] library refresh reload=skipped indexUnchanged=true');
       }
       if (mounted) {
         showTextOnSnackBar('已刷新');
       }
     } catch (e) {
-      logger.e('refresh index failed: $e');
+      log.library.error('legacy', 'refresh index failed: $e');
     }
     if (mounted) setState(() => _updating = false);
   }

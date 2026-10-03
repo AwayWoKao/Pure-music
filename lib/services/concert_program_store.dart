@@ -120,11 +120,8 @@ class ConcertProgramStore {
         }
       }
     } catch (error, trace) {
-      logger.w(
-        '[smart sort] program store load failed',
-        error: error,
-        stackTrace: trace,
-      );
+      log.app.warn('legacy', '[smart sort] program store load failed', error: error,
+        stackTrace: trace,);
     }
   }
 
@@ -137,11 +134,8 @@ class ConcertProgramStore {
         flush: true,
       );
     } catch (error, trace) {
-      logger.w(
-        '[smart sort] program store save failed',
-        error: error,
-        stackTrace: trace,
-      );
+      log.app.warn('legacy', '[smart sort] program store save failed', error: error,
+        stackTrace: trace,);
     }
   }
 

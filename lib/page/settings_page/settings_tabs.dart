@@ -2794,7 +2794,7 @@ class _FontPickerTileState extends State<_FontPickerTile> {
             showTextOnSnackBar('已恢复默认字体', variant: ToastVariant.success);
           }
         } catch (err, trace) {
-          logger.e('恢复默认字体失败', error: err, stackTrace: trace);
+          log.settings.error('legacy', '恢复默认字体失败', error: err, stackTrace: trace);
           if (mounted) {
             showTextOnSnackBar('恢复默认字体失败，请查看日志');
           }
@@ -2820,7 +2820,7 @@ class _FontPickerTileState extends State<_FontPickerTile> {
           showTextOnSnackBar('已应用字体');
         }
       } catch (err, trace) {
-        logger.e('应用字体失败', error: err, stackTrace: trace);
+        log.settings.error('legacy', '应用字体失败', error: err, stackTrace: trace);
         if (mounted) {
           showTextOnSnackBar('应用字体失败，请查看日志');
         }

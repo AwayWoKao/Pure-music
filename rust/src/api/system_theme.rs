@@ -1,7 +1,7 @@
 use flutter_rust_bridge::frb;
 use windows::UI::ViewManagement::{UIColorType, UISettings};
 
-use super::logger::log_to_dart;
+
 
 pub struct SystemTheme {
     /// a, r, g, b
@@ -39,7 +39,7 @@ impl SystemTheme {
         match Self::_get_system_theme() {
             Ok(value) => value,
             Err(err) => {
-                log_to_dart(format!("fail to get sys theme: {}", err));
+                log::warn!(target: "theme", "fail to get sys theme: {}", err);
                 return SystemTheme::default();
             }
         }

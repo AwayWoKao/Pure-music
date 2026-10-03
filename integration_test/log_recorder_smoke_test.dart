@@ -30,7 +30,8 @@ void main() {
       },
     );
     recorder.snapshot(tag: 'test');
-    logger.w(
+    log.bass.warn(
+      'legacy',
       r'[bass] Plugin load failed: C:\Users\Example\bassflac.dll (error 14)',
     );
     await Future.delayed(const Duration(milliseconds: 1200));

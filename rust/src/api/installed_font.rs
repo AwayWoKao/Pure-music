@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::logger::log_to_dart;
+
 
 pub struct InstalledFont {
     pub path: String,
@@ -19,7 +19,7 @@ fn _read_fonts_in_folder(path: &Path, result: &mut Vec<InstalledFont>) -> anyhow
     let dir = match read_dir(path) {
         Ok(val) => val,
         Err(err) => {
-            log_to_dart(err.to_string());
+            log::warn!(target: "font", "{}", err);
             return Err(err.into());
         }
     };
@@ -28,7 +28,7 @@ fn _read_fonts_in_folder(path: &Path, result: &mut Vec<InstalledFont>) -> anyhow
         let entry = match entry_result {
             Ok(value) => value,
             Err(err) => {
-                log_to_dart(err.to_string());
+                log::warn!(target: "font", "{}", err);
                 continue;
             }
         };
@@ -45,14 +45,14 @@ fn _read_fonts_in_folder(path: &Path, result: &mut Vec<InstalledFont>) -> anyhow
                 let font = match fs::read(path) {
                     Ok(value) => value,
                     Err(err) => {
-                        log_to_dart(err.to_string());
+                        log::warn!(target: "font", "{}", err);
                         continue;
                     }
                 };
                 let face = match ttf_parser::Face::parse(&font, 0) {
                     Ok(value) => value,
                     Err(err) => {
-                        log_to_dart(err.to_string());
+                        log::warn!(target: "font", "{}", err);
                         continue;
                     }
                 };

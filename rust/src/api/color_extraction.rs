@@ -2,7 +2,7 @@ use image::{DynamicImage, GenericImageView};
 use kmeans_colors::{get_kmeans, CentroidData, Sort};
 use palette::{IntoColor, Lab, Srgb};
 
-use super::logger::log_to_dart;
+
 
 const SAMPLE_EXTENT: u32 = 150;
 const MIN_CLUSTER_PERCENTAGE: f32 = 0.005;
@@ -18,7 +18,7 @@ pub fn extract_colors_from_image(image_bytes: Vec<u8>, num_colors: i32) -> Vec<u
     match _extract_colors_from_image(image_bytes, num_colors) {
         Ok(colors) => colors,
         Err(err) => {
-            log_to_dart(format!("fail to extract colors: {}", err));
+            log::warn!(target: "color", "fail to extract colors: {}", err);
             vec![]
         }
     }

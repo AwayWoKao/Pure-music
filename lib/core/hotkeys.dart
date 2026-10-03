@@ -204,7 +204,7 @@ class HotkeysHelper {
         icon: isFullScreen ? Icons.fullscreen_exit : Icons.fullscreen,
       );
     } catch (err, trace) {
-      logger.e('全屏切换失败', error: err, stackTrace: trace);
+      log.hotkey.error('legacy', '全屏切换失败', error: err, stackTrace: trace);
     } finally {
       _windowToggleInProgress = false;
     }

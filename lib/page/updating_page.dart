@@ -32,7 +32,7 @@ class _UpdatingPageState extends State<UpdatingPage> {
     try {
       return await getAppDataDir();
     } catch (e, trace) {
-      logger.e('获取应用数据目录失败', error: e, stackTrace: trace);
+      log.library.error('legacy', '获取应用数据目录失败', error: e, stackTrace: trace);
       return null;
     }
   }
@@ -153,7 +153,7 @@ class _UpdatingStateViewState extends State<UpdatingStateView> {
         ctx.go(app_paths.AUDIOS_PAGE);
       }
     } catch (e, trace) {
-      logger.e('索引完成后读取音乐库失败', error: e, stackTrace: trace);
+      log.library.error('legacy', '索引完成后读取音乐库失败', error: e, stackTrace: trace);
       if (mounted) {
         setState(() => _errorMessage = '音乐库读取失败，请查看日志');
       }
@@ -170,14 +170,14 @@ class _UpdatingStateViewState extends State<UpdatingStateView> {
         ).listen(
           (action) {
             if (action.message.isNotEmpty) {
-              logger.i('[update index] ${action.progress}: ${action.message}');
+              log.library.info('legacy', '[update index] ${action.progress}: ${action.message}');
             }
             if (mounted) {
               setState(() => _latestAction = action);
             }
           },
           onError: (Object error, StackTrace stackTrace) {
-            logger.e('更新音乐库索引失败', error: error, stackTrace: stackTrace);
+            log.library.error('legacy', '更新音乐库索引失败', error: error, stackTrace: stackTrace);
             if (mounted) {
               setState(() => _errorMessage = '音乐库索引失败，请查看日志');
             }

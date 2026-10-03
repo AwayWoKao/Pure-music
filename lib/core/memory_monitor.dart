@@ -4,7 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:pure_music/core/cache.dart';
-import 'package:pure_music/core/matcher.dart' hide logger;
+import 'package:pure_music/core/matcher.dart';
 import 'package:pure_music/core/utils.dart';
 import 'package:pure_music/library/audio_library.dart';
 import 'package:pure_music/native/bass/bass_player.dart';
@@ -43,7 +43,7 @@ class _WindowsWorkingSetTrimmer {
       }
       return setProcessWorkingSetSize(getCurrentProcess(), -1, -1) != 0;
     } catch (e, trace) {
-      logger.w('[mem] Windows working set trim failed: $e\n$trace');
+      log.memory.warn('legacy', '[mem] Windows working set trim failed: $e\n$trace');
       return false;
     }
   }
@@ -117,9 +117,7 @@ class MemoryMonitorService {
           _lastTier1CleanupAt = now;
           _lastTier2CleanupAt = now;
           _lastTier3CleanupAt = now;
-          logger.w(
-            '[mem] RSS ${rssMB}MB > $tier3Threshold, tier-3 emergency cleanup',
-          );
+          log.memory.warn('legacy', '[mem] RSS ${rssMB}MB > $tier3Threshold, tier-3 emergency cleanup',);
           if (!playing) {
             PaintingBinding.instance.imageCache.clear();
             PaintingBinding.instance.imageCache.clearLiveImages();
@@ -149,7 +147,7 @@ class MemoryMonitorService {
             _cleanupDue(now, _lastTier2CleanupAt, const Duration(minutes: 3))) {
           _lastTier1CleanupAt = now;
           _lastTier2CleanupAt = now;
-          logger.w('[mem] RSS ${rssMB}MB > $tier2Threshold, tier-2 cleanup');
+          log.memory.warn('legacy', '[mem] RSS ${rssMB}MB > $tier2Threshold, tier-2 cleanup');
           CoverImageCache.instance.trimMemory(keepPath: playingPath);
           CoverImageCache.instance.trimSmall(keepEntries: 64);
           AudioLibrary.instance.trimCollectionThumbnailRetention(80);
@@ -169,7 +167,7 @@ class MemoryMonitorService {
           CoverImageCache.instance.logStats();
         }
       } catch (e, trace) {
-        logger.e('[mem] monitor error: $e\n$trace');
+        log.memory.error('legacy', '[mem] monitor error: $e\n$trace');
       }
     });
   }

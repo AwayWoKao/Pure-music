@@ -41,7 +41,7 @@ impl Drop for WinRtThreadGuard {
 
 use crate::frb_generated::StreamSink;
 
-use super::{logger::log_to_dart, tag_reader};
+use super::tag_reader;
 
 /// 创建一个永不显示的隐藏窗口，SMTC 绑定到它而不是主窗口，
 /// 这样窗口最小化后系统端媒体会话不会冻结
@@ -110,20 +110,24 @@ impl SMTCFlutter {
     }
 
     pub fn subscribe_to_control_events(&self, sink: StreamSink<SMTCControlEvent>) {
-        log_to_dart("SMTC: Subscribing to control events...".to_string());
+        log::debug!(target: "smtc", "SMTC: Subscribing to control events...");
 
         let smtc_clone = self._smtc.clone();
         let is_enabled = smtc_clone.IsEnabled().unwrap_or(false);
-        log_to_dart(format!("SMTC: IsEnabled={}", is_enabled));
+        log::debug!(target: "smtc", "SMTC: IsEnabled={}", is_enabled);
 
         let is_playing_enabled = smtc_clone.IsPlayEnabled().unwrap_or(false);
         let is_pause_enabled = smtc_clone.IsPauseEnabled().unwrap_or(false);
         let is_next_enabled = smtc_clone.IsNextEnabled().unwrap_or(false);
         let is_previous_enabled = smtc_clone.IsPreviousEnabled().unwrap_or(false);
-        log_to_dart(format!(
+        log::debug!(
+            target: "smtc",
             "SMTC: Play={}, Pause={}, Next={}, Previous={}",
-            is_playing_enabled, is_pause_enabled, is_next_enabled, is_previous_enabled
-        ));
+            is_playing_enabled,
+            is_pause_enabled,
+            is_next_enabled,
+            is_previous_enabled
+        );
 
         if let Ok(mut token_slot) = self.button_pressed_token.lock() {
             if let Some(token) = token_slot.take() {
@@ -145,7 +149,7 @@ impl SMTCFlutter {
                             }
                             _ => SMTCControlEvent::Unknown,
                         };
-                        log_to_dart(format!("SMTC: Button pressed - {:?}", event));
+                        log::info!(target: "smtc", "SMTC: Button pressed - {:?}", event);
                         let _ = sink.add(event);
                     }
                 }
@@ -153,14 +157,15 @@ impl SMTCFlutter {
             }));
             match token {
                 Ok(token) => *token_slot = Some(token),
-                Err(error) => log_to_dart(format!(
+                Err(error) => log::warn!(
+                    target: "smtc",
                     "SMTC: ButtonPressed subscription failed: {}",
                     error
-                )),
+                ),
             }
         }
 
-        log_to_dart("SMTC: Subscription complete".to_string());
+        log::debug!(target: "smtc", "SMTC: Subscription complete");
     }
 
     pub fn subscribe_to_position_change_events(&self, sink: StreamSink<u64>) {
@@ -184,7 +189,11 @@ impl SMTCFlutter {
                 }));
             match token {
                 Ok(token) => *token_slot = Some(token),
-                Err(error) => log_to_dart(format!("SMTC: position subscription failed: {}", error)),
+                Err(error) => log::warn!(
+                    target: "smtc",
+                    "SMTC: position subscription failed: {}",
+                    error
+                ),
             }
         }
     }
@@ -269,7 +278,11 @@ impl SMTCFlutter {
             return;
         };
         if let Err(error) = unsafe { DestroyWindow(hwnd) } {
-            log_to_dart(format!("SMTC: hidden window destroy failed: {}", error));
+            log::warn!(
+                target: "smtc",
+                "SMTC: hidden window destroy failed: {}",
+                error
+            );
         }
     }
 
@@ -316,12 +329,16 @@ impl SMTCFlutter {
             let class_name: HSTRING = HSTRING::from(MAIN_CLASS_NAME);
             let hwnd = FindWindowW(PCWSTR(class_name.as_ptr()), PCWSTR::null());
             if hwnd.0 != 0 {
-                log_to_dart(format!("SMTC: bound to main window HWND={}", hwnd.0));
+                log::debug!(target: "smtc", "SMTC: bound to main window HWND={}", hwnd.0);
                 return Ok(hwnd);
             }
         }
         let hidden = Self::_create_hidden_smtc_window()?;
-        log_to_dart(format!("SMTC: main window not found, bound to hidden HWND={}", hidden.0));
+        log::warn!(
+            target: "smtc",
+            "SMTC: main window not found, bound to hidden HWND={}",
+            hidden.0
+        );
         Ok(hidden)
     }
 
@@ -453,10 +470,11 @@ impl SMTCFlutter {
             let _ = time_properties
                 .SetMaxSeekTime(TimeSpan::from(Duration::from_millis(duration.into())));
             if let Err(e) = self._smtc.UpdateTimelineProperties(&time_properties) {
-                log_to_dart(format!(
+                log::warn!(
+                    target: "smtc",
                     "SMTC: UpdateTimelineProperties err (non-fatal): {}",
                     e
-                ));
+                );
             }
         }
 
@@ -465,7 +483,7 @@ impl SMTCFlutter {
         }
         updater.Update()?;
 
-        log_to_dart(format!("SMTC: Display updated - {}", title));
+        log::info!(target: "smtc", "SMTC: Display updated - {}", title);
         drop(display_guard);
         if let Ok(mut slot) = self.last_path.lock() {
             *slot = Some(path.to_string());
@@ -544,7 +562,7 @@ impl SMTCFlutter {
             let _ = music_properties.SetAlbumTitle(&HSTRING::from(&album));
         }
         updater.Update()?;
-        log_to_dart(format!("SMTC: Display refreshed - {}", title));
+        log::debug!(target: "smtc", "SMTC: Display refreshed - {}", title);
 
         let path = self.last_path.lock().ok().and_then(|guard| guard.clone());
         if let Some(path) = path {
@@ -642,7 +660,11 @@ impl SMTCFlutter {
             .name("smtc-thumbnail".to_string())
             .spawn(move || {
                 if let Err(error) = unsafe { RoInitialize(RO_INIT_MULTITHREADED) } {
-                    log_to_dart(format!("SMTC: thumbnail worker init failed: {}", error));
+                    log::warn!(
+                        target: "smtc",
+                        "SMTC: thumbnail worker init failed: {}",
+                        error
+                    );
                     worker_closed.store(true, Ordering::Release);
                     return;
                 }
@@ -655,7 +677,7 @@ impl SMTCFlutter {
                     let thumbnail = match Self::_try_get_thumbnail(&HSTRING::from(job.0)) {
                         Ok(thumbnail) => thumbnail,
                         Err(error) => {
-                            log_to_dart(format!("SMTC: thumbnail err: {}", error));
+                            log::warn!(target: "smtc", "SMTC: thumbnail err: {}", error);
                             None
                         }
                     };
@@ -667,12 +689,12 @@ impl SMTCFlutter {
                         continue;
                     }
                     if let Err(error) = Self::_apply_thumbnail(&smtc, thumbnail) {
-                        log_to_dart(format!("SMTC: thumbnail update err: {}", error));
+                        log::warn!(target: "smtc", "SMTC: thumbnail update err: {}", error);
                     }
                 }
             });
         if let Err(error) = spawn_result {
-            log_to_dart(format!("SMTC: thumbnail worker failed: {}", error));
+            log::warn!(target: "smtc", "SMTC: thumbnail worker failed: {}", error);
             closed.store(true, Ordering::Release);
         }
         (pending, wake, closed)
@@ -735,10 +757,11 @@ impl SMTCFlutter {
         {
             return Ok(Some(Self::_ras_ref_from_pic_data(&pic_data)?));
         }
-        log_to_dart(format!(
+        log::debug!(
+            target: "smtc",
             "SMTC: no embedded picture for {}",
             path.to_string()
-        ));
+        );
         Ok(None)
     }
 }

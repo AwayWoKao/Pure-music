@@ -45,7 +45,7 @@ class _BackupSettingsPanelState extends State<BackupSettingsPanel> {
       if (!mounted) return;
       showTextOnSnackBar('已导出备份', variant: ToastVariant.success);
     } catch (error, trace) {
-      logger.e('导出备份失败', error: error, stackTrace: trace);
+      log.settings.error('legacy', '导出备份失败', error: error, stackTrace: trace);
       if (!mounted) return;
       showTextOnSnackBar('导出失败：$error', variant: ToastVariant.error);
     } finally {
@@ -78,7 +78,7 @@ class _BackupSettingsPanelState extends State<BackupSettingsPanel> {
       final labels = imported.map((c) => c.label).join('、');
       await _promptRestart('已导入：$labels');
     } catch (error, trace) {
-      logger.e('导入备份失败', error: error, stackTrace: trace);
+      log.settings.error('legacy', '导入备份失败', error: error, stackTrace: trace);
       if (!mounted) return;
       showTextOnSnackBar('导入失败：$error', variant: ToastVariant.error);
     } finally {

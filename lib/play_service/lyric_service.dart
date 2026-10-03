@@ -13,7 +13,7 @@ import 'package:pure_music/lyric/ttml_timeline.dart';
 import 'package:pure_music/lyric/lyric_source.dart';
 import 'package:pure_music/lyric/lyric_stripper.dart';
 import 'package:pure_music/lyric/lyric_loader.dart';
-import 'package:pure_music/core/matcher.dart' hide logger;
+import 'package:pure_music/core/matcher.dart';
 import 'package:pure_music/core/settings.dart';
 import 'package:pure_music/core/utils.dart';
 import 'package:pure_music/native/bass/bass_player.dart';
@@ -1163,10 +1163,7 @@ class LyricService extends ChangeNotifier {
         error,
         trace,
       ) {
-        logger.w(
-          '[lyric] persist fallback source failed: $error',
-          stackTrace: trace,
-        );
+        log.lyric.warn('legacy', '[lyric] persist fallback source failed: $error', stackTrace: trace,);
       });
     });
     return lyricFuture;
@@ -1175,6 +1172,14 @@ class LyricService extends ChangeNotifier {
   /// 根据默认歌词来源获取歌词：
   /// 1. 如果没有指定来源，按照现在的方式寻找歌词（本地优先或在线优先）
   /// 2. 如果指定来源，按照指定的来源获取
+  void _reportLyricUpdate({required String mode, required String source}) {
+    log.lyric.info(
+      'lyric.update',
+      '刷新歌词',
+      fields: {'mode': mode, 'source': source},
+    );
+  }
+
   void updateLyric() {
     _cancelLyricWritePrompt();
 
@@ -1200,8 +1205,8 @@ class LyricService extends ChangeNotifier {
       // 未指定单曲来源 → 使用全局「首选歌词来源」设置
       if (AppSettings.instance.localLyricFirst) {
         // 本地模式：只看内嵌/外置，绝不搜索网络
-        logger.i('[updateLyric] local mode: loadLyricFromAudio only');
         currLyricFuture = _loadLocalLyric(audioPath, notifyFailure: true);
+        _reportLyricUpdate(mode: 'local', source: 'local');
       } else {
         // 在线模式：只看用户选的那个源，不看内嵌/外置
         final preferredSource = AppSettings.instance.preferredOnlineSource;
@@ -1214,23 +1219,19 @@ class LyricService extends ChangeNotifier {
             ResultSource.qq, // unreachable in online mode
         };
         _activeLyricSourceType = _lyricSourceTypeFromResultSource(rs);
-        logger.i('[updateLyric] online mode: preferred=$rs');
         currLyricFuture = _startOnlineLyricWithFallback(
           audio: nowPlaying,
           preferredSource: rs,
           requestToken: requestToken,
           audioPath: audioPath,
         );
+        _reportLyricUpdate(mode: 'online', source: rs.name);
       }
     } else {
       _activeLyricSourceType = lyricSource.source;
       if (lyricSource.source == LyricSourceType.local) {
-        logger.i('[updateLyric] source=local, using loadLyricFromAudio');
         currLyricFuture = _loadLocalLyric(audioPath, notifyFailure: true);
       } else {
-        logger.i(
-          '[updateLyric] source=${lyricSource.source.name}, using getOnlineLyric',
-        );
         currLyricFuture = getOnlineLyric(
           qqSongId: lyricSource.qqSongId,
           kugouSongHash: lyricSource.kugouSongHash,
@@ -1242,12 +1243,14 @@ class LyricService extends ChangeNotifier {
           durationSec: nowPlaying.duration,
         );
       }
+      _reportLyricUpdate(mode: 'saved', source: lyricSource.source.name);
     }
 
     final future = currLyricFuture;
     future.then((value) {
       if (!_isCurrentLyricRequest(requestToken, audioPath, future)) return;
-      logger.d('[lyric_service] then: value=${value?.lines.length ?? "null"}');
+      log.lyric.debug('legacy', '[lyric_service] then: value=${value?.lines.length ?? "null"}');
+
       if (value != null) {
         _nextLyricLine = 0;
         _setCurrLyric(value);
@@ -1338,7 +1341,7 @@ class LyricService extends ChangeNotifier {
         })
         .catchError((e, trace) {
           _lyricWritePromptHistory.markWriteFailed(audioPath);
-          logger.e('写入歌词标签失败', error: e, stackTrace: trace);
+          log.lyric.error('legacy', '写入歌词标签失败', error: e, stackTrace: trace);
           showTextOnSnackBar('写入标签失败，请查看日志', variant: ToastVariant.error);
         });
   }
@@ -1360,7 +1363,7 @@ class LyricService extends ChangeNotifier {
         })
         .catchError((e) {
           _lyricWritePromptHistory.markWriteFailed(audioPath);
-          logger.e('自动写入歌词标签失败: $e');
+          log.lyric.error('legacy', '自动写入歌词标签失败: $e');
         });
   }
 
@@ -1373,7 +1376,7 @@ class LyricService extends ChangeNotifier {
     try {
       await saveCurrentLyricAsLrc();
     } catch (e) {
-      logger.e('自动保存外置歌词失败: $e');
+      log.lyric.error('legacy', '自动保存外置歌词失败: $e');
     }
   }
 
@@ -1431,6 +1434,7 @@ class LyricService extends ChangeNotifier {
 
     final cacheKey = _localLyricCacheKey(audioPath);
     currLyricFuture = _loadLocalLyric(audioPath, notifyFailure: true);
+    _reportLyricUpdate(mode: 'local', source: 'local');
     final future = currLyricFuture;
     future.then((value) {
       if (!_isCurrentLyricRequest(requestToken, audioPath, future)) return;
@@ -1469,8 +1473,10 @@ class LyricService extends ChangeNotifier {
     final savedSource = lyricSources[audioPath];
     if (savedSource != null && savedSource.source != LyricSourceType.local) {
       _activeLyricSourceType = savedSource.source;
-      logger.i(
-        '[useOnlineLyric] using saved source: ${savedSource.source.name}',
+      log.lyric.info(
+        'lyric.update',
+        '切换到已保存的在线歌词',
+        fields: {'mode': 'saved', 'source': savedSource.source.name},
       );
       currLyricFuture = getOnlineLyric(
         qqSongId: savedSource.qqSongId,
@@ -1492,7 +1498,11 @@ class LyricService extends ChangeNotifier {
         LyricSourceType.local => ResultSource.qq,
       };
       _activeLyricSourceType = _lyricSourceTypeFromResultSource(rs);
-      logger.i('[useOnlineLyric] no saved source, searching preferred: $rs');
+      log.lyric.info(
+        'lyric.update',
+        '按首选来源搜索在线歌词',
+        fields: {'mode': 'online', 'source': rs.name},
+      );
       currLyricFuture = _startOnlineLyricWithFallback(
         audio: nowPlaying,
         preferredSource: rs,

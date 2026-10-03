@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:logger/logger.dart';
 import 'package:pure_music/core/application_log.dart';
 import 'package:pure_music/core/preference.dart';
 import 'package:pure_music/core/setting_action_state.dart';
@@ -11,6 +10,10 @@ import 'package:pure_music/core/hotkeys.dart';
 import 'package:pure_music/play_service/audio_echo_log_recorder.dart';
 import 'package:pure_music/play_service/play_service.dart';
 import 'package:pure_music/native/rust/api/utils.dart' as rust_utils;
+import 'package:pure_music/core/log/issue_crash.dart';
+import 'package:pure_music/core/log/issue_timeline.dart';
+import 'package:pure_music/core/log/log_format.dart';
+import 'package:pure_music/core/log/log_record.dart';
 import 'package:pure_music/core/utils.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -51,6 +54,7 @@ class SettingsIssuePage extends StatefulWidget {
 
 class _SettingsIssuePageState extends State<SettingsIssuePage> {
   static const _maxSnapshotChars = 60 * 1024;
+  static const _echoReserveChars = 6 * 1024;
 
   final titleEditingController = TextEditingController();
   final descEditingController = TextEditingController();
@@ -175,26 +179,37 @@ class _SettingsIssuePageState extends State<SettingsIssuePage> {
     ].join('\n');
   }
 
-  String _buildLogSnapshot() {
-    final logStrBuf = StringBuffer();
-    for (final event in loggerMemoryOutput.buffer) {
-      if (event.level.index < Level.info.index) continue;
-      final firstLine = event.lines.isNotEmpty ? event.lines.first : '';
-      if (firstLine.contains('[desktop lyric] sendLyricLineMessage') ||
-          firstLine.contains('[desktop lyric] first word:')) {
-        continue;
-      }
-      for (var line in event.lines) {
-        logStrBuf.writeln(line);
+  List<LogRecord> _dedupeRecords(List<LogRecord> records, Set<String> seen) {
+    final kept = <LogRecord>[];
+    for (final record in records) {
+      final key = redactDiagnosticData(
+        '${formatLogTime(record.time)} '
+        '${record.level.name.toUpperCase()} '
+        '${record.module.wire} ${record.event} | ${record.message}',
+      );
+      if (seen.add(key)) {
+        kept.add(record);
       }
     }
-    return redactDiagnosticData(logStrBuf.toString());
+    return kept;
   }
 
-  String _truncateTail(String content, int maxChars) {
-    if (content.length <= maxChars) return content;
-    final omitted = content.length - maxChars;
-    return 'TRUNCATED|omittedChars=$omitted\n${content.substring(omitted)}';
+  String _fitTimeline(List<LogRecord> records, int budget) {
+    final warnings = records
+        .where((record) => record.level.index >= LogLevel.warn.index)
+        .toList()
+      ..sort((a, b) => a.time.compareTo(b.time));
+    final infos = records
+        .where((record) => record.level == LogLevel.info)
+        .toList()
+      ..sort((a, b) => a.time.compareTo(b.time));
+    var rendered = renderIssueLog([...warnings, ...infos]);
+    while (rendered.length > budget && infos.isNotEmpty) {
+      infos.removeAt(0);
+      rendered = renderIssueLog([...warnings, ...infos]);
+    }
+    if (rendered.length > budget) return truncateIssueTail(rendered, budget);
+    return rendered;
   }
 
   (String, String?) _splitApplicationLog(String content) {
@@ -226,45 +241,49 @@ class _SettingsIssuePageState extends State<SettingsIssuePage> {
     parts.add('');
     var budget = _maxSnapshotChars - parts.join('\n').length;
     if (budget < 0) budget = 0;
+    final echoReserve = budget > _echoReserveChars + 2048
+        ? _echoReserveChars
+        : 0;
+    var usable = budget - echoReserve;
 
     final applicationLog = await applicationLogOutput.readForExport();
+    String? crashBody;
+    final merged = <LogRecord>[];
+    final seen = <String>{};
     if (applicationLog != null) {
-      final (appBody, crashBody) = _splitApplicationLog(applicationLog);
-      parts.add('== APPLICATION_LOG ==');
-      var piece = redactDiagnosticData(appBody);
-      if (piece.length > budget) piece = _truncateTail(piece, budget);
-      budget -= piece.length;
-      parts.add(piece);
-      parts.add('');
-      if (crashBody != null && budget > 0) {
-        parts.add('== CRASH_LOG ==');
-        piece = redactDiagnosticData(crashBody);
-        if (piece.length > budget) piece = _truncateTail(piece, budget);
-        budget -= piece.length;
-        parts.add(piece);
-        parts.add('');
-      }
+      final (appBody, splitCrash) = _splitApplicationLog(applicationLog);
+      crashBody = splitCrash;
+      merged.addAll(_dedupeRecords(parseLog(appBody), seen));
     }
-
-    if (budget > 0) {
-      parts.add('== LOGGER_MEMORY ==');
-      var piece = _buildLogSnapshot();
-      if (piece.length > budget) piece = _truncateTail(piece, budget);
-      budget -= piece.length;
+    merged.addAll(_dedupeRecords(LogMemory.instance.records, seen));
+    parts.add('== APPLICATION_LOG ==');
+    var piece = renderIssueLog(merged);
+    if (piece.length > usable) piece = _fitTimeline(merged, usable);
+    usable -= piece.length;
+    parts.add(piece);
+    parts.add('');
+    if (crashBody != null && usable > 0) {
+      parts.add('== CRASH_LOG ==');
+      piece = redactDiagnosticData(renderIssueCrashLog(crashBody));
+      if (piece.length > usable) piece = truncateIssueTail(piece, usable);
+      usable -= piece.length;
       parts.add(piece);
       parts.add('');
     }
 
-    if (budget > 0) {
+    final echoBudget = echoReserve + (usable > 0 ? usable : 0);
+    if (echoBudget > 0) {
       parts.add('== AUDIO_ECHO_LOG ==');
       final echoLog = await AudioEchoLogRecorder.instance.readLatestLog();
       final header =
           'AUDIO_ECHO_LOG_PATH='
           '${AudioEchoLogRecorder.instance.latestLogPath ?? '-'}';
-      var piece = redactDiagnosticData(
+      piece = redactDiagnosticData(
         echoLog == null ? header : '$header\n$echoLog',
       );
-      if (piece.length > budget) piece = _truncateTail(piece, budget);
+      if (piece.length > echoBudget) {
+        piece = truncateIssueTail(piece, echoBudget);
+      }
       parts.add(piece);
       parts.add('');
     }

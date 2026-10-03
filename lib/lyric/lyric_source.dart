@@ -107,10 +107,8 @@ Future<void> readLyricSources() async {
       final fromJson = _readLyricSourcesFromJson(jsonFile);
       _writeLyricSourcesToDb(db, fromJson);
       lyricSources = fromJson;
-      logger.i(
-        '[perf] lyric sources load=${stopwatch.elapsedMilliseconds}ms '
-        'count=${lyricSources.length} migrated=true',
-      );
+      log.lyric.debug('legacy', '[perf] lyric sources load=${stopwatch.elapsedMilliseconds}ms '
+        'count=${lyricSources.length} migrated=true',);
       return;
     }
 
@@ -126,12 +124,10 @@ Future<void> readLyricSources() async {
       }
     }
     lyricSources = result;
-    logger.i(
-      '[perf] lyric sources load=${stopwatch.elapsedMilliseconds}ms '
-      'count=${lyricSources.length} migrated=false',
-    );
+    log.lyric.debug('legacy', '[perf] lyric sources load=${stopwatch.elapsedMilliseconds}ms '
+      'count=${lyricSources.length} migrated=false',);
   } catch (err, trace) {
-    logger.e(err, stackTrace: trace);
+    log.lyric.error('legacy', err.toString(), stackTrace: trace);
   }
 }
 
@@ -144,7 +140,7 @@ Future<void> saveLyricSources() async {
     final db = await AppDb.instance.db();
     _writeLyricSourcesToDb(db, lyricSources);
   } catch (err, trace) {
-    logger.e(err, stackTrace: trace);
+    log.lyric.error('legacy', err.toString(), stackTrace: trace);
     rethrow;
   }
 }

@@ -845,10 +845,7 @@ class CoverImageCache {
       } catch (error, trace) {
         if (!_databaseWarningLogged) {
           _databaseWarningLogged = true;
-          logger.w(
-            '[cache] persistent cover cache unavailable: $error',
-            stackTrace: trace,
-          );
+          log.app.warn('legacy', '[cache] persistent cover cache unavailable: $error', stackTrace: trace,);
         }
       }
     }
@@ -888,10 +885,7 @@ class CoverImageCache {
         );
         _persistentWarmCompleted.add(key);
       } catch (error, trace) {
-        logger.d(
-          '[cache] persistent cover warm skipped: $error',
-          stackTrace: trace,
-        );
+        log.app.debug('legacy', '[cache] persistent cover warm skipped: $error', stackTrace: trace,);
       } finally {
         _persistentWarmPending.remove(key);
       }
@@ -986,14 +980,12 @@ class CoverImageCache {
     final hitRateText = hitRate == null
         ? '-'
         : '${(hitRate * 100).toStringAsFixed(0)}%';
-    logger.d(
-      '[cache] CoverImageCache '
+    log.app.debug('legacy', '[cache] CoverImageCache '
       '${s.hits}h/${s.misses}m '
       '(hit rate $hitRateText) '
       '| ${s.smallEntries}s/${s.mediumEntries}m/${s.largeEntries}l entries '
       '| ${(s.smallBytes / 1024).toStringAsFixed(0)}/${(s.mediumBytes / 1024).toStringAsFixed(0)}/${(s.largeBytes / 1024).toStringAsFixed(0)} KB '
-      '| ${s.pendingRequests} pending',
-    );
+      '| ${s.pendingRequests} pending',);
   }
 
   /// 完全释放并清理所有缓存

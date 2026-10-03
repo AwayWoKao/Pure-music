@@ -3,14 +3,8 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:logger/logger.dart';
+import 'package:pure_music/core/log/app_log.dart';
 import 'package:pure_music/services/online_lyric/api/qrc_decryptor.dart';
-
-final logger = Logger(
-  filter: ProductionFilter(),
-  printer: SimplePrinter(colors: false),
-  level: Level.debug,
-);
 
 class QmSession {
   String? guid;
@@ -117,7 +111,7 @@ Future<void> _ensureInit() async {
     _session.isInitialized = true;
     _session.initTime = DateTime.now().millisecondsSinceEpoch;
 
-    logger.d('[QQ] init succeeded');
+    log.onlineLyric.debug('legacy', '[QQ] init succeeded');
   });
 }
 
@@ -140,7 +134,7 @@ Future<String> _doRequest(QmRequestBody body) async {
 
     request.write(body.toJson());
     final response = await request.close();
-    logger.d('[QQ] HTTP ${response.statusCode}');
+    log.onlineLyric.debug('legacy', '[QQ] HTTP ${response.statusCode}');
 
     final responseBodyBytes = await response
         .fold<BytesBuilder>(BytesBuilder(), (b, d) => b..add(d))
@@ -148,14 +142,14 @@ Future<String> _doRequest(QmRequestBody body) async {
     client.close();
 
     if (responseBodyBytes.isEmpty) {
-      logger.e('[QQ] empty response body');
+      log.onlineLyric.error('legacy', '[QQ] empty response body');
       return '';
     }
 
     final respStr = utf8.decode(responseBodyBytes);
     return respStr;
   } catch (e, st) {
-    logger.e('[QQ] request failed: ${e.runtimeType}', stackTrace: st);
+    log.onlineLyric.error('legacy', '[QQ] request failed: ${e.runtimeType}', stackTrace: st);
     return '';
   }
 }
@@ -165,7 +159,7 @@ Future<List<Map<String, dynamic>>> qqSearch(
   int limit = 10,
 }) async {
   try {
-    logger.d('[QQ] search started: limit=$limit');
+    log.onlineLyric.debug('legacy', '[QQ] search started: limit=$limit');
     await _ensureInit();
 
     final body = QmRequestBody(
@@ -216,7 +210,7 @@ Future<List<Map<String, dynamic>>> qqSearch(
         .toList()
         .cast<Map<String, dynamic>>();
   } catch (e) {
-    logger.e('[QQ] search failed: ${e.runtimeType}');
+    log.onlineLyric.error('legacy', '[QQ] search failed: ${e.runtimeType}');
     return [];
   }
 }
@@ -265,7 +259,7 @@ Future<Map<String, dynamic>?> qqLyric(String songId) async {
         final rawDecrypted = utf8.decode(decryptedBytes);
         decryptedLyric = _stripLrcMetadata(rawDecrypted);
       } catch (e) {
-        logger.e('[QQ] lyric decode failed: ${e.runtimeType}');
+        log.onlineLyric.error('legacy', '[QQ] lyric decode failed: ${e.runtimeType}');
       }
     }
 
@@ -294,7 +288,7 @@ Future<Map<String, dynamic>?> qqLyric(String songId) async {
         final decryptedBytes = TripleDesDecryptor.decrypt(transBytes);
         decryptedTrans = _stripLrcMetadata(utf8.decode(decryptedBytes));
       } catch (e) {
-        logger.e('[QQ] translation decode failed: ${e.runtimeType}');
+        log.onlineLyric.error('legacy', '[QQ] translation decode failed: ${e.runtimeType}');
       }
     }
 
@@ -305,7 +299,7 @@ Future<Map<String, dynamic>?> qqLyric(String songId) async {
         final decryptedBytes = TripleDesDecryptor.decrypt(romaBytes);
         decryptedRoma = _stripLrcMetadata(utf8.decode(decryptedBytes));
       } catch (e) {
-        logger.e('[QQ] romanization decode failed: ${e.runtimeType}');
+        log.onlineLyric.error('legacy', '[QQ] romanization decode failed: ${e.runtimeType}');
       }
     }
 
@@ -332,7 +326,7 @@ Future<Map<String, dynamic>?> qqLyric(String songId) async {
     }
     return result;
   } catch (e) {
-    logger.e('[QQ] lyric failed: ${e.runtimeType}');
+    log.onlineLyric.error('legacy', '[QQ] lyric failed: ${e.runtimeType}');
     return null;
   }
 }

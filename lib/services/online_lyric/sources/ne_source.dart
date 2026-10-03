@@ -37,10 +37,7 @@ class NetEaseSource implements LyricSource {
         );
       }).toList();
     } catch (e, st) {
-      logger.w(
-        'NetEaseSource.search failed: ${e.runtimeType}',
-        stackTrace: st,
-      );
+      log.onlineLyric.warn('legacy', 'NetEaseSource.search failed: ${e.runtimeType}', stackTrace: st,);
       return [];
     }
   }
@@ -56,10 +53,7 @@ class NetEaseSource implements LyricSource {
 
       return lyricResult.toParsedLyric();
     } catch (e, st) {
-      logger.w(
-        'NetEaseSource.getLyrics failed: ${e.runtimeType}',
-        stackTrace: st,
-      );
+      log.onlineLyric.warn('legacy', 'NetEaseSource.getLyrics failed: ${e.runtimeType}', stackTrace: st,);
       return null;
     }
   }

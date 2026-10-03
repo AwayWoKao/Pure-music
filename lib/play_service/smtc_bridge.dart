@@ -77,7 +77,7 @@ class SmtcBridge {
     try {
       return SmtcBridge.withBackend(NativeSmtcBackend());
     } catch (error, stackTrace) {
-      logger.w('[smtc] initialization failed: $error\n$stackTrace');
+      log.smtc.warn('legacy', '[smtc] initialization failed: $error\n$stackTrace');
       return SmtcBridge.withBackend(null);
     }
   }
@@ -201,7 +201,7 @@ class SmtcBridge {
     try {
       await backend.close();
     } catch (error, stackTrace) {
-      logger.w('[smtc] close failed: $error\n$stackTrace');
+      log.smtc.warn('legacy', '[smtc] close failed: $error\n$stackTrace');
     }
   }
 
@@ -216,7 +216,7 @@ class SmtcBridge {
       try {
         await operation(backend).timeout(_operationTimeout);
       } catch (error, stackTrace) {
-        logger.w('[smtc] $name failed: $error\n$stackTrace');
+        log.smtc.warn('legacy', '[smtc] $name failed: $error\n$stackTrace');
       }
     });
     return _operationChain;

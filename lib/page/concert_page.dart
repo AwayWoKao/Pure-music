@@ -273,7 +273,7 @@ class _ConcertPageState extends State<ConcertPage> {
       if (!mounted || generation != _generation) return;
       setState(() => _phase = _ConcertPhase.select);
     } catch (error, trace) {
-      logger.e('[smart sort] plan failed', error: error, stackTrace: trace);
+      log.library.error('legacy', '[smart sort] plan failed', error: error, stackTrace: trace);
       if (!mounted || generation != _generation) return;
       setState(() => _phase = _ConcertPhase.select);
       showTextOnSnackBar('生成编排失败', variant: ToastVariant.error);

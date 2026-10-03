@@ -13,13 +13,12 @@ import 'package:pure_music/lyric/qrc.dart';
 import 'package:pure_music/lyric/ttml.dart';
 import 'package:pure_music/services/online_lyric/api/net_lyric_api.dart'
     as net_api;
-import 'package:pure_music/core/utils.dart' as utils;
+import 'package:pure_music/core/log/app_log.dart';
 import 'package:pure_music/lyric/lyric_stripper.dart';
 import 'package:pure_music/lyric/exclude_data.dart';
 import 'package:pure_music/core/settings.dart';
 import 'package:pure_music/core/lyric_match_scoring.dart';
 
-final logger = utils.logger;
 
 enum ResultSource { qq, kugou, ne, amll }
 
@@ -162,7 +161,7 @@ Future<({Lyric? lyric, int attempts})> _loadFirstValidLyric(
           candidate.lyricType = lyric.isWordByWord ? '逐字' : '逐行';
           return lyric;
         } catch (error, trace) {
-          logger.w(
+          log.onlineLyric.warn('legacy',
             'Preferred lyric validation failed: ${error.runtimeType}',
             stackTrace: trace,
           );
@@ -205,11 +204,11 @@ Future<Lyric?> getLyricFromPreferredSource(
 }) async {
   final searchQueries = buildOnlineLyricSearchQueries(audio);
   if (searchQueries.isEmpty) {
-    logger.w('[preferred] no valid search queries');
+    log.onlineLyric.warn('legacy', '[preferred] no valid search queries');
     return null;
   }
 
-  logger.i('[preferred] searching from $source');
+  log.onlineLyric.info('legacy', '[preferred] searching from $source');
 
   try {
     if (timeLimit.compareTo(Duration.zero) <= 0) return null;
@@ -272,7 +271,7 @@ Future<Lyric?> getLyricFromPreferredSource(
               searchTimeout,
             );
           } catch (error, trace) {
-            logger.w(
+            log.onlineLyric.warn('legacy',
               '[preferred] query failed: ${error.runtimeType}',
               stackTrace: trace,
             );
@@ -308,7 +307,7 @@ Future<Lyric?> getLyricFromPreferredSource(
       );
       attemptsRemaining -= loaded.attempts;
       if (loaded.lyric != null) {
-        logger.i('[preferred] exact match from $source');
+        log.onlineLyric.info('legacy', '[preferred] exact match from $source');
         return loaded.lyric;
       }
     }
@@ -323,7 +322,7 @@ Future<Lyric?> getLyricFromPreferredSource(
       candidateTimeout: _candidateLyricTimeoutFor(source),
     );
     if (loadedFallback.lyric != null) {
-      logger.i('[preferred] version match from $source');
+      log.onlineLyric.info('legacy', '[preferred] version match from $source');
       return loadedFallback.lyric;
     }
 
@@ -340,15 +339,15 @@ Future<Lyric?> getLyricFromPreferredSource(
         candidateTimeout: _candidateLyricTimeoutFor(source),
       );
       if (loadedManualFallback.lyric != null) {
-        logger.i('[preferred] manual first-result fallback from $source');
+        log.onlineLyric.info('legacy', '[preferred] manual first-result fallback from $source');
         return loadedManualFallback.lyric;
       }
     }
 
-    logger.i('[preferred] no usable results from $source');
+    log.onlineLyric.info('legacy', '[preferred] no usable results from $source');
     return null;
   } catch (e) {
-    logger.e('[preferred] $source search failed: ${e.runtimeType}');
+    log.onlineLyric.error('legacy', '[preferred] $source search failed: ${e.runtimeType}');
     return null;
   }
 }
@@ -395,18 +394,18 @@ getLyricWithSourceFallback(
                   ))
               .timeout(sourceBudget);
       if (lyric != null && lyric.lines.isNotEmpty) {
-        logger.i('[fallback] lyric found from $source');
+        log.onlineLyric.info('legacy', '[fallback] lyric found from $source');
         return (lyric: lyric, source: source, result: hitResult);
       }
     } catch (error, trace) {
-      logger.w(
+      log.onlineLyric.warn('legacy',
         '[fallback] source $source failed: ${error.runtimeType}',
         stackTrace: trace,
       );
     }
   }
 
-  logger.i('[fallback] no usable online lyric');
+  log.onlineLyric.info('legacy', '[fallback] no usable online lyric');
   return null;
 }
 
@@ -466,7 +465,7 @@ Future<Lyric?> getOnlineLyric({
     amllTtmlFile: amllTtmlFile,
   );
   if (cached != null) {
-    logger.d('[getOnlineLyric] cache hit');
+    log.onlineLyric.debug('legacy', '[getOnlineLyric] cache hit');
     return Future.value(cached);
   }
 
@@ -478,7 +477,7 @@ Future<Lyric?> getOnlineLyric({
   );
 
   if (key.isNotEmpty && _lyricFetchCache.containsKey(key)) {
-    logger.d('[getOnlineLyric] request dedup');
+    log.onlineLyric.debug('legacy', '[getOnlineLyric] request dedup');
     return _lyricFetchCache[key]!;
   }
 
@@ -562,7 +561,7 @@ Future<Lyric?> _fetchLyricInternal({
   // Run all sources in parallel, each with error isolation
   final wrapped = futures.map(
     (f) => f.catchError((e) {
-      logger.e('Source failed: ${e.runtimeType}');
+      log.onlineLyric.error('legacy', 'Source failed: ${e.runtimeType}');
       return null;
     }),
   );
@@ -572,15 +571,15 @@ Future<Lyric?> _fetchLyricInternal({
   // First non-empty lyric wins
   for (final lyric in results) {
     if (lyric != null && lyric.lines.isNotEmpty) {
-      logger.i(
+      log.onlineLyric.info('legacy',
         '[getOnlineLyric] winner: lines=${lyric.lines.length} type=${lyric.lines.first.runtimeType}',
       );
-      logger.d('[getOnlineLyric] success: ${lyric.lines.length} lines');
+      log.onlineLyric.debug('legacy', '[getOnlineLyric] success: ${lyric.lines.length} lines');
       return lyric;
     }
   }
 
-  logger.d('[getOnlineLyric] all sources returned null or empty');
+  log.onlineLyric.debug('legacy', '[getOnlineLyric] all sources returned null or empty');
   return null;
 }
 
@@ -1026,7 +1025,7 @@ Future<List<SongSearchResult>> validateOnlineLyricResults(
         item.lyricType = lyric.isWordByWord ? '逐字' : '逐行';
         validated[index] = item;
       } catch (error, trace) {
-        logger.w(
+        log.onlineLyric.warn('legacy',
           'Lyric result validation failed: ${error.runtimeType}',
           stackTrace: trace,
         );
@@ -1193,7 +1192,7 @@ List<String> buildOnlineLyricSearchQueries(Audio audio) {
 Future<List<SongSearchResult>> uniSearch(Audio audio) async {
   final searchQueries = buildOnlineLyricSearchQueries(audio);
   if (searchQueries.isEmpty) {
-    logger.w('uniSearch: no valid search queries');
+    log.onlineLyric.warn('legacy', 'uniSearch: no valid search queries');
     return [];
   }
 
@@ -1206,7 +1205,7 @@ Future<List<SongSearchResult>> uniSearch(Audio audio) async {
     var remaining = _remainingDuration(_unifiedSearchTimeLimit, stopwatch);
     if (remaining == Duration.zero) break;
     final searchQuery = searchQueries[i];
-    logger.d('=== uniSearch query #${i + 1} ===');
+    log.onlineLyric.debug('legacy', '=== uniSearch query #${i + 1} ===');
     final searchSeconds = min(5, max(1, remaining.inSeconds));
 
     final kgFuture = _searchKugouWithTimeout(
@@ -1243,7 +1242,7 @@ Future<List<SongSearchResult>> uniSearch(Audio audio) async {
         ], eagerError: false).timeout(
           _shorterDuration(remaining, const Duration(seconds: 6)),
           onTimeout: () {
-            logger.w('uniSearch query #${i + 1} timed out');
+            log.onlineLyric.warn('legacy', 'uniSearch query #${i + 1} timed out');
             return <List<SongSearchResult>>[[], [], [], []];
           },
         );
@@ -1278,14 +1277,14 @@ Future<List<SongSearchResult>> uniSearch(Audio audio) async {
     }
 
     if (bestBySource.length == ResultSource.values.length) {
-      logger.d('=== uniSearch resolved every source on query #${i + 1} ===');
+      log.onlineLyric.debug('legacy', '=== uniSearch resolved every source on query #${i + 1} ===');
       break;
     }
   }
 
   final result = bestBySource.values.toList()
     ..sort((a, b) => b.score.compareTo(a.score));
-  logger.d(
+  log.onlineLyric.debug('legacy',
     '=== uniSearch done: ${result.length} results, best=${result.isNotEmpty ? result.first.score : 0} ===',
   );
   return result.take(ResultSource.values.length).toList();
@@ -1299,14 +1298,14 @@ Future<List<SongSearchResult>> _searchKugouWithTimeout(
   Duration? timeout,
 }) async {
   try {
-    logger.d('[KG] searching');
+    log.onlineLyric.debug('legacy', '[KG] searching');
     final kugouResults = await net_api
         .kgSearchLyric(keyword: query, pageSize: limit, timeout: timeout)
         .timeout(
           Duration(seconds: seconds),
           onTimeout: () => throw TimeoutException('KG search timeout'),
         );
-    logger.d('[KG] got ${kugouResults.length} raw results');
+    log.onlineLyric.debug('legacy', '[KG] got ${kugouResults.length} raw results');
     final List<SongSearchResult> results = [];
     for (final item in kugouResults.take(limit)) {
       final searchResult = SongSearchResult.fromKugouSearchItem(item, audio);
@@ -1314,10 +1313,10 @@ Future<List<SongSearchResult>> _searchKugouWithTimeout(
         results.add(searchResult);
       }
     }
-    logger.d('[KG] accepted ${results.length}');
+    log.onlineLyric.debug('legacy', '[KG] accepted ${results.length}');
     return results;
   } catch (err) {
-    logger.w('[KG] search failed: ${err.runtimeType}');
+    log.onlineLyric.warn('legacy', '[KG] search failed: ${err.runtimeType}');
     return [];
   }
 }
@@ -1330,14 +1329,14 @@ Future<List<SongSearchResult>> _searchQQWithTimeout(
   Duration? timeout,
 }) async {
   try {
-    logger.d('[QQ] searching');
+    log.onlineLyric.debug('legacy', '[QQ] searching');
     final qqResults = await net_api
         .qqSearchLyric(keyword: query, pageSize: limit, timeout: timeout)
         .timeout(
           Duration(seconds: seconds),
           onTimeout: () => throw TimeoutException('QQ search timeout'),
         );
-    logger.d('[QQ] got ${qqResults.length} raw results');
+    log.onlineLyric.debug('legacy', '[QQ] got ${qqResults.length} raw results');
     final List<SongSearchResult> results = [];
     for (final item in qqResults.take(limit)) {
       final searchResult = SongSearchResult.fromQQSearchItem(item, audio);
@@ -1345,10 +1344,10 @@ Future<List<SongSearchResult>> _searchQQWithTimeout(
         results.add(searchResult);
       }
     }
-    logger.d('[QQ] accepted ${results.length}');
+    log.onlineLyric.debug('legacy', '[QQ] accepted ${results.length}');
     return results;
   } catch (err) {
-    logger.w('[QQ] search failed: ${err.runtimeType}');
+    log.onlineLyric.warn('legacy', '[QQ] search failed: ${err.runtimeType}');
     return [];
   }
 }
@@ -1361,14 +1360,14 @@ Future<List<SongSearchResult>> _searchNEWithTimeout(
   Duration? timeout,
 }) async {
   try {
-    logger.d('[NE] searching');
+    log.onlineLyric.debug('legacy', '[NE] searching');
     final neResults = await net_api
         .neSearchLyric(keyword: query, pageSize: limit, timeout: timeout)
         .timeout(
           Duration(seconds: seconds),
           onTimeout: () => throw TimeoutException('NE search timeout'),
         );
-    logger.d('[NE] got ${neResults.length} raw results');
+    log.onlineLyric.debug('legacy', '[NE] got ${neResults.length} raw results');
     final List<SongSearchResult> results = [];
     for (final item in neResults) {
       final searchResult = SongSearchResult.fromNeSearchItem(item, audio);
@@ -1376,10 +1375,10 @@ Future<List<SongSearchResult>> _searchNEWithTimeout(
         results.add(searchResult);
       }
     }
-    logger.d('[NE] accepted ${results.length}');
+    log.onlineLyric.debug('legacy', '[NE] accepted ${results.length}');
     return results;
   } catch (err) {
-    logger.w('[NE] search failed: ${err.runtimeType}');
+    log.onlineLyric.warn('legacy', '[NE] search failed: ${err.runtimeType}');
     return [];
   }
 }
@@ -1391,14 +1390,14 @@ Future<List<SongSearchResult>> _searchAMLLWithTimeout(
   int limit,
 ) async {
   try {
-    logger.d('[AMLL] searching');
+    log.onlineLyric.debug('legacy', '[AMLL] searching');
     final amllResults = await net_api
         .amllSearchSingle(keyword: query, pageSize: limit)
         .timeout(
           Duration(seconds: seconds),
           onTimeout: () => throw TimeoutException('AMLL search timeout'),
         );
-    logger.d('[AMLL] got ${amllResults.length} raw results');
+    log.onlineLyric.debug('legacy', '[AMLL] got ${amllResults.length} raw results');
     final List<SongSearchResult> results = [];
     for (final item in amllResults) {
       final searchResult = SongSearchResult.fromAmllSearchItem(item, audio);
@@ -1406,10 +1405,10 @@ Future<List<SongSearchResult>> _searchAMLLWithTimeout(
         results.add(searchResult);
       }
     }
-    logger.d('[AMLL] accepted ${results.length}');
+    log.onlineLyric.debug('legacy', '[AMLL] accepted ${results.length}');
     return results;
   } catch (err) {
-    logger.w('[AMLL] search failed: ${err.runtimeType}');
+    log.onlineLyric.warn('legacy', '[AMLL] search failed: ${err.runtimeType}');
     return [];
   }
 }
@@ -1447,9 +1446,9 @@ Future<Lyric?> _getQQSyncLyric(
     if (parsed != null && parsed.isNotEmpty) {
       return _parsedToLyric(parsed, rawText: lyricResult.mainLyric);
     }
-    logger.d('[QQ lyric] toParsedLyric returned null or empty');
+    log.onlineLyric.debug('legacy', '[QQ lyric] toParsedLyric returned null or empty');
   } catch (err, trace) {
-    logger.e('Failed to get QQ lyric: $err', stackTrace: trace);
+    log.onlineLyric.error('legacy', 'Failed to get QQ lyric: $err', stackTrace: trace);
   }
   return null;
 }
@@ -1505,9 +1504,9 @@ Future<Lyric?> _getKugouSyncLyric(
       final result = Krc(syncLines, LyricFormat.local, lyricResult.mainLyric);
       return _postStripMetadata(result);
     }
-    logger.d('[KG lyric] toParsedLyric returned null or empty');
+    log.onlineLyric.debug('legacy', '[KG lyric] toParsedLyric returned null or empty');
   } catch (err, trace) {
-    logger.e('Failed to get Kugou lyric: $err', stackTrace: trace);
+    log.onlineLyric.error('legacy', 'Failed to get Kugou lyric: $err', stackTrace: trace);
   }
   return null;
 }
@@ -1528,9 +1527,9 @@ Future<Lyric?> _getNeSyncLyric(int neSongId, {Duration? timeout}) async {
     if (parsed != null && parsed.isNotEmpty) {
       return _parsedToLyric(parsed, rawText: lyricResult.mainLyric);
     }
-    logger.d('[NE lyric] toParsedLyric returned null or empty');
+    log.onlineLyric.debug('legacy', '[NE lyric] toParsedLyric returned null or empty');
   } catch (err, trace) {
-    logger.e('Failed to get NetEase lyric: $err', stackTrace: trace);
+    log.onlineLyric.error('legacy', 'Failed to get NetEase lyric: $err', stackTrace: trace);
   }
   return null;
 }
@@ -1551,10 +1550,10 @@ Future<Lyric?> _getAmllTtmlLyric(
     final ttml = Ttml.fromTtmlText(raw);
     if (ttml == null || ttml.lines.isEmpty) return null;
 
-    logger.i('[AMLL lyric] parsed ${ttml.lines.length} lines');
+    log.onlineLyric.info('legacy', '[AMLL lyric] parsed ${ttml.lines.length} lines');
     return ttml;
   } catch (err, trace) {
-    logger.e('Failed to get AMLL lyric: $err', stackTrace: trace);
+    log.onlineLyric.error('legacy', 'Failed to get AMLL lyric: $err', stackTrace: trace);
   }
   return null;
 }
@@ -1566,7 +1565,7 @@ Future<Lyric?> getAmllLyric(String id) async {
 }
 
 Lyric? _parsedToLyric(ParsedLyricResult parsed, {String? rawText}) {
-  logger.i(
+  log.onlineLyric.info('legacy',
     '[parsedToLyric] hasWordByWord=${parsed.hasWordByWord} format=${parsed.format.name} lines=${parsed.lines.length}',
   );
   if (parsed.hasWordByWord) {

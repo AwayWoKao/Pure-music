@@ -49,7 +49,7 @@ class _BuildIndexStateViewState extends State<BuildIndexStateView> {
     try {
       await widget.whenIndexBuilt();
     } catch (error, stackTrace) {
-      logger.e('曲库索引完成后的加载失败', error: error, stackTrace: stackTrace);
+      log.app.error('legacy', '曲库索引完成后的加载失败', error: error, stackTrace: stackTrace);
       if (mounted) {
         setState(() => _errorMessage = '曲库加载失败，请查看日志');
       }
@@ -90,9 +90,7 @@ class _BuildIndexStateViewState extends State<BuildIndexStateView> {
           return _buildError(scheme, '曲库索引构建失败，请查看日志');
         }
         if (snapshot.hasData) {
-          logger.i(
-            '[build index] ${snapshot.data!.progress}: ${snapshot.data!.message}',
-          );
+          log.app.info('legacy', '[build index] ${snapshot.data!.progress}: ${snapshot.data!.message}',);
         }
         if (!_done && snapshot.connectionState == ConnectionState.done) {
           _done = true;

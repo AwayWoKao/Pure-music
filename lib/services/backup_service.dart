@@ -329,7 +329,7 @@ Future<Set<BackupCategory>> importBackup({
       try {
         await transaction.rollback();
       } catch (rollbackError, rollbackTrace) {
-        logger.e('备份设置回滚失败', error: rollbackError, stackTrace: rollbackTrace);
+        log.settings.error('legacy', '备份设置回滚失败', error: rollbackError, stackTrace: rollbackTrace);
       }
       rethrow;
     }

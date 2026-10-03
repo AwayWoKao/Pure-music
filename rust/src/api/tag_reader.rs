@@ -33,7 +33,7 @@ use windows::{
 use crate::frb_generated::StreamSink;
 
 use super::library_db;
-use super::logger::log_to_dart;
+
 
 mod format_detection;
 use format_detection::{
@@ -446,7 +446,7 @@ pub fn read_audio_extra_metadata(path: String) -> AudioExtraMetadata {
             {
                 return metadata;
             }
-            log_to_dart(format!("metadata read failed: {}", err));
+            log::warn!(target: "tag", "metadata read failed: {}", err);
             return AudioExtraMetadata {
                 extension,
                 file_size,
@@ -700,7 +700,7 @@ impl Audio {
         let file_metadata = match fs::metadata(path) {
             Ok(val) => val,
             Err(err) => {
-                log_to_dart(err.to_string());
+                log::warn!(target: "tag", "{}", err);
                 return None;
             }
         };
@@ -726,7 +726,7 @@ impl Audio {
         match Self::read_by_win_music_properties(path, modified, created) {
             Ok(value) => Some(value),
             Err(err) => {
-                log_to_dart(format!("metadata fallback failed: {}", err));
+                log::warn!(target: "tag", "metadata fallback failed: {}", err);
                 let mut value = Self::new_with_path(path, None)?;
                 value.modified = modified;
                 value.created = created;
@@ -746,7 +746,7 @@ impl Audio {
         let tagged_file = match Probe::open(path).and_then(|probe| probe.options(options).read()) {
             Ok(val) => val,
             Err(err) => {
-                log_to_dart(format!("metadata parse failed: {}", err));
+                log::warn!(target: "tag", "metadata parse failed: {}", err);
                 return None;
             }
         };
@@ -1171,7 +1171,7 @@ pub fn get_picture_and_colors(
         None => match _get_picture_by_windows(&path) {
             Ok(val) => val,
             Err(err) => {
-                log_to_dart(format!("fail to get pic: {}", err));
+                log::warn!(target: "tag", "fail to get pic: {}", err);
                 return (None, vec![]);
             }
         },
@@ -1179,7 +1179,7 @@ pub fn get_picture_and_colors(
     let loaded = match image::load_from_memory(&pic) {
         Ok(loaded) => loaded,
         Err(err) => {
-            log_to_dart(format!("fail to decode cover: {}", err));
+            log::warn!(target: "tag", "fail to decode cover: {}", err);
             return (None, vec![]);
         }
     };
@@ -1189,7 +1189,7 @@ pub fn get_picture_and_colors(
     ) {
         Ok(colors) => colors,
         Err(err) => {
-            log_to_dart(format!("fail to extract colors: {}", err));
+            log::warn!(target: "tag", "fail to extract colors: {}", err);
             vec![]
         }
     };
@@ -1238,7 +1238,7 @@ pub fn get_picture_from_path(path: String, width: u32, height: u32) -> Option<Ve
         _get_picture_by_lofty(&path).or_else(|| match _get_picture_by_windows(&path) {
             Ok(val) => Some(val),
             Err(err) => {
-                log_to_dart(format!("fail to get pic: {}", err));
+                log::warn!(target: "tag", "fail to get pic: {}", err);
                 None
             }
         });
@@ -1301,14 +1301,14 @@ fn _get_lyric_from_lofty(path: &str) -> Option<String> {
     let probe = match Probe::open(path_ref) {
         Ok(v) => v,
         Err(err) => {
-            log_to_dart(format!("lofty probe open error: {:?}", err.kind()));
+            log::warn!(target: "tag", "lofty probe open error: {:?}", err.kind());
             return None;
         }
     };
     let tagged_file = match probe.options(options).read() {
         Ok(f) => f,
         Err(err) => {
-            log_to_dart(format!("lofty probe read error: {:?}", err.kind()));
+            log::warn!(target: "tag", "lofty probe read error: {:?}", err.kind());
             return None;
         }
     };
@@ -1318,7 +1318,7 @@ fn _get_lyric_from_lofty(path: &str) -> Option<String> {
     {
         Some(t) => t,
         None => {
-            log_to_dart("lofty: no primary/first tag found".to_string());
+            log::debug!(target: "tag", "lofty: no primary/first tag found");
             return None;
         }
     };
@@ -1329,13 +1329,13 @@ fn _get_lyric_from_lofty(path: &str) -> Option<String> {
             if !text.trim().is_empty() {
                 return Some(text);
             }
-            log_to_dart("lofty: lyric text is empty".to_string());
+            log::debug!(target: "tag", "lofty: lyric text is empty");
         } else {
-            log_to_dart("lofty: lyric value text() returned None".to_string());
+            log::debug!(target: "tag", "lofty: lyric value text() returned None");
         }
     }
 
-    log_to_dart("lofty: no ItemKey::Lyrics found, scanning lyric-named items".to_string());
+    log::debug!(target: "tag", "lofty: no ItemKey::Lyrics found, scanning lyric-named items");
 
     for item in tag.items() {
         if !is_lyric_item_key(item.key()) {
@@ -1350,16 +1350,17 @@ fn _get_lyric_from_lofty(path: &str) -> Option<String> {
             let has_timestamp = text.contains('[') && (text.contains(':') || text.contains('.'));
             let has_newlines = text.contains('\n');
             if has_timestamp || has_newlines {
-                log_to_dart(format!(
+                log::debug!(
+                    target: "tag",
                     "lofty: found lyric-like content in key={:?}, len={}",
                     item.key(),
                     text.len()
-                ));
+                );
                 return Some(text);
             }
         }
     }
-    log_to_dart("no lyric-like content found in any tag item".to_string());
+    log::debug!(target: "tag", "no lyric-like content found in any tag item");
     None
 }
 
@@ -2253,7 +2254,7 @@ pub fn update_index(
             if snapshot.version == CURRENT_INDEX_VERSION
                 && index_folder_snapshots_unchanged(&snapshot.folders)
             {
-                log_to_dart("index update fast path: unchanged".to_string());
+                log::debug!(target: "library", "index update fast path: unchanged");
                 let _ = sink.add(IndexActionState {
                     progress: 1.0,
                     message: String::from("音乐库更新完成"),

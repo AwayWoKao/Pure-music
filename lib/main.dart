@@ -16,6 +16,7 @@ import 'package:pure_music/native/rust/api/logger.dart';
 import 'package:pure_music/native/rust/frb_generated.dart';
 import 'package:pure_music/core/app_fonts.dart';
 import 'package:pure_music/core/theme.dart';
+import 'package:pure_music/core/log/rust_log_line.dart';
 import 'package:pure_music/core/utils.dart';
 import 'package:pure_music/core/window_lifecycle.dart';
 import 'package:flutter/material.dart';
@@ -71,7 +72,7 @@ Future<void> loadPrefFont() async {
     try {
       await loadAppFontFile(family: family, path: path);
     } catch (err, trace) {
-      logger.e(err, stackTrace: trace);
+      log.app.error('legacy', err.toString(), stackTrace: trace);
     }
   }
 
@@ -88,11 +89,8 @@ void _installGlobalErrorLogging() {
       error: details.exception,
       stackTrace: details.stack,
     );
-    logger.e(
-      '[flutter] unhandled framework error',
-      error: details.exception,
-      stackTrace: details.stack,
-    );
+    log.app.error('legacy', '[flutter] unhandled framework error', error: details.exception,
+      stackTrace: details.stack,);
     previousFlutterError?.call(details);
   };
   final previousPlatformError = PlatformDispatcher.instance.onError;
@@ -102,18 +100,15 @@ void _installGlobalErrorLogging() {
       error: error,
       stackTrace: stackTrace,
     );
-    logger.f(
-      '[platform] unhandled asynchronous error',
-      error: error,
-      stackTrace: stackTrace,
-    );
+    log.app.fatal('legacy', '[platform] unhandled asynchronous error', error: error,
+      stackTrace: stackTrace,);
     return previousPlatformError?.call(error, stackTrace) ?? false;
   };
 }
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await logger.init;
+  await applicationLogOutput.init();
   _installGlobalErrorLogging();
   try {
     await _runApplication();
@@ -123,7 +118,7 @@ Future<void> main() async {
       error: error,
       stackTrace: stackTrace,
     );
-    logger.f('[startup] unhandled error', error: error, stackTrace: stackTrace);
+    log.app.fatal('legacy', '[startup] unhandled error', error: error, stackTrace: stackTrace);
     await applicationLogOutput.flush();
     rethrow;
   }
@@ -143,12 +138,17 @@ Future<void> _runApplication() async {
   try {
     await RustLib.init();
   } catch (e, s) {
-    logger.e('RustLib.init failed: $e\n$s');
+    log.app.error('legacy', 'RustLib.init failed: $e\n$s');
     rethrow;
   }
 
-  _rustLoggerSub = initRustLogger().listen((msg) {
-    logger.i('[rs]: $msg');
+  _rustLoggerSub = initRustLogger().listen((line) {
+    final parsed = parseRustLogLine(line);
+    if (parsed == null) {
+      log.rust.info('legacy', line);
+      return;
+    }
+    log.write(parsed);
   });
 
   await HotkeysHelper.unregisterAll();

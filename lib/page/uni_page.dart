@@ -383,12 +383,10 @@ class _UniPageState<T> extends State<UniPage<T>> {
     final indexStopwatch = Stopwatch()..start();
     _rememberPreparedPageOrder();
     indexStopwatch.stop();
-    logger.i(
-      '[perf] page prepare title=${widget.title} reason=$reason '
+    log.library.debug('legacy', '[perf] page prepare title=${widget.title} reason=$reason '
       'items=${widget.contentList.length} '
       'sort=${sortStopwatch.elapsedMicroseconds}us '
-      'pathIndex=${indexStopwatch.elapsedMicroseconds}us',
-    );
+      'pathIndex=${indexStopwatch.elapsedMicroseconds}us',);
   }
 
   void _cancelBackgroundSort() {
@@ -435,7 +433,7 @@ class _UniPageState<T> extends State<UniPage<T>> {
             ),
           );
         } catch (error, trace) {
-          logger.e('后台页面排序失败', error: error, stackTrace: trace);
+          log.library.error('legacy', '后台页面排序失败', error: error, stackTrace: trace);
           if (!mounted || request != _sortRequest) continue;
           setState(() => _prepareContent(reason));
           continue;
@@ -452,12 +450,10 @@ class _UniPageState<T> extends State<UniPage<T>> {
         _rememberPreparedPageOrder();
         indexStopwatch.stop();
         setState(() {});
-        logger.i(
-          '[perf] page prepare title=${widget.title} reason=$reason '
+        log.library.debug('legacy', '[perf] page prepare title=${widget.title} reason=$reason '
           'items=${widget.contentList.length} '
           'sort=${sortStopwatch.elapsedMicroseconds}us '
-          'pathIndex=${indexStopwatch.elapsedMicroseconds}us background=true',
-        );
+          'pathIndex=${indexStopwatch.elapsedMicroseconds}us background=true',);
       }
     } finally {
       _backgroundSortWorkerActive = false;
@@ -475,11 +471,9 @@ class _UniPageState<T> extends State<UniPage<T>> {
     final indexStopwatch = Stopwatch()..start();
     _updateAlphabetSections();
     indexStopwatch.stop();
-    logger.i(
-      '[perf] page prepare title=${widget.title} reason=$reason '
+    log.library.debug('legacy', '[perf] page prepare title=${widget.title} reason=$reason '
       'items=${widget.contentList.length} sort=0us '
-      'pathIndex=${indexStopwatch.elapsedMicroseconds}us cached=true',
-    );
+      'pathIndex=${indexStopwatch.elapsedMicroseconds}us cached=true',);
   }
 
   void _updateAlphabetSections() {

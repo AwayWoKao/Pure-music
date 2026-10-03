@@ -10,7 +10,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:path/path.dart' as p;
 import 'package:pure_music/component/motion.dart';
 import 'package:pure_music/core/design_tokens.dart';
-import 'package:pure_music/core/matcher.dart' hide logger;
+import 'package:pure_music/core/matcher.dart';
 import 'package:pure_music/core/mouse_back_exit.dart';
 import 'package:pure_music/core/paths.dart' as app_paths;
 import 'package:pure_music/core/settings.dart';
@@ -331,7 +331,7 @@ class _AudioDetailPageState extends State<AudioDetailPage> {
         _cancelEdit();
       }
     } catch (e, trace) {
-      logger.e('保存音频标签失败', error: e, stackTrace: trace);
+      log.library.error('legacy', '保存音频标签失败', error: e, stackTrace: trace);
       if (coverWritten) _refreshSystemNowPlaying();
       if (mounted) {
         showTextOnSnackBar(
@@ -1371,7 +1371,7 @@ class _LyricsEditDialogState extends State<_LyricsEditDialog> {
         showTextOnSnackBar('歌词已写入标签', variant: ToastVariant.success);
       }
     } catch (e, trace) {
-      logger.e('写入歌词标签失败', error: e, stackTrace: trace);
+      log.library.error('legacy', '写入歌词标签失败', error: e, stackTrace: trace);
       if (mounted) {
         showTextOnSnackBar('写入标签失败，请查看日志', variant: ToastVariant.error);
       }
@@ -1600,7 +1600,7 @@ class _FetchLyricFromNetDialogState extends State<_FetchLyricFromNetDialog> {
         Navigator.pop(context, _NetFetchResult(text));
       }
     } catch (e, trace) {
-      logger.e('获取或写入歌词失败', error: e, stackTrace: trace);
+      log.library.error('legacy', '获取或写入歌词失败', error: e, stackTrace: trace);
       if (mounted) {
         showTextOnSnackBar('操作失败，请查看日志', variant: ToastVariant.error);
       }

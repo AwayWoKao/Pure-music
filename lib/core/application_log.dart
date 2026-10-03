@@ -2,12 +2,15 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:logger/logger.dart';
 import 'package:path/path.dart' as path;
+import 'package:pure_music/core/log/diagnostic_redaction.dart';
+import 'package:pure_music/core/log/log_format.dart';
+import 'package:pure_music/core/log/log_policy.dart';
+import 'package:pure_music/core/log/log_record.dart';
 
 final applicationLogOutput = ApplicationLogOutput();
 
-class ApplicationLogOutput extends LogOutput {
+class ApplicationLogOutput {
   ApplicationLogOutput({Iterable<String>? directoryPaths})
     : _directoryPaths = directoryPaths?.toList(growable: false);
 
@@ -22,7 +25,6 @@ class ApplicationLogOutput extends LogOutput {
   String? get currentLogPath => _logFile?.path;
   String? get crashLogPath => _crashFile?.path;
 
-  @override
   Future<void> init() async {
     for (final directoryPath in _candidateDirectoryPaths()) {
       IOSink? candidateSink;
@@ -41,6 +43,7 @@ class ApplicationLogOutput extends LogOutput {
         _logFile = logFile;
         _crashFile = File(path.join(directory.path, 'crash.log'));
         _sink = candidateSink;
+        deleteExpiredLogs(now: DateTime.now());
         return;
       } catch (_) {
         try {
@@ -50,24 +53,52 @@ class ApplicationLogOutput extends LogOutput {
     }
   }
 
-  @override
-  void output(OutputEvent event) {
-    if (event.level.index < Level.info.index) return;
+  void writeRecord(LogRecord record) {
+    if (!writeToFile(record.level, fileThreshold(Platform.environment))) {
+      return;
+    }
     final sink = _sink;
     if (sink == null) return;
+    final text = redactDiagnosticData(formatRecord(record));
     unawaited(
       _enqueueWrite(() async {
-        sink.writeln(
-          '${event.origin.time.toIso8601String()}|${event.level.name.toUpperCase()}',
-        );
-        for (final line in event.lines) {
+        for (final line in text.split('\n')) {
           sink.writeln(line);
         }
-        if (event.level.index >= Level.warning.index) {
+        if (record.level.index >= LogLevel.warn.index) {
           await sink.flush();
         }
       }),
     );
+  }
+
+  void deleteExpiredLogs({required DateTime now}) {
+    final today = DateTime(now.year, now.month, now.day);
+    final cutoff = today.subtract(logRetention);
+    for (final directoryPath in _candidateDirectoryPaths()) {
+      final directory = Directory(directoryPath);
+      if (!directory.existsSync()) continue;
+      try {
+        for (final entity in directory.listSync(followLinks: false)) {
+          if (entity is! File) continue;
+          final name = path.basename(entity.path);
+          final match = RegExp(
+            r'^pure_music_(\d{4})-(\d{2})-(\d{2})\.log$',
+          ).firstMatch(name);
+          if (match == null) continue;
+          final stamped = DateTime(
+            int.parse(match.group(1)!),
+            int.parse(match.group(2)!),
+            int.parse(match.group(3)!),
+          );
+          if (stamped.isBefore(cutoff)) {
+            try {
+              entity.deleteSync();
+            } catch (_) {}
+          }
+        }
+      } catch (_) {}
+    }
   }
 
   Future<void> flush() {
@@ -120,7 +151,6 @@ class ApplicationLogOutput extends LogOutput {
     return output.toString();
   }
 
-  @override
   Future<void> destroy() async {
     final sink = _sink;
     _sink = null;

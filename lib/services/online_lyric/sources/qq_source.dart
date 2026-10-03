@@ -38,10 +38,7 @@ class QQSource implements LyricSource {
         );
       }).toList();
     } catch (e, st) {
-      logger.w(
-        'QQSource.search failed: ${e.runtimeType}',
-        stackTrace: st,
-      );
+      log.onlineLyric.warn('legacy', 'QQSource.search failed: ${e.runtimeType}', stackTrace: st,);
       return [];
     }
   }
@@ -63,10 +60,7 @@ class QQSource implements LyricSource {
 
       return lyricResult.toParsedLyric();
     } catch (e, st) {
-      logger.w(
-        'QQSource.getLyrics failed: ${e.runtimeType}',
-        stackTrace: st,
-      );
+      log.onlineLyric.warn('legacy', 'QQSource.getLyrics failed: ${e.runtimeType}', stackTrace: st,);
       return null;
     }
   }

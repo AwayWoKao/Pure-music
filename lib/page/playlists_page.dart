@@ -59,7 +59,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
       if (!mounted) return;
       showTextOnSnackBar('该名称已存在', variant: ToastVariant.error);
     } catch (err, trace) {
-      logger.e('创建歌单失败', error: err, stackTrace: trace);
+      log.library.error('legacy', '创建歌单失败', error: err, stackTrace: trace);
       if (!mounted) return;
       showTextOnSnackBar('保存歌单失败', variant: ToastVariant.error);
     } finally {

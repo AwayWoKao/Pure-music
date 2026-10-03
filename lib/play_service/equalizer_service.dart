@@ -83,7 +83,7 @@ class EqualizerService {
   }
 
   void setEQ(int band, double gain) {
-    logger.i('[action] setEQ band=$band gain=$gain');
+    log.bass.info('legacy', '[action] setEQ band=$band gain=$gain');
     AudioEchoLogRecorder.instance.mark(
       'setEQ',
       extra: {'band': band, 'gain': gain},
@@ -322,11 +322,11 @@ class EqualizerService {
       if (!saved) _restoreRuntimeSnapshot(previous);
       return saved;
     } catch (error, trace) {
-      logger.e('应用 EQ 预设失败', error: error, stackTrace: trace);
+      log.bass.error('legacy', '应用 EQ 预设失败', error: error, stackTrace: trace);
       try {
         _restoreRuntimeSnapshot(previous);
       } catch (restoreError, restoreTrace) {
-        logger.e('回滚 EQ 预设失败', error: restoreError, stackTrace: restoreTrace);
+        log.bass.error('legacy', '回滚 EQ 预设失败', error: restoreError, stackTrace: restoreTrace);
       }
       return false;
     }

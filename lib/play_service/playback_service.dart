@@ -18,6 +18,7 @@ import 'package:pure_music/native/rust/api/smtc_flutter.dart';
 import 'package:pure_music/native/rust/api/tag_reader.dart' as rust_tag_reader;
 import 'package:pure_music/native/rust/api/library_db.dart' as rust_library_db;
 import 'package:pure_music/core/sleep_blocker.dart';
+import 'package:pure_music/core/log/playback_log.dart';
 import 'package:pure_music/core/utils.dart';
 import 'package:pure_music/core/theme.dart';
 import 'package:pure_music/core/settings.dart';
@@ -62,6 +63,8 @@ class PlaybackService extends ChangeNotifier {
   int _nextGaplessTransitionId = 1;
   _PendingGaplessTransition? _pendingGaplessTransition;
   int _replayGainRequestToken = 0;
+  double? _diagAt;
+  double? _diagLength;
   late final SmartTransitionCoordinator _smartTransitions;
 
   final _playCountRevision = ValueNotifier<int>(0);
@@ -87,23 +90,23 @@ class PlaybackService extends ChangeNotifier {
     required double length,
   }) {
     if (!enabled) {
-      logger.i('[remember] disabled by setting');
+      log.playback.info('legacy', '[remember] disabled by setting');
       return 0.0;
     }
     if (!position.isFinite || !length.isFinite) {
-      logger.i('[remember] position or length not finite');
+      log.playback.info('legacy', '[remember] position or length not finite');
       return 0.0;
     }
     if (length <= 1.0 || position <= 1.0) {
-      logger.i('[remember] too early: length=$length, position=$position');
+      log.playback.info('legacy', '[remember] too early: length=$length, position=$position');
       return 0.0;
     }
     if (length - position <= 1.0) {
-      logger.i('[remember] too close to end: remaining=${length - position}s');
+      log.playback.info('legacy', '[remember] too close to end: remaining=${length - position}s');
       return 0.0;
     }
     final remembered = position.clamp(0.0, length).toDouble();
-    logger.i('[remember] will save position=$remembered (length=$length)');
+    log.playback.info('legacy', '[remember] will save position=$remembered (length=$length)');
     return remembered;
   }
 
@@ -119,27 +122,23 @@ class PlaybackService extends ChangeNotifier {
       return 0.0;
     }
     if (!enabled) {
-      logger.i('[restore] disabled by setting');
+      log.playback.info('legacy', '[restore] disabled by setting');
       return 0.0;
     }
     if (!savedPosition.isFinite || savedPosition <= 1.0) {
-      logger.i('[restore] savedPosition too small: $savedPosition');
+      log.playback.info('legacy', '[restore] savedPosition too small: $savedPosition');
       return 0.0;
     }
     if (!length.isFinite || length <= 1.0) {
-      logger.i('[restore] invalid length: $length');
+      log.playback.info('legacy', '[restore] invalid length: $length');
       return 0.0;
     }
     if (length - savedPosition <= 1.0) {
-      logger.i(
-        '[restore] too close to end: saved=$savedPosition, length=$length, remaining=${length - savedPosition}',
-      );
+      log.playback.info('legacy', '[restore] too close to end: saved=$savedPosition, length=$length, remaining=${length - savedPosition}',);
       return 0.0;
     }
     final restored = savedPosition.clamp(0.0, length).toDouble();
-    logger.i(
-      '[restore] will seek to position=$restored (saved=$savedPosition, length=$length)',
-    );
+    log.playback.info('legacy', '[restore] will seek to position=$restored (saved=$savedPosition, length=$length)',);
     return restored;
   }
 
@@ -248,7 +247,7 @@ class PlaybackService extends ChangeNotifier {
         await _restoreLastSession();
         _supportPath = (await getAppDataDir()).path;
       } catch (err, trace) {
-        logger.e('[restoreLastSession] $err\n$trace');
+        log.playback.error('legacy', '[restoreLastSession] $err\n$trace');
       }
     });
   }
@@ -415,7 +414,7 @@ class PlaybackService extends ChangeNotifier {
 
   /// 独占模式
   bool useExclusiveMode(bool exclusive) {
-    logger.i('[action] useExclusiveMode=$exclusive');
+    log.playback.info('legacy', '[action] useExclusiveMode=$exclusive');
     AudioEchoLogRecorder.instance.mark(
       'useExclusiveMode',
       extra: {'exclusive': exclusive},
@@ -498,7 +497,7 @@ class PlaybackService extends ChangeNotifier {
   ValueNotifier<double> get pitch => _pitch;
 
   void setPitch(double value) {
-    logger.i('[action] setPitch=$value');
+    log.playback.info('legacy', '[action] setPitch=$value');
     AudioEchoLogRecorder.instance.mark('setPitch', extra: {'value': value});
     _synchronizeGaplessTransition();
     _pitch.value = value;
@@ -510,7 +509,7 @@ class PlaybackService extends ChangeNotifier {
   ValueNotifier<double> get rate => _rate;
 
   void setRate(double value) {
-    logger.i('[action] setRate=$value');
+    log.playback.info('legacy', '[action] setRate=$value');
     AudioEchoLogRecorder.instance.mark('setRate', extra: {'value': value});
     _synchronizeGaplessTransition();
     _rate.value = value;
@@ -542,7 +541,7 @@ class PlaybackService extends ChangeNotifier {
 
   /// 修改解码时的音量（不影响 Windows 系统音量）
   void setVolumeDsp(double volume) {
-    logger.i('[action] setVolumeDsp=$volume');
+    log.playback.info('legacy', '[action] setVolumeDsp=$volume');
     AudioEchoLogRecorder.instance.mark(
       'setVolumeDsp',
       extra: {'value': volume},
@@ -602,6 +601,21 @@ class PlaybackService extends ChangeNotifier {
   void _updateSmtcPosition() {
     if (_closed) return;
     final currentPosition = position;
+    if (_pendingGaplessTransition == null &&
+        playerState == PlayerState.playing) {
+      final sampledLength = _player.length;
+      if (currentPosition.isFinite &&
+          sampledLength.isFinite &&
+          sampledLength > 1) {
+        _diagAt = nextDiagnosticAt(
+          previous: _diagAt,
+          sample: currentPosition,
+          length: sampledLength,
+          playing: true,
+        );
+        if (_diagAt != null) _diagLength = sampledLength;
+      }
+    }
     _onPositionUpdate(currentPosition);
     _smartTransitions.onPositionTick(currentPosition, length);
     final progress = (currentPosition * 1000).round();
@@ -793,10 +807,8 @@ class PlaybackService extends ChangeNotifier {
       transitionId: pending.id,
       transitionMode: TransitionMode.crossfade,
     );
-    logger.i(
-      '[smart transition] simple crossfade fallback '
-      'prepared=$prepared reason=$reason',
-    );
+    log.playback.info('legacy', '[smart transition] simple crossfade fallback '
+      'prepared=$prepared reason=$reason',);
     if (!prepared) {
       _pendingGaplessTransition = null;
       return false;
@@ -822,7 +834,10 @@ class PlaybackService extends ChangeNotifier {
     if (previousAudio != null) {
       _onPositionUpdate(previousAudio.duration.toDouble());
     }
+    final origin = _captureOrigin();
     _commitSongChange(
+      reason: 'smart',
+      origin: origin,
       audioIndex: commit.target.incomingIndex,
       playlist: _playlist.value,
       audio: commit.target.incoming,
@@ -841,7 +856,7 @@ class PlaybackService extends ChangeNotifier {
 
   void _pauseForSleepTimer() {
     try {
-      logger.i('[action] pauseForSleepTimer');
+      log.playback.debug('legacy', '[action] pauseForSleepTimer');
       _abortQueuedTransitionsForSleepTimer();
       if (_player.playerState == PlayerState.playing ||
           _player.playerState == PlayerState.stalled) {
@@ -853,7 +868,7 @@ class PlaybackService extends ChangeNotifier {
         playService.desktopLyricService.sendPlayerStateMessage(false);
       });
     } catch (err, trace) {
-      logger.e('睡眠定时暂停失败', error: err, stackTrace: trace);
+      log.playback.error('legacy', '睡眠定时暂停失败', error: err, stackTrace: trace);
     }
   }
 
@@ -917,6 +932,8 @@ class PlaybackService extends ChangeNotifier {
         return;
       }
       _loadAndPlayInDirection(
+        reason: 'gapless',
+        origin: _captureOrigin(),
         startIndex: (_playlistIndex ?? -1) + 1,
         playlist: items,
         step: 1,
@@ -934,7 +951,10 @@ class PlaybackService extends ChangeNotifier {
     if (previousAudio != null) {
       _onPositionUpdate(previousAudio.duration.toDouble());
     }
+    final origin = _captureOrigin();
     _commitSongChange(
+      reason: 'gapless',
+      origin: origin,
       audioIndex: pending.targetIndex,
       playlist: items,
       audio: pending.audio,
@@ -944,7 +964,22 @@ class PlaybackService extends ChangeNotifier {
     );
   }
 
+  SongOrigin? _captureOrigin() {
+    final at = _diagAt;
+    final sampledLength = _diagLength;
+    if (at == null || sampledLength == null) return null;
+    return SongOrigin(
+      at: at,
+      length: sampledLength,
+      from: nowPlaying?.title,
+      fromIndex: _playlistIndex,
+      lengthSource: 'player',
+    );
+  }
+
   void _commitSongChange({
+    required String reason,
+    required SongOrigin? origin,
     required int audioIndex,
     required List<Audio> playlist,
     required Audio audio,
@@ -953,6 +988,14 @@ class PlaybackService extends ChangeNotifier {
     PlayerState state = PlayerState.playing,
     bool rebuildTransitionPreparation = true,
   }) {
+    logSongChanged(
+      reason: reason,
+      to: audio.title,
+      index: audioIndex,
+      origin: origin,
+    );
+    _diagAt = null;
+    _diagLength = null;
     _smtcDisplayRevision++;
     _replayGainRequestToken++;
     final token = _songChangeTasks.begin();
@@ -1009,6 +1052,8 @@ class PlaybackService extends ChangeNotifier {
   bool _loadAndPlay(
     int audioIndex,
     List<Audio> playlist, {
+    required String reason,
+    required SongOrigin? origin,
     bool reportFailure = true,
   }) {
     if (audioIndex < 0 || audioIndex >= playlist.length) return false;
@@ -1019,17 +1064,16 @@ class PlaybackService extends ChangeNotifier {
       _eq.reapplyOutputGain();
       _player.start();
       _commitSongChange(
+        reason: reason,
+        origin: origin,
         audioIndex: audioIndex,
         playlist: playlist,
         audio: audio,
       );
       return true;
     } catch (err, trace) {
-      logger.e(
-        '加载并播放歌曲失败 index=$audioIndex title=${audio.title}',
-        error: err,
-        stackTrace: trace,
-      );
+      log.playback.error('legacy', '加载并播放歌曲失败 index=$audioIndex title=${audio.title}', error: err,
+        stackTrace: trace,);
       if (reportFailure) {
         _reportPlaybackLoadFailure('播放失败，请查看日志');
       }
@@ -1038,6 +1082,8 @@ class PlaybackService extends ChangeNotifier {
   }
 
   bool _loadAndPlayInDirection({
+    required String reason,
+    required SongOrigin? origin,
     required int startIndex,
     required List<Audio> playlist,
     required int step,
@@ -1052,7 +1098,15 @@ class PlaybackService extends ChangeNotifier {
         if (!wrap) break;
         index = (index % playlist.length + playlist.length) % playlist.length;
       }
-      if (_loadAndPlay(index, playlist, reportFailure: false)) return true;
+      if (_loadAndPlay(
+        index,
+        playlist,
+        reason: reason,
+        origin: origin,
+        reportFailure: false,
+      )) {
+        return true;
+      }
       attempts++;
       index += step;
     }
@@ -1166,7 +1220,7 @@ class PlaybackService extends ChangeNotifier {
       }
       if (!_closed) _playCountRevision.value++;
     } catch (err, trace) {
-      logger.w('记录播放次数失败', error: err, stackTrace: trace);
+      log.playback.warn('legacy', '记录播放次数失败', error: err, stackTrace: trace);
     } finally {
       if (_listenRecordingToken == sessionToken) {
         _listenRecordingToken = null;
@@ -1229,17 +1283,23 @@ class PlaybackService extends ChangeNotifier {
 
   /// 播放当前播放列表的第几项，只能用在播放列表界面
   void playIndexOfPlaylist(int audioIndex) {
-    logger.i('[action] playIndexOfPlaylist=$audioIndex');
+    log.playback.debug('legacy', '[action] playIndexOfPlaylist=$audioIndex');
     AudioEchoLogRecorder.instance.mark(
       'playIndexOfPlaylist',
       extra: {'index': audioIndex},
     );
-    _loadAndPlay(audioIndex, playlist.value);
+    final origin = _captureOrigin();
+    _loadAndPlay(
+      audioIndex,
+      playlist.value,
+      reason: 'user.play',
+      origin: origin,
+    );
   }
 
   /// 仅更新播放列表索引，不触发重新播放。用于拖拽排序等场景
   void setPlaylistIndex(int newIndex) {
-    logger.i('[action] setPlaylistIndex=$newIndex');
+    log.playback.debug('legacy', '[action] setPlaylistIndex=$newIndex');
     if (newIndex < 0 || newIndex >= _playlist.value.length) return;
     _synchronizeGaplessTransition();
     _playlistIndex = newIndex;
@@ -1248,7 +1308,7 @@ class PlaybackService extends ChangeNotifier {
   }
 
   void reorderPlaylist(int oldIndex, int newIndex) {
-    logger.i('[action] reorderPlaylist old=$oldIndex new=$newIndex');
+    log.playback.debug('legacy', '[action] reorderPlaylist old=$oldIndex new=$newIndex');
     AudioEchoLogRecorder.instance.mark(
       'reorderPlaylist',
       extra: {'oldIndex': oldIndex, 'newIndex': newIndex},
@@ -1282,13 +1342,14 @@ class PlaybackService extends ChangeNotifier {
 
   /// 播放 playlist[audioIndex] 并设置播放列表为 playlist
   void play(int audioIndex, List<Audio> playlist) {
-    logger.i('[action] play index=$audioIndex playlistLen=${playlist.length}');
+    log.playback.debug('legacy', '[action] play index=$audioIndex playlistLen=${playlist.length}');
     AudioEchoLogRecorder.instance.mark(
       'play',
       extra: {'index': audioIndex, 'playlistLen': playlist.length},
     );
     if (audioIndex < 0 || audioIndex >= playlist.length) return;
     _synchronizeGaplessTransition();
+    final origin = _captureOrigin();
     if (shuffle.value) {
       final shuffled = List<Audio>.from(playlist);
       final willPlay = shuffled.removeAt(audioIndex);
@@ -1296,16 +1357,21 @@ class PlaybackService extends ChangeNotifier {
       shuffled.insert(0, willPlay);
       _setPlaylistBackup(playlist);
       final activePlaylist = _setPlaylist(shuffled);
-      _loadAndPlay(0, activePlaylist);
+      _loadAndPlay(0, activePlaylist, reason: 'user.play', origin: origin);
     } else {
       _setPlaylistBackup(playlist);
       final activePlaylist = _setPlaylist(playlist);
-      _loadAndPlay(audioIndex, activePlaylist);
+      _loadAndPlay(
+        audioIndex,
+        activePlaylist,
+        reason: 'user.play',
+        origin: origin,
+      );
     }
   }
 
   void shuffleAndPlay(List<Audio> audios) {
-    logger.i('[action] shuffleAndPlay len=${audios.length}');
+    log.playback.debug('legacy', '[action] shuffleAndPlay len=${audios.length}');
     AudioEchoLogRecorder.instance.mark(
       'shuffleAndPlay',
       extra: {'len': audios.length},
@@ -1320,12 +1386,13 @@ class PlaybackService extends ChangeNotifier {
     setPlayMode(PlayMode.forward);
     shuffle.value = true;
 
-    _loadAndPlay(0, activePlaylist);
+    final origin = _captureOrigin();
+    _loadAndPlay(0, activePlaylist, reason: 'user.play', origin: origin);
   }
 
   /// 下一首播放
   void addToNext(Audio audio) {
-    logger.i('[action] addToNext');
+    log.playback.debug('legacy', '[action] addToNext');
     AudioEchoLogRecorder.instance.mark('addToNext');
     if (_playlistIndex == null) return;
     _synchronizeGaplessTransition();
@@ -1354,7 +1421,7 @@ class PlaybackService extends ChangeNotifier {
 
   /// 清空播放队列
   void clearQueue() {
-    logger.i('[action] clearQueue');
+    log.playback.debug('legacy', '[action] clearQueue');
     AudioEchoLogRecorder.instance.mark('clearQueue');
     _synchronizeGaplessTransition();
     _songChangeTasks.begin();
@@ -1371,7 +1438,7 @@ class PlaybackService extends ChangeNotifier {
 
   /// 从播放队列中移除指定索引的曲目
   void removeFromQueue(int index) {
-    logger.i('[action] removeFromQueue index=$index');
+    log.playback.debug('legacy', '[action] removeFromQueue index=$index');
     AudioEchoLogRecorder.instance.mark(
       'removeFromQueue',
       extra: {'index': index},
@@ -1405,7 +1472,13 @@ class PlaybackService extends ChangeNotifier {
           unawaited(_clearSmtcDisplay());
           _clearPersistedLastSession();
         } else if (_playlistIndex! < _playlist.value.length) {
-          _loadAndPlay(_playlistIndex!, _playlist.value);
+          final origin = _captureOrigin();
+          _loadAndPlay(
+            _playlistIndex!,
+            _playlist.value,
+            reason: 'user.play',
+            origin: origin,
+          );
         }
       } else {
         _persistCurrentSession();
@@ -1426,7 +1499,7 @@ class PlaybackService extends ChangeNotifier {
       return;
     }
     _synchronizeGaplessTransition();
-    logger.i('[action] useShuffle=$flag');
+    log.playback.debug('legacy', '[action] useShuffle=$flag');
     AudioEchoLogRecorder.instance.mark('useShuffle', extra: {'flag': flag});
 
     if (flag) {
@@ -1511,7 +1584,7 @@ class PlaybackService extends ChangeNotifier {
           _sessionStore.snapshot.copyWith(lastPositionSeconds: 0.0),
         );
       }
-      logger.i('[persist] rememberPlaybackPosition disabled, cleared position');
+      log.playback.info('legacy', '[persist] rememberPlaybackPosition disabled, cleared position');
       return;
     }
     final currentAudio = nowPlaying;
@@ -1519,16 +1592,14 @@ class PlaybackService extends ChangeNotifier {
       await _sessionStore.save(
         _sessionStore.snapshot.copyWith(lastPositionSeconds: 0.0),
       );
-      logger.i('[persist] no audio playing, cleared position');
+      log.playback.info('legacy', '[persist] no audio playing, cleared position');
       return;
     }
     final remembered = _rememberedPositionSeconds();
     await _sessionStore.save(
       _sessionStore.snapshot.copyWith(lastPositionSeconds: remembered),
     );
-    logger.i(
-      '[persist] saved position: $remembered (from pos=$position, len=$length)',
-    );
+    log.playback.info('legacy', '[persist] saved position: $remembered (from pos=$position, len=$length)',);
   }
 
   Future<void> _restoreLastSession() async {
@@ -1590,6 +1661,21 @@ class PlaybackService extends ChangeNotifier {
     shuffle.value = session.lastShuffleActive;
     _playlistIndex = restoredIndex;
     _nowPlaying.value = restoredPlaylist[restoredIndex];
+    final restored = restoredPlaylist[restoredIndex];
+    logSongChanged(
+      reason: 'restore',
+      to: restored.title,
+      index: restoredIndex,
+      origin: SongOrigin(
+        at: savedPosition,
+        length: restored.duration.toDouble(),
+        from: null,
+        fromIndex: null,
+        lengthSource: 'tag',
+      ),
+    );
+    _diagAt = null;
+    _diagLength = null;
     _smtcDisplayRevision++;
     _lastNowPlayingChangedMs = DateTime.now().millisecondsSinceEpoch;
     nowPlaying!.loadSmallCoverBytes();
@@ -1618,12 +1704,10 @@ class PlaybackService extends ChangeNotifier {
         savedAudioPath: lastPath,
         restoredAudioPath: restoredAudio.path,
       );
-      logger.i(
-        '[restore] rememberPlaybackPosition=${AppSettings.instance.rememberPlaybackPosition}, '
+      log.playback.info('legacy', '[restore] rememberPlaybackPosition=${AppSettings.instance.rememberPlaybackPosition}, '
         'savedPosition=${session.lastPositionSeconds}, '
         'playerLength=${_player.length}, '
-        'restoreTo=$restoreTo',
-      );
+        'restoreTo=$restoreTo',);
       if (restoreTo > 0) {
         _player.seek(restoreTo);
       }
@@ -1631,15 +1715,17 @@ class PlaybackService extends ChangeNotifier {
       _syncSmtcPositionTimer();
       _rebuildGaplessPreparation();
     } catch (err) {
-      logger.e('[restore last session] $err');
+      log.playback.error('legacy', '[restore last session] $err');
     }
   }
 
-  void _nextAudioLoop() {
+  void _nextAudioLoop({required String reason, required SongOrigin? origin}) {
     if (_playlistIndex == null) return;
     _synchronizeGaplessTransition();
 
     _loadAndPlayInDirection(
+      reason: reason,
+      origin: origin,
       startIndex: _playlistIndex! + 1,
       playlist: _playlist.value,
       step: 1,
@@ -1647,40 +1733,53 @@ class PlaybackService extends ChangeNotifier {
     );
   }
 
-  void _nextAudioSingleLoop() {
+  void _nextAudioSingleLoop({
+    required String reason,
+    required SongOrigin? origin,
+  }) {
     if (_playlistIndex == null) return;
     _synchronizeGaplessTransition();
 
-    _loadAndPlay(_playlistIndex!, _playlist.value);
+    _loadAndPlay(
+      _playlistIndex!,
+      _playlist.value,
+      reason: reason,
+      origin: origin,
+    );
   }
 
   void _autoNextAudio() {
+    final origin = _captureOrigin();
     switch (playMode.value) {
       case PlayMode.forward:
       case PlayMode.loop:
-        _nextAudioLoop();
+        _nextAudioLoop(reason: 'completed', origin: origin);
         break;
       case PlayMode.singleLoop:
-        _nextAudioSingleLoop();
+        _nextAudioSingleLoop(reason: 'completed', origin: origin);
         break;
     }
   }
 
   /// 手动下一曲时默认循环播放列表
   void nextAudio() {
-    logger.i('[action] nextAudio');
+    log.playback.debug('legacy', '[action] nextAudio');
     AudioEchoLogRecorder.instance.mark('nextAudio');
-    _nextAudioLoop();
+    final origin = _captureOrigin();
+    _nextAudioLoop(reason: 'user.next', origin: origin);
   }
 
   /// 手动上一曲时默认循环播放列表
   void lastAudio() {
-    logger.i('[action] lastAudio');
+    log.playback.debug('legacy', '[action] lastAudio');
     AudioEchoLogRecorder.instance.mark('lastAudio');
     if (_playlistIndex == null) return;
+    final origin = _captureOrigin();
     _synchronizeGaplessTransition();
 
     _loadAndPlayInDirection(
+      reason: 'user.previous',
+      origin: origin,
       startIndex: _playlistIndex! - 1,
       playlist: _playlist.value,
       step: -1,
@@ -1691,7 +1790,7 @@ class PlaybackService extends ChangeNotifier {
   /// 暂停
   void pause() {
     try {
-      logger.i('[action] pause');
+      log.playback.debug('legacy', '[action] pause');
       AudioEchoLogRecorder.instance.mark('pause');
       _synchronizeGaplessTransition();
       _player.pause();
@@ -1703,7 +1802,7 @@ class PlaybackService extends ChangeNotifier {
         playService.desktopLyricService.sendPlayerStateMessage(false);
       });
     } catch (err, trace) {
-      logger.e('暂停播放失败', error: err, stackTrace: trace);
+      log.playback.error('legacy', '暂停播放失败', error: err, stackTrace: trace);
       showTextOnSnackBar('暂停播放失败，请查看日志', variant: ToastVariant.error);
     }
   }
@@ -1711,7 +1810,7 @@ class PlaybackService extends ChangeNotifier {
   /// 恢复播放
   void start() {
     try {
-      logger.i('[action] start');
+      log.playback.debug('legacy', '[action] start');
       AudioEchoLogRecorder.instance.mark('start');
       _synchronizeGaplessTransition();
       _player.start();
@@ -1724,17 +1823,20 @@ class PlaybackService extends ChangeNotifier {
         playService.desktopLyricService.sendPlayerStateMessage(true);
       });
     } catch (err, trace) {
-      logger.e('恢复播放失败', error: err, stackTrace: trace);
+      log.playback.error('legacy', '恢复播放失败', error: err, stackTrace: trace);
       showTextOnSnackBar('恢复播放失败，请查看日志', variant: ToastVariant.error);
     }
   }
 
   /// 再次播放。在顺序播放完最后一曲时再次按播放时使用。
   /// 与 [start] 的差别在于它会通知重绘组件
-  void playAgain() => _nextAudioSingleLoop();
+  void playAgain() {
+    final origin = _captureOrigin();
+    _nextAudioSingleLoop(reason: 'user.play', origin: origin);
+  }
 
   void seek(double position) {
-    logger.i('[action] seek=$position');
+    log.playback.debug('legacy', '[action] seek=$position');
     AudioEchoLogRecorder.instance.mark(
       'seek',
       extra: {
@@ -1847,7 +1949,7 @@ class PlaybackService extends ChangeNotifier {
     try {
       _player.free();
     } catch (e) {
-      logger.w('_player.free error: $e');
+      log.playback.warn('legacy', '_player.free error: $e');
     }
   }
 }

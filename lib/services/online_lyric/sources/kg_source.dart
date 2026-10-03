@@ -38,10 +38,7 @@ class KugouSource implements LyricSource {
         );
       }).toList();
     } catch (e, st) {
-      logger.w(
-        'KugouSource.search failed: ${e.runtimeType}',
-        stackTrace: st,
-      );
+      log.onlineLyric.warn('legacy', 'KugouSource.search failed: ${e.runtimeType}', stackTrace: st,);
       return [];
     }
   }
@@ -57,10 +54,7 @@ class KugouSource implements LyricSource {
 
       return lyricResult.toParsedLyric();
     } catch (e, st) {
-      logger.w(
-        'KugouSource.getLyrics failed: ${e.runtimeType}',
-        stackTrace: st,
-      );
+      log.onlineLyric.warn('legacy', 'KugouSource.getLyrics failed: ${e.runtimeType}', stackTrace: st,);
       return null;
     }
   }

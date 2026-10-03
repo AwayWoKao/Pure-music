@@ -1034,7 +1034,7 @@ class AppSettings {
       Map settingsMap = json.decode(settingsStr);
       await _readFromSettingsMap(settingsMap);
     } catch (err, trace) {
-      logger.e(err, stackTrace: trace);
+      log.settings.error('legacy', err.toString(), stackTrace: trace);
     }
   }
 
@@ -1153,7 +1153,7 @@ class AppSettings {
       await writeTextFileAtomically(settingsPath, settingsStr);
       return true;
     } catch (err, trace) {
-      logger.e(err, stackTrace: trace);
+      log.settings.error('legacy', err.toString(), stackTrace: trace);
       return false;
     }
   }

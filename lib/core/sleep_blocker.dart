@@ -34,22 +34,31 @@ class SleepBlocker {
           .lookupFunction<_SetThreadExecutionStateNative, _SetThreadExecutionStateDart>(
             'SetThreadExecutionState',
           );
-      logger.i('[sleep_blocker] loaded SetThreadExecutionState');
+      log.playback.debug(
+        'legacy',
+        '[sleep_blocker] loaded SetThreadExecutionState',
+      );
     } catch (e, trace) {
-      logger.w('[sleep_blocker] failed to load SetThreadExecutionState: $e\n$trace');
+      log.playback.warn('legacy', '[sleep_blocker] failed to load SetThreadExecutionState: $e\n$trace');
     }
   }
 
   void setPageVisible(bool visible) {
     if (visible == _pageVisible) return;
-    logger.i('[sleep_blocker] setPageVisible: $visible (was: $_pageVisible)');
+    log.playback.debug(
+      'legacy',
+      '[sleep_blocker] setPageVisible: $visible (was: $_pageVisible)',
+    );
     _pageVisible = visible;
     reevaluate();
   }
 
   void setPlayerPlaying(bool playing) {
     if (playing == _playerPlaying) return;
-    logger.i('[sleep_blocker] setPlayerPlaying: $playing (was: $_playerPlaying)');
+    log.playback.debug(
+      'legacy',
+      '[sleep_blocker] setPlayerPlaying: $playing (was: $_playerPlaying)',
+    );
     _playerPlaying = playing;
     reevaluate();
   }
@@ -65,7 +74,7 @@ class SleepBlocker {
       fn(_esContinuous | _esSystemRequired | _esDisplayRequired);
       _blocked = true;
     } catch (e) {
-      logger.w('[sleep_blocker] block failed: $e');
+      log.playback.warn('legacy', '[sleep_blocker] block failed: $e');
     }
   }
 
@@ -79,7 +88,7 @@ class SleepBlocker {
       fn(_esContinuous);
       _blocked = false;
     } catch (e) {
-      logger.w('[sleep_blocker] unblock failed: $e');
+      log.playback.warn('legacy', '[sleep_blocker] unblock failed: $e');
     }
   }
 
@@ -87,7 +96,10 @@ class SleepBlocker {
   void reevaluate() {
     final shouldBlock = _shouldBlock;
     if (shouldBlock == _blocked) return;
-    logger.i('[sleep_blocker] state change: _pageVisible=$_pageVisible, _playerPlaying=$_playerPlaying, preventSleep=${AppSettings.instance.preventSleepOnNowPlaying}, _shouldBlock=$shouldBlock, _blocked=$_blocked');
+    log.playback.debug(
+      'legacy',
+      '[sleep_blocker] state change: _pageVisible=$_pageVisible, _playerPlaying=$_playerPlaying, preventSleep=${AppSettings.instance.preventSleepOnNowPlaying}, _shouldBlock=$shouldBlock, _blocked=$_blocked',
+    );
     if (shouldBlock) {
       block();
     } else {

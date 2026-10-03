@@ -59,7 +59,7 @@ class WindowLifecycleService with WindowListener, TrayListener {
       try {
         result.complete(await _syncTrayIcon(enabled: enabled));
       } catch (error, trace) {
-        logger.w('Syncing tray icon failed: $error', stackTrace: trace);
+        log.window.warn('legacy', 'Syncing tray icon failed: $error', stackTrace: trace);
         result.complete(false);
       }
     });
@@ -162,14 +162,14 @@ class WindowLifecycleService with WindowListener, TrayListener {
         await trayManager.setToolTip(toolTip);
         await trayManager.setContextMenu(menu);
       } catch (error, trace) {
-        logger.w('Updating tray content failed: $error', stackTrace: trace);
+        log.window.warn('legacy', 'Updating tray content failed: $error', stackTrace: trace);
       }
       // 独立 try 保证菜单一定会弹出，否则插件侧 menu_visible 不会复位
       if (popUpMenu) {
         try {
           await trayManager.popUpContextMenu();
         } catch (error, trace) {
-          logger.w('Popping up tray menu failed: $error', stackTrace: trace);
+          log.window.warn('legacy', 'Popping up tray menu failed: $error', stackTrace: trace);
         }
       }
     });
@@ -184,7 +184,7 @@ class WindowLifecycleService with WindowListener, TrayListener {
         }
         return true;
       } catch (error, trace) {
-        logger.w('Removing tray icon failed: $error', stackTrace: trace);
+        log.window.warn('legacy', 'Removing tray icon failed: $error', stackTrace: trace);
         return false;
       }
     }
@@ -196,14 +196,11 @@ class WindowLifecycleService with WindowListener, TrayListener {
       return true;
     } catch (error, trace) {
       _trayReady = false;
-      logger.w('Creating tray icon failed: $error', stackTrace: trace);
+      log.window.warn('legacy', 'Creating tray icon failed: $error', stackTrace: trace);
       try {
         await trayManager.destroy();
       } catch (cleanupError, cleanupTrace) {
-        logger.w(
-          'Cleaning up tray icon failed: $cleanupError',
-          stackTrace: cleanupTrace,
-        );
+        log.window.warn('legacy', 'Cleaning up tray icon failed: $cleanupError', stackTrace: cleanupTrace,);
       }
       return false;
     }
@@ -258,7 +255,7 @@ class WindowLifecycleService with WindowListener, TrayListener {
       if (await windowManager.isVisible()) return;
       if (_isExiting) return;
       MemoryMonitorService.instance.trimTrayHidden();
-      logger.i('[mem] tray-hidden - trimmed invisible caches');
+      log.window.info('legacy', '[mem] tray-hidden - trimmed invisible caches');
     });
   }
 
@@ -370,7 +367,7 @@ class WindowLifecycleService with WindowListener, TrayListener {
     try {
       await (timeout == null ? future : future.timeout(timeout));
     } catch (error, trace) {
-      logger.w('$name failed: $error', stackTrace: trace);
+      log.window.warn('legacy', '$name failed: $error', stackTrace: trace);
     }
   }
 

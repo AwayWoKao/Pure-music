@@ -13,7 +13,7 @@ use flutter_rust_bridge::frb;
 use md5::{Digest, Md5};
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 
-use super::logger::log_to_dart;
+
 
 mod play_counts;
 pub use play_counts::{
@@ -1305,7 +1305,8 @@ fn write_index_value_to_sqlite(index_dir: &Path, index: &serde_json::Value) -> R
     tx.commit()?;
 
     conn.execute_batch("PRAGMA optimize;")?;
-    log_to_dart(format!(
+    log::info!(
+        target: "library",
         "[perf] sqlite index sync audios={} changed={} removed={} folders={} changed={} removed={} meta={} coversRemoved={} mediaIdsReused={} mediaIdsRefreshed={} elapsed={}ms",
         current_audio_exact_paths.len(),
         audio_changes,
@@ -1318,7 +1319,7 @@ fn write_index_value_to_sqlite(index_dir: &Path, index: &serde_json::Value) -> R
         reused_media_ids,
         refreshed_media_ids,
         stopwatch.elapsed().as_millis(),
-    ));
+    );
 
     Ok(())
 }
