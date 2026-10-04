@@ -1506,8 +1506,8 @@ class LyricsLinePainter extends CustomPainter {
         final windowStartMs = glowHoldWindowStartMs;
         if (fillMs != null && windowStartMs != null) {
           final w = syncLine.words[word.first.wordIndex];
-          final wordEndMs =
-              (w.start.inMilliseconds + w.length.inMilliseconds).toDouble();
+          final wordEndMs = (w.start.inMilliseconds + w.length.inMilliseconds)
+              .toDouble();
           if (wordEndMs >= windowStartMs) {
             final realNow = _effectiveCurrentTimeMs;
             if (realNow >= fillMs + glowHoldFadeMs) return (0.0, 0.0);
@@ -2399,8 +2399,7 @@ class LyricsLinePainter extends CustomPainter {
       bgHeight += bgFontSize * 0.45 + bgRomanTp.height;
       recycleTextPainter(bgRomanTp);
     }
-    if (syncLine.bgTranslation != null &&
-        syncLine.bgTranslation!.isNotEmpty) {
+    if (syncLine.bgTranslation != null && syncLine.bgTranslation!.isNotEmpty) {
       final bgTransTp = _buildTextPainter(
         syncLine.bgTranslation!,
         scheme.onSurface,
@@ -2623,10 +2622,15 @@ class LyricsLinePainter extends CustomPainter {
         }
       }
 
-      // BG 高度按完整内容一次性预留，播放进度只控制绘制透明度。
+      // BG 高度跟随进出场因子变化，未开始时不提前占位。
       if (reserveBackgroundVocalHeight &&
           lyricLineHasBackgroundVocal(syncLine)) {
-        height += _measureBackgroundVocalHeight(syncLine, lineWidth, fontSize);
+        final backgroundHeightFactor = _bgHeightFactor(syncLine);
+        if (backgroundHeightFactor > 0.001) {
+          height +=
+              _measureBackgroundVocalHeight(syncLine, lineWidth, fontSize) *
+              backgroundHeightFactor;
+        }
       }
 
       return height;

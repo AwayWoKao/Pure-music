@@ -6,6 +6,7 @@ import 'package:pure_music/lyric/lyric.dart';
 import 'package:pure_music/page/now_playing_page/component/lyric_height_cache_key.dart';
 import 'package:pure_music/page/now_playing_page/component/lyric_painter_params.dart';
 import 'package:pure_music/page/now_playing_page/component/lyrics_line_painter.dart';
+import 'package:pure_music/page/now_playing_page/component/lyrics_line_widget.dart';
 
 const _config = LyricRenderConfig(
   textAlign: LyricTextAlign.center,
@@ -87,7 +88,7 @@ LyricHeightCacheKey _heightCacheKey(
 }
 
 void main() {
-  test('highlight end keeps the layout height unchanged', () {
+  test('background vocal height collapses after its authored window', () {
     final active = _measureHeight(
       currentTimeMs: _backgroundActiveMs,
       isMainLine: true,
@@ -99,11 +100,11 @@ void main() {
       isHighlightActive: false,
     );
 
-    expect(ended, closeTo(active, 0.001));
+    expect(ended, lessThan(active));
     expect(active, greaterThan(0));
   });
 
-  test('background vocal trigger does not grow the layout height', () {
+  test('background vocal height grows only after its authored start', () {
     final beforeTrigger = _measureHeight(
       currentTimeMs: _beforeBackgroundMs,
       isMainLine: true,
@@ -116,40 +117,92 @@ void main() {
       isBackgroundActive: true,
     );
 
-    expect(afterTrigger, closeTo(beforeTrigger, 0.001));
+    expect(afterTrigger, greaterThan(beforeTrigger));
   });
 
-  test('scale and displacement keep one stable layout height state', () {
-    final first = _measureHeight(
-      currentTimeMs: _backgroundActiveMs,
-      isMainLine: true,
-      isHighlightActive: true,
-      isBackgroundActive: false,
-    );
-    final second = _measureHeight(
-      currentTimeMs: _afterBackgroundMs,
-      isMainLine: false,
+  test(
+    'background vocal layout returns to the main line height after exit',
+    () {
+      final first = _measureHeight(
+        currentTimeMs: _backgroundActiveMs,
+        isMainLine: true,
+        isHighlightActive: true,
+        isBackgroundActive: false,
+      );
+      final second = _measureHeight(
+        currentTimeMs: _afterBackgroundMs,
+        isMainLine: false,
+        isHighlightActive: false,
+        isBackgroundActive: true,
+      );
+
+      expect(second, lessThan(first));
+
+      final line = _backgroundVocalLine();
+      final reserved = _heightCacheKey(
+        line,
+        reserveBackgroundVocalHeight: true,
+      );
+      final repeated = _heightCacheKey(
+        line,
+        reserveBackgroundVocalHeight: true,
+      );
+      final notReserved = _heightCacheKey(
+        line,
+        reserveBackgroundVocalHeight: false,
+      );
+      expect(repeated, reserved);
+      expect(repeated.hashCode, reserved.hashCode);
+      expect(notReserved, isNot(reserved));
+    },
+  );
+
+  test('lift holds after the line ends until the next line takes over', () {
+    var latched = lyricLineFloatTarget(
+      mainHighlight: false,
       isHighlightActive: false,
-      isBackgroundActive: true,
+      wasLatched: false,
     );
+    expect(latched, isFalse);
 
-    expect(second, closeTo(first, 0.001));
+    latched = lyricLineFloatTarget(
+      mainHighlight: true,
+      isHighlightActive: true,
+      wasLatched: latched,
+    );
+    expect(latched, isTrue);
 
-    final line = _backgroundVocalLine();
-    final reserved = _heightCacheKey(
-      line,
-      reserveBackgroundVocalHeight: true,
+    latched = lyricLineFloatTarget(
+      mainHighlight: false,
+      isHighlightActive: true,
+      wasLatched: latched,
     );
-    final repeated = _heightCacheKey(
-      line,
-      reserveBackgroundVocalHeight: true,
+    expect(latched, isTrue);
+
+    latched = lyricLineFloatTarget(
+      mainHighlight: false,
+      isHighlightActive: false,
+      wasLatched: latched,
     );
-    final notReserved = _heightCacheKey(
-      line,
-      reserveBackgroundVocalHeight: false,
+    expect(latched, isFalse);
+  });
+
+  test('lift does not start before the line sings within its group', () {
+    expect(
+      lyricLineFloatTarget(
+        mainHighlight: false,
+        isHighlightActive: true,
+        wasLatched: false,
+      ),
+      isFalse,
     );
-    expect(repeated, reserved);
-    expect(repeated.hashCode, reserved.hashCode);
-    expect(notReserved, isNot(reserved));
+    expect(
+      lyricLineFloatTarget(
+        mainHighlight: true,
+        isHighlightActive: false,
+        wasLatched: false,
+      ),
+      isTrue,
+    );
   });
 }

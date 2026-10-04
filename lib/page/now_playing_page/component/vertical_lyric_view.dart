@@ -2024,13 +2024,7 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
         _cachedHeights != null && index >= 0 && index < _cachedHeights!.length
         ? _cachedHeights![index]
         : 96.0;
-    final backgroundHeight =
-        _cachedBackgroundVocalHeights != null &&
-            index >= 0 &&
-            index < _cachedBackgroundVocalHeights!.length
-        ? _cachedBackgroundVocalHeights![index]
-        : 0.0;
-    return lineHeight + backgroundHeight;
+    return lineHeight;
   }
 
   double? _parallelLineHeightBudget() {

@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:math' show max;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show ValueListenable;
+import 'package:flutter/foundation.dart'
+    show ValueListenable, visibleForTesting;
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/physics.dart';
 import 'package:provider/provider.dart';
@@ -22,6 +23,15 @@ import 'package:pure_music/page/now_playing_page/component/lyric_height_cache_ke
 import 'package:pure_music/page/now_playing_page/component/lyric_painter_params.dart';
 import 'package:pure_music/page/now_playing_page/component/lyrics_line_painter.dart';
 import 'package:pure_music/play_service/play_service.dart';
+
+/// 整行上抬状态：演唱中抬起；唱完后只要仍在当前组就保持，
+/// 直到下一行接替（组移走）才落下。
+@visibleForTesting
+bool lyricLineFloatTarget({
+  required bool mainHighlight,
+  required bool isHighlightActive,
+  required bool wasLatched,
+}) => mainHighlight || (wasLatched && isHighlightActive);
 
 class LyricsLineWidget extends StatefulWidget {
   const LyricsLineWidget({
@@ -113,10 +123,91 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
   final ValueNotifier<double> _heightNotifier = ValueNotifier(0.0);
   double? _frozenHeight;
   double? _departingPaintHeight;
+  double _lastBackgroundHeightUpdateMs = -1e9;
+  double _lastBackgroundVocalHeightFactor = -1.0;
+  bool _floatLatched = false;
 
   void _clearHeightCache() {
     _cachedLineHeight = null;
     _heightCacheKey = null;
+  }
+
+  void _applyMeasuredHeight(double measuredHeight) {
+    if (widget.freezeHeight) {
+      _frozenHeight ??= measuredHeight;
+      if ((_frozenHeight! - _heightNotifier.value).abs() > 0.01) {
+        _cachedLineHeight = _frozenHeight;
+        _heightNotifier.value = _frozenHeight!;
+      }
+      return;
+    }
+    if ((measuredHeight - _heightNotifier.value).abs() <= 0.01) return;
+    _cachedLineHeight = measuredHeight;
+    _heightNotifier.value = measuredHeight;
+  }
+
+  double _backgroundVocalHeightFactor() {
+    final line = widget.line;
+    if (line is! SyncLyricLine) return 0.0;
+    final start = (line.bgStart ?? line.bg?.start ?? line.start).inMilliseconds
+        .toDouble();
+    var end = (line.bgEnd ?? line.bg?.end ?? (line.start + line.length))
+        .inMilliseconds
+        .toDouble();
+    if (line.bgWords.isNotEmpty) {
+      final last = line.bgWords.last;
+      end = max(
+        end,
+        (last.start.inMilliseconds + last.length.inMilliseconds).toDouble(),
+      );
+    }
+    final currentTime = widget.positionListenable?.value ?? _currentTimeMs;
+    return lyricBackgroundHeightFactor(
+      currentTimeMs: currentTime,
+      startMs: start,
+      endMs: end,
+      isMainLine: widget.distance == 0,
+      isBackgroundActive: widget.isBackgroundActive,
+      isBackgroundVisible: widget.isBackgroundVisible,
+      exitVisibility: widget.backgroundVocalVisibilityListenable?.value,
+    );
+  }
+
+  void _updateBackgroundVocalHeight() {
+    if (!widget.reserveBackgroundVocalHeight ||
+        !mounted ||
+        _cachedPainter == null ||
+        _heightCacheKey == null ||
+        _heightCacheKey!.lineWidth <= 0) {
+      return;
+    }
+    final factor = _backgroundVocalHeightFactor();
+    final now = DateTime.now().microsecondsSinceEpoch / 1000.0;
+    if ((factor - _lastBackgroundVocalHeightFactor).abs() <= 0.002 ||
+        now - _lastBackgroundHeightUpdateMs < 8) {
+      return;
+    }
+    _lastBackgroundHeightUpdateMs = now;
+    _lastBackgroundVocalHeightFactor = factor;
+    final height = _cachedPainter!.measureHeight(
+      _heightCacheKey!.lineWidth,
+      reserveBackgroundVocalHeight: true,
+    );
+    _applyMeasuredHeight(height);
+  }
+
+  void _bindBackgroundVocalListeners() {
+    widget.positionListenable?.addListener(_updateBackgroundVocalHeight);
+    widget.backgroundVocalVisibilityListenable?.addListener(
+      _updateBackgroundVocalHeight,
+    );
+  }
+
+  void _unbindBackgroundVocalListeners(LyricsLineWidget target) {
+    target.positionListenable?.removeListener(_updateBackgroundVocalHeight);
+    target.backgroundVocalVisibilityListenable?.removeListener(
+      _updateBackgroundVocalHeight,
+    );
   }
 
   Duration _lineMedianWordDuration(LyricLine line) {
@@ -157,12 +248,27 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
     _scaleController.value = widget.distance == 0
         ? _config.mainLineScale * _config.activeLineScaleMultiplier
         : _config.subLineScale * _config.inactiveLineScaleMultiplier;
+    if (widget.usesAuthoredTiming) {
+      _floatLatched = lyricLineFloatTarget(
+        mainHighlight: _mainHighlightFor(widget),
+        isHighlightActive: widget.isHighlightActive,
+        wasLatched: false,
+      );
+    }
     _floatController = AnimationController.unbounded(vsync: this);
-    _floatController.value = _mainHighlightFor(widget) ? 1.0 : 0.0;
+    _floatController.value =
+        lyricLineFloatTarget(
+          mainHighlight: _mainHighlightFor(widget),
+          isHighlightActive: widget.isHighlightActive,
+          wasLatched: _floatLatched,
+        )
+        ? 1.0
+        : 0.0;
     _visualTransformListenable = Listenable.merge([
       _scaleController,
       _floatController,
     ]);
+    _bindBackgroundVocalListeners();
     _playerStateListener = _syncProgressTicker;
     if (widget.positionListenable == null) {
       PlayService.instance.playbackService.playerStateNotifier.addListener(
@@ -195,7 +301,14 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
   }
 
   void _animateFloat() {
-    final target = _mainHighlightFor(widget) ? 1.0 : 0.0;
+    final target =
+        lyricLineFloatTarget(
+          mainHighlight: _mainHighlightFor(widget),
+          isHighlightActive: widget.isHighlightActive,
+          wasLatched: _floatLatched,
+        )
+        ? 1.0
+        : 0.0;
     // 不在这里提前返回，让动画有机会完成
     final style = context.read<LyricViewController>().renderConfig.staggerStyle;
     if (style == LyricStaggerStyle.smooth) {
@@ -424,6 +537,7 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
     } else if (_currentTimeNotifier.value != _currentTimeMs) {
       _currentTimeNotifier.value = _currentTimeMs;
     }
+    _updateBackgroundVocalHeight();
   }
 
   @override
@@ -438,6 +552,15 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
       _setCurrentTimeMs(widget.positionMs!);
     }
 
+    final backgroundVocalListenersChanged =
+        widget.positionListenable != oldWidget.positionListenable ||
+        widget.backgroundVocalVisibilityListenable !=
+            oldWidget.backgroundVocalVisibilityListenable;
+    if (backgroundVocalListenersChanged) {
+      _unbindBackgroundVocalListeners(oldWidget);
+      _bindBackgroundVocalListeners();
+    }
+
     if (widget.positionListenable != oldWidget.positionListenable) {
       if (oldWidget.positionListenable == null) {
         PlayService.instance.playbackService.playerStateNotifier.removeListener(
@@ -449,6 +572,11 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
         );
       }
       _syncProgressTicker();
+    }
+
+    if (widget.backgroundVocalVisibilityListenable !=
+        oldWidget.backgroundVocalVisibilityListenable) {
+      _clearHeightCache();
     }
 
     if (!widget.usesAuthoredTiming &&
@@ -474,13 +602,29 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
     final wasActive = oldWidget.distance == 0;
     final isHighlightActive = _mainHighlightFor(widget);
     final wasHighlightActive = _mainHighlightFor(oldWidget);
-    if (widget.usesAuthoredTiming && isHighlightActive != wasHighlightActive) {
-      _animateFloat();
+    if (widget.usesAuthoredTiming) {
+      final wasFloatActive = lyricLineFloatTarget(
+        mainHighlight: wasHighlightActive,
+        isHighlightActive: oldWidget.isHighlightActive,
+        wasLatched: _floatLatched,
+      );
+      _floatLatched = lyricLineFloatTarget(
+        mainHighlight: isHighlightActive,
+        isHighlightActive: widget.isHighlightActive,
+        wasLatched: _floatLatched,
+      );
+      if (_floatLatched != wasFloatActive) {
+        _animateFloat();
+      }
     }
 
     if (isHighlightActive != wasHighlightActive ||
         widget.isBackgroundActive != oldWidget.isBackgroundActive ||
         widget.line != oldWidget.line) {
+      if (widget.isBackgroundActive != oldWidget.isBackgroundActive ||
+          widget.isBackgroundVisible != oldWidget.isBackgroundVisible) {
+        _clearHeightCache();
+      }
       if (_hasBaseProgressTickerFor(oldWidget) &&
           !_hasBaseProgressTickerFor(widget)) {
         _holdProgressTickerForLineTransition();
@@ -509,6 +653,7 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
       _frozenHeight = null;
       _pendingSeekMs = null;
       _pendingSeekAt = null;
+      _lastBackgroundVocalHeightFactor = -1.0;
     }
   }
 
@@ -521,6 +666,7 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
     }
     _ticker?.dispose();
     _tickerHoldTimer?.cancel();
+    _unbindBackgroundVocalListeners(widget);
     _scaleController.dispose();
     _floatController.dispose();
     _currentTimeNotifier.dispose();
