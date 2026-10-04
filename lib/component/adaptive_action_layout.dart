@@ -16,6 +16,7 @@ class AdaptiveActionLayout extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final sidebarMoving = SidebarMotionScope.maybeOf(context)?.isAnimating ?? false;
     final child = trailing == null
         ? _buildActions()
         : Flex(
@@ -47,7 +48,9 @@ class AdaptiveActionLayout extends StatelessWidget {
 
     return AnimatedSize(
       alignment: Alignment.topLeft,
-      duration: reduceMotion ? Duration.zero : MotionDuration.base,
+      duration: (reduceMotion || sidebarMoving)
+          ? Duration.zero
+          : MotionDuration.base,
       curve: MotionCurve.standard,
       child: child,
     );

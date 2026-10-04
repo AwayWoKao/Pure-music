@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:pure_music/component/motion.dart';
 import 'package:pure_music/core/design_tokens.dart';
 
 class SettingsTile extends StatelessWidget {
@@ -18,7 +19,8 @@ class SettingsTile extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final compact =
-            constraints.maxWidth.isFinite && constraints.maxWidth < 560.0;
+            SidebarMotionScope.layoutWidthOf(context, constraints.maxWidth) <
+            560.0;
         final descriptionView = _SettingsTileDescription(
           description: description,
           subtitle: subtitle,

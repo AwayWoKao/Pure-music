@@ -38,23 +38,18 @@ class PageScaffold extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.all(16.0),
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final reduceMotion = MediaQuery.disableAnimationsOf(context);
-                if (actions.isEmpty) return _titleWidget(scheme);
-                if (actionPlacement == PageActionPlacement.belowSubtitle) {
-                  return _buildBelowSubtitleLayout(scheme);
-                }
-                final compact = constraints.maxWidth <= 640;
-                return _AnimatedHeaderLayout(
-                  layoutKey: compact,
-                  duration: reduceMotion ? Duration.zero : MotionDuration.base,
-                  child: compact
-                      ? _buildCompactLayout(scheme)
-                      : _buildWideLayout(scheme),
-                );
-              },
-            ),
+            child: SidebarMotionScope.maybeOf(context) != null
+                ? _header(
+                    context,
+                    scheme,
+                    BoxConstraints(
+                      maxWidth: MediaQuery.sizeOf(context).width,
+                    ),
+                  )
+                : LayoutBuilder(
+                    builder: (context, constraints) =>
+                        _header(context, scheme, constraints),
+                  ),
           ),
           Container(
             height: 10,
@@ -72,6 +67,30 @@ class PageScaffold extends StatelessWidget {
           Expanded(child: body),
         ],
       ),
+    );
+  }
+
+
+  Widget _header(
+    BuildContext context,
+    ColorScheme scheme,
+    BoxConstraints constraints,
+  ) {
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final sidebarMoving =
+        SidebarMotionScope.maybeOf(context)?.isAnimating ?? false;
+    if (actions.isEmpty) return _titleWidget(scheme);
+    if (actionPlacement == PageActionPlacement.belowSubtitle) {
+      return _buildBelowSubtitleLayout(scheme);
+    }
+    final compact =
+        SidebarMotionScope.layoutWidthOf(context, constraints.maxWidth) <= 640;
+    return _AnimatedHeaderLayout(
+      layoutKey: compact,
+      duration: (reduceMotion || sidebarMoving)
+          ? Duration.zero
+          : MotionDuration.base,
+      child: compact ? _buildCompactLayout(scheme) : _buildWideLayout(scheme),
     );
   }
 

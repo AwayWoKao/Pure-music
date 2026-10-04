@@ -34,6 +34,8 @@ class MotionDuration {
   static const xFast = Duration(milliseconds: 120);
   static const fast = Duration(milliseconds: 180);
   static const base = Duration(milliseconds: 280);
+  static const sidebar = Duration(milliseconds: 300);
+  static const sidebarLabel = Duration(milliseconds: 250);
   static const medium = Duration(milliseconds: 360);
   static const slow = Duration(milliseconds: 420);
   static const xSlow = Duration(milliseconds: 560);
@@ -43,6 +45,7 @@ class MotionCurve {
   static const standard = Curves.fastOutSlowIn;
   static const emphasized = Curves.easeInOutCubic;
   static const entrance = Cubic(0.23, 1, 0.32, 1);
+  static const sidebar = Curves.easeOutCubic;
 
   /// Identity clamp for scroll-scrubbed layout.
   ///
@@ -191,6 +194,12 @@ class SidebarMotionScope extends InheritedWidget {
     return context.dependOnInheritedWidgetOfExactType<SidebarMotionScope>();
   }
 
+  /// 形态断点用窗口宽，有侧栏时不跟开合后的正文宽走。
+  static double layoutWidthOf(BuildContext context, double localWidth) {
+    if (maybeOf(context) == null) return localWidth;
+    return MediaQuery.sizeOf(context).width;
+  }
+
   @override
   bool updateShouldNotify(SidebarMotionScope oldWidget) {
     // 动画中宽度每帧都变；只在开始/结束或目标变化时通知，避免订阅者跟帧重建。
@@ -278,7 +287,7 @@ class _SidebarFrozenViewportState extends State<SidebarFrozenViewport> {
   }
 }
 
-/// 弹簧侧栏：动画中正文保持较宽布局并随侧栏平移，停稳后再提交窄布局。
+/// 侧栏宽度连续变化，正文按剩余宽度实时排版。
 class SpringRailScaffold extends StatelessWidget {
   const SpringRailScaffold({
     super.key,
@@ -303,48 +312,21 @@ class SpringRailScaffold extends StatelessWidget {
       builder: (context, constraints) {
         final t = progress.clamp(0.0, 1.0);
         final targetT = (targetProgress ?? progress).clamp(0.0, 1.0);
-        final railWidth =
-            (collapsedWidth + (expandedWidth - collapsedWidth) * t).clamp(
-              0.0,
-              constraints.maxWidth,
-            );
+        final railWidth = (collapsedWidth + (expandedWidth - collapsedWidth) * t)
+            .clamp(0.0, constraints.maxWidth);
         final targetRailWidth =
             (collapsedWidth + (expandedWidth - collapsedWidth) * targetT).clamp(
               0.0,
               constraints.maxWidth,
             );
-        final animating = (railWidth - targetRailWidth).abs() > 0.001;
-        // 飞行中始终按收起宽度排正文，整页当一层跟着侧栏滑；停稳后才跟真实宽度。
-        final layoutRailWidth = animating ? collapsedWidth : railWidth;
-        final bodyLayoutWidth = math.max(
-          0.0,
-          constraints.maxWidth - layoutRailWidth,
-        );
-        final slide = railWidth - layoutRailWidth;
         return SidebarMotionScope(
           railWidth: railWidth,
           targetRailWidth: targetRailWidth,
-          child: Stack(
-            clipBehavior: Clip.hardEdge,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Positioned(
-                left: layoutRailWidth,
-                top: 0,
-                bottom: 0,
-                width: bodyLayoutWidth,
-                child: Transform.translate(
-                  offset: Offset(slide, 0),
-                  filterQuality: FilterQuality.none,
-                  child: body,
-                ),
-              ),
-              Positioned(
-                left: 0,
-                top: 0,
-                bottom: 0,
-                width: railWidth,
-                child: rail,
-              ),
+              SizedBox(width: railWidth, child: rail),
+              Expanded(child: body),
             ],
           ),
         );

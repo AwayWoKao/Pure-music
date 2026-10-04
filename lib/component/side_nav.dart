@@ -71,85 +71,100 @@ class _SideNavState extends State<SideNav> {
         destinations.indexWhere(
           (d) => GoRouterState.of(context).uri.toString().startsWith(d.desPath),
         );
+    final isDrawer = Scaffold.maybeOf(context)?.hasDrawer ?? false;
+    return ResponsiveBuilder(
+      builder: (context, screenType) => LayoutBuilder(
+        builder: (context, constraints) => _navForConstraints(
+          context,
+          scheme: scheme,
+          navShell: navShell,
+          selectedIndex: selectedIndex,
+          isDrawer: isDrawer,
+          constraints: constraints,
+        ),
+      ),
+    );
+  }
 
-    void onDestinationSelected(int value) {
-      final currentIndex = navShell?.currentIndex;
-      if (currentIndex == value) return;
 
-      if (value < app_paths.START_PAGES.length &&
-          AppPreference.instance.startPage != value) {
-        AppPreference.instance.startPage = value;
-        AppPreference.instance.save();
-      }
+  Widget _navForConstraints(
+    BuildContext context, {
+    required ColorScheme scheme,
+    required StatefulNavigationShell? navShell,
+    required int selectedIndex,
+    required bool isDrawer,
+    required BoxConstraints constraints,
+  }) {
+    final expandedWidth = isDrawer
+        ? constraints.maxWidth
+        : math.min(_expandedWidth, constraints.maxWidth);
+    return ValueListenableBuilder(
+      valueListenable: sidebarExpanded,
+      builder: (context, expanded, _) => _SmoothLargeSideNav(
+        isDrawer: isDrawer,
+        expanded: isDrawer || expanded,
+        expansion: widget.expansion,
+        expandedWidth: expandedWidth,
+        colorScheme: scheme,
+        selectedIndex: selectedIndex,
+        onToggle: isDrawer ? () => _closeDrawer(context) : _toggleSidebar,
+        onSelect: (value) => _onDestinationSelected(context, navShell, value),
+        onReturnHome: (value) => _onDestinationDoubleTap(
+          context,
+          navShell,
+          selectedIndex,
+          value,
+        ),
+      ),
+    );
+  }
 
-      if (navShell != null) {
-        navShell.goBranch(value);
-      } else {
-        context.go(destinations[value].desPath);
-      }
+  void _closeDrawer(BuildContext context) {
+    final scaffold = Scaffold.of(context);
+    if (scaffold.hasDrawer) scaffold.closeDrawer();
+  }
 
-      var scaffold = Scaffold.of(context);
-      if (scaffold.hasDrawer) scaffold.closeDrawer();
-    }
+  void _toggleSidebar() {
+    final newVal = !sidebarExpanded.value;
+    sidebarExpanded.value = newVal;
+    widget.onExpandedChanged?.call(newVal);
+    AppPreference.instance.sidebarExpanded = newVal;
+    AppPreference.instance.save();
+  }
 
-    void onDestinationDoubleTap(int value) {
-      if (selectedIndex != value) return;
-      if (MouseBackExit.consumeRoute(destinations[value].desPath)) return;
-
-      if (navShell != null) {
-        navShell.goBranch(value, initialLocation: true);
-      } else {
-        context.go(destinations[value].desPath);
-      }
-
-      final scaffold = Scaffold.of(context);
-      if (scaffold.hasDrawer) scaffold.closeDrawer();
-    }
-
-    void toggleSidebar() {
-      final newVal = !sidebarExpanded.value;
-      sidebarExpanded.value = newVal;
-      widget.onExpandedChanged?.call(newVal);
-      AppPreference.instance.sidebarExpanded = newVal;
+  void _onDestinationSelected(
+    BuildContext context,
+    StatefulNavigationShell? navShell,
+    int value,
+  ) {
+    if (navShell?.currentIndex == value) return;
+    if (value < app_paths.START_PAGES.length &&
+        AppPreference.instance.startPage != value) {
+      AppPreference.instance.startPage = value;
       AppPreference.instance.save();
     }
+    if (navShell != null) {
+      navShell.goBranch(value);
+    } else {
+      context.go(destinations[value].desPath);
+    }
+    _closeDrawer(context);
+  }
 
-    final isDrawer = Scaffold.maybeOf(context)?.hasDrawer ?? false;
-    final VoidCallback onToggle = isDrawer
-        ? () {
-            final scaffold = Scaffold.of(context);
-            if (scaffold.hasDrawer) scaffold.closeDrawer();
-          }
-        : toggleSidebar;
-
-    return ResponsiveBuilder(
-      builder: (context, screenType) {
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            final expandedWidth = isDrawer
-                ? constraints.maxWidth
-                : math.min(_expandedWidth, constraints.maxWidth);
-            return ValueListenableBuilder(
-              valueListenable: sidebarExpanded,
-              builder: (context, expanded, _) {
-                final effectiveExpanded = isDrawer || expanded;
-                return _SmoothLargeSideNav(
-                  isDrawer: isDrawer,
-                  expanded: effectiveExpanded,
-                  expansion: widget.expansion,
-                  expandedWidth: expandedWidth,
-                  colorScheme: scheme,
-                  selectedIndex: selectedIndex,
-                  onToggle: onToggle,
-                  onSelect: onDestinationSelected,
-                  onReturnHome: onDestinationDoubleTap,
-                );
-              },
-            );
-          },
-        );
-      },
-    );
+  void _onDestinationDoubleTap(
+    BuildContext context,
+    StatefulNavigationShell? navShell,
+    int selectedIndex,
+    int value,
+  ) {
+    if (selectedIndex != value) return;
+    if (MouseBackExit.consumeRoute(destinations[value].desPath)) return;
+    if (navShell != null) {
+      navShell.goBranch(value, initialLocation: true);
+    } else {
+      context.go(destinations[value].desPath);
+    }
+    _closeDrawer(context);
   }
 }
 
@@ -185,9 +200,12 @@ class _SmoothLargeSideNav extends StatelessWidget {
     if (expansion != null) {
       return RepaintBoundary(child: _buildPanel(context, expansion));
     }
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
     return RepaintBoundary(
-      child: SpringProgress(
-        target: expanded ? 1.0 : 0.0,
+      child: TweenAnimationBuilder<double>(
+        duration: reduceMotion ? Duration.zero : MotionDuration.sidebar,
+        curve: MotionCurve.sidebar,
+        tween: Tween<double>(end: expanded ? 1.0 : 0.0),
         builder: (context, t, _) => _buildPanel(context, t),
       ),
     );
@@ -201,116 +219,122 @@ class _SmoothLargeSideNav extends StatelessWidget {
             ? constraints.maxWidth
             : SideNav.widthFor(t).clamp(_collapsedWidth, expandedWidth);
         final itemWidth = math.max(0.0, visibleWidth - 16.0);
-        final expandedVisual = t >= 0.5;
         return SizedBox(
           width: fillParent ? double.infinity : visibleWidth,
           height: double.infinity,
           child: Padding(
             padding: const EdgeInsets.all(8.0),
-            child: ListenableBuilder(
-              listenable: AppSettings.backgroundNotifier,
-              builder: (context, _) {
-                return FrostedChrome(
-                  enabled: AppSettings.instance.enableSidebarFrostedGlass,
-                  borderRadius: AppRadius.mdCircular,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const SizedBox(height: 12),
-                      _NavItem(
-                        height: _itemHeight,
-                        width: itemWidth,
-                        icon: isDrawer
-                            ? Symbols.close
-                            : expandedVisual
-                            ? Symbols.menu_open
-                            : Symbols.menu,
-                        label: isDrawer
-                            ? '关闭'
-                            : expandedVisual
-                            ? '收起'
-                            : '展开',
-                        expandedT: t,
-                        selected: false,
-                        onTap: onToggle,
-                      ),
-                      const SizedBox(height: 8),
-                      Expanded(
-                        child: ListView(
-                          padding: const EdgeInsets.symmetric(vertical: 6),
-                          children: [
-                            SizedBox(
-                              height: _itemHeight * destinations.length,
-                              child: Stack(
-                                children: [
-                                  if (selectedIndex != null &&
-                                      selectedIndex! >= 0)
-                                    SpringProgress(
-                                      target: selectedIndex!.toDouble(),
-                                      spring: MotionSpring.entrance,
-                                      builder: (context, index, child) =>
-                                          Transform.translate(
-                                            offset: Offset(
-                                              0,
-                                              index * _itemHeight,
-                                            ),
-                                            child: child,
-                                          ),
-                                      child: SizedBox(
-                                        width: itemWidth,
-                                        height: _itemHeight,
-                                        child: DecoratedBox(
-                                          decoration: BoxDecoration(
-                                            color: colorScheme
-                                                .secondaryContainer
-                                                .withValues(alpha: 0.85),
-                                            borderRadius: AppRadius.smCircular,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  Column(
-                                    children: List.generate(
-                                      destinations.length,
-                                      (i) {
-                                        final selected = selectedIndex == i;
-                                        return _NavItem(
-                                          height: _itemHeight,
-                                          width: itemWidth,
-                                          icon: destinations[i].icon,
-                                          label: destinations[i].label,
-                                          expandedT: t,
-                                          selected: selected,
-                                          onTap: () {
-                                            onSelect(i);
-                                            final scaffold = Scaffold.of(
-                                              context,
-                                            );
-                                            if (scaffold.hasDrawer) {
-                                              scaffold.closeDrawer();
-                                            }
-                                          },
-                                          onDoubleTap: selected
-                                              ? () => onReturnHome(i)
-                                              : null,
-                                        );
-                                      },
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
+            child: _panelChrome(context, itemWidth, t),
           ),
         );
       },
+    );
+  }
+
+  Widget _panelChrome(BuildContext context, double itemWidth, double t) {
+    return ListenableBuilder(
+      listenable: AppSettings.backgroundNotifier,
+      builder: (context, _) => FrostedChrome(
+        enabled: AppSettings.instance.enableSidebarFrostedGlass,
+        borderRadius: AppRadius.mdCircular,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const SizedBox(height: 12),
+            _toggleItem(itemWidth, t),
+            const SizedBox(height: 8),
+            Expanded(child: _destinationList(context, itemWidth, t)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _toggleItem(double itemWidth, double t) {
+    final expandedVisual = t >= 0.5;
+    return _NavItem(
+      height: _itemHeight,
+      width: itemWidth,
+      icon: isDrawer
+          ? Symbols.close
+          : expandedVisual
+          ? Symbols.menu_open
+          : Symbols.menu,
+      label: isDrawer
+          ? '关闭'
+          : expandedVisual
+          ? '收起'
+          : '展开',
+      expandedT: t,
+      selected: false,
+      onTap: onToggle,
+    );
+  }
+
+  Widget _destinationList(BuildContext context, double itemWidth, double t) {
+    return ListView(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      children: [
+        SizedBox(
+          height: _itemHeight * destinations.length,
+          child: Stack(
+            children: [
+              if (selectedIndex != null && selectedIndex! >= 0)
+                _selectionHighlight(itemWidth),
+              Column(
+                children: [
+                  for (var i = 0; i < destinations.length; i++)
+                    _destinationItem(context, itemWidth, t, i),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _destinationItem(
+    BuildContext context,
+    double itemWidth,
+    double t,
+    int i,
+  ) {
+    final selected = selectedIndex == i;
+    return _NavItem(
+      height: _itemHeight,
+      width: itemWidth,
+      icon: destinations[i].icon,
+      label: destinations[i].label,
+      expandedT: t,
+      selected: selected,
+      onTap: () {
+        onSelect(i);
+        final scaffold = Scaffold.of(context);
+        if (scaffold.hasDrawer) scaffold.closeDrawer();
+      },
+      onDoubleTap: selected ? () => onReturnHome(i) : null,
+    );
+  }
+
+  Widget _selectionHighlight(double itemWidth) {
+    return SpringProgress(
+      target: selectedIndex!.toDouble(),
+      spring: MotionSpring.entrance,
+      builder: (context, index, child) => Transform.translate(
+        offset: Offset(0, index * _itemHeight),
+        child: child,
+      ),
+      child: SizedBox(
+        width: itemWidth,
+        height: _itemHeight,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: colorScheme.secondaryContainer.withValues(alpha: 0.85),
+            borderRadius: AppRadius.smCircular,
+          ),
+        ),
+      ),
     );
   }
 }
@@ -341,10 +365,6 @@ class _NavItem extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final fg = selected ? scheme.onSecondaryContainer : scheme.onSurface;
     final textOpacity = expandedT.clamp(0.0, 1.0);
-    const iconSize = 24.0;
-    const iconLeftPad = 20.0;
-    const textLeftPad = 8.0;
-
     return Align(
       alignment: Alignment.centerLeft,
       child: SizedBox(
@@ -359,46 +379,45 @@ class _NavItem extends StatelessWidget {
             onDoubleTap: onDoubleTap,
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 4),
-              child: ClipRect(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    const SizedBox(width: iconLeftPad),
-                    SizedBox(
-                      width: iconSize,
-                      child: Icon(
-                        icon,
-                        size: iconSize,
-                        color: fg.withValues(alpha: 0.90),
-                      ),
-                    ),
-                    Opacity(
-                      opacity: textOpacity,
-                      child: Padding(
-                        padding: const EdgeInsets.only(left: textLeftPad),
-                        child: Text(
-                          label,
-                          maxLines: 1,
-                          overflow: TextOverflow.fade,
-                          softWrap: false,
-                          style: TextStyle(
-                            color: fg,
-                            fontSize: 14.5,
-                            fontWeight: selected
-                                ? AppType.weightSemibold
-                                : AppType.weightMedium,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const Spacer(),
-                  ],
-                ),
-              ),
+              child: ClipRect(child: _row(fg, textOpacity)),
             ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _row(Color fg, double textOpacity) {
+    const iconSize = 24.0;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        const SizedBox(width: 20.0),
+        SizedBox(
+          width: iconSize,
+          child: Icon(icon, size: iconSize, color: fg.withValues(alpha: 0.90)),
+        ),
+        Opacity(
+          opacity: textOpacity,
+          child: Padding(
+            padding: const EdgeInsets.only(left: 8.0),
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.fade,
+              softWrap: false,
+              style: TextStyle(
+                color: fg,
+                fontSize: 14.5,
+                fontWeight: selected
+                    ? AppType.weightSemibold
+                    : AppType.weightMedium,
+              ),
+            ),
+          ),
+        ),
+        const Spacer(),
+      ],
     );
   }
 }

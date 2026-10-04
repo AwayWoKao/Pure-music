@@ -256,7 +256,7 @@ void main() {
     expect(_springReadout(tester), closeTo(1, 0.0001));
   });
 
-  testWidgets('sidebar spring slides the body with the rail mid-flight', (
+  testWidgets('sidebar squeezes the body to the remaining width mid-flight', (
     tester,
   ) async {
     Widget build(double progress, {double? targetProgress}) {
@@ -290,7 +290,10 @@ void main() {
     await tester.pumpWidget(build(0.4, targetProgress: 1));
     final railWidth = tester.getSize(find.byKey(const ValueKey('rail'))).width;
     expect(railWidth, closeTo(144, 0.01));
-    expect(tester.getSize(find.byKey(const ValueKey('body'))).width, 320);
+    expect(
+      tester.getSize(find.byKey(const ValueKey('body'))).width,
+      closeTo(256, 0.01),
+    );
     expect(bodyLeft(), closeTo(railWidth, 0.01));
 
     await tester.pumpWidget(build(1));

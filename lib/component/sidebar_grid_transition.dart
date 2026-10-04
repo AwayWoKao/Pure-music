@@ -158,6 +158,30 @@ class _ReflowGridState extends State<_ReflowGrid>
         layout.getGeometryForChildIndex(_anchorIndex!).scrollOffset;
   }
 
+
+  void _jumpToAnchor(
+    SidebarGridGeometry next,
+    SidebarGridTransition config,
+    ScrollPosition position,
+  ) {
+    final maxOffset = math.max(
+      0.0,
+      next.computeMaxScrollOffset(config.itemCount) +
+          config.padding.vertical -
+          position.viewportDimension,
+    );
+    final anchor = _anchorIndex;
+    final raw = anchor == null
+        ? position.pixels
+        : next.getGeometryForChildIndex(anchor).scrollOffset +
+              config.padding.top +
+              _anchorInset;
+    final target = raw.clamp(0.0, maxOffset);
+    if ((target - position.pixels).abs() > 0.01) {
+      position.jumpTo(target);
+    }
+  }
+
   void _tick() {
     if (!mounted) return;
     final previous = _lastLayout;
@@ -173,23 +197,7 @@ class _ReflowGridState extends State<_ReflowGrid>
           SchedulerBinding.instance.schedulerPhase !=
               SchedulerPhase.persistentCallbacks) {
         if (_anchorIndex == null) _captureAnchor();
-        final anchor = _anchorIndex;
-        final maxOffset = math.max(
-          0.0,
-          next.computeMaxScrollOffset(config.itemCount) +
-              config.padding.vertical -
-              position.viewportDimension,
-        );
-        final target =
-            (anchor == null
-                    ? position.pixels
-                    : next.getGeometryForChildIndex(anchor).scrollOffset +
-                          config.padding.top +
-                          _anchorInset)
-                .clamp(0.0, maxOffset);
-        if ((target - position.pixels).abs() > 0.01) {
-          position.jumpTo(target);
-        }
+        _jumpToAnchor(next, config, position);
       }
     }
     _lastLayout = next;

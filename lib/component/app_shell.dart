@@ -149,39 +149,44 @@ class _AppBackgroundState extends State<_AppBackground> {
   @override
   Widget build(BuildContext context) {
     final settings = AppSettings.instance;
-    final imagePath = widget.imagePath;
-    final transparent = settings.appWindowTransparent;
-    final blur = settings.appBackgroundImageBlur;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final maskColor = isDark ? Colors.black : Colors.white;
     final maskAlpha = isDark
         ? 0.25 + 0.2 * _imageLuminance
         : 0.25 + 0.2 * (1 - _imageLuminance);
-
-    if (transparent) {
-      final bgColor = widget.fallbackColor.withValues(
-        alpha: settings.appWindowOpacity,
-      );
-      final windowBlur = settings.appWindowBlur;
-      return Stack(
-        fit: StackFit.expand,
-        children: [
-          ColoredBox(color: bgColor),
-          if (windowBlur > 0)
-            BackdropFilter(
-              filter: ImageFilter.blur(
-                sigmaX: windowBlur,
-                sigmaY: windowBlur,
-                tileMode: TileMode.clamp,
-              ),
-              child: widget.child,
-            )
-          else
-            widget.child,
-        ],
-      );
+    if (settings.appWindowTransparent) {
+      return _transparentShell(settings);
     }
+    return _imageShell(settings, maskColor, maskAlpha);
+  }
 
+  Widget _transparentShell(AppSettings settings) {
+    final bgColor = widget.fallbackColor.withValues(
+      alpha: settings.appWindowOpacity,
+    );
+    final windowBlur = settings.appWindowBlur;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        ColoredBox(color: bgColor),
+        if (windowBlur > 0)
+          BackdropFilter(
+            filter: ImageFilter.blur(
+              sigmaX: windowBlur,
+              sigmaY: windowBlur,
+              tileMode: TileMode.clamp,
+            ),
+            child: widget.child,
+          )
+        else
+          widget.child,
+      ],
+    );
+  }
+
+  Widget _imageShell(AppSettings settings, Color maskColor, double maskAlpha) {
+    final imagePath = widget.imagePath;
+    final blur = settings.appBackgroundImageBlur;
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -357,6 +362,23 @@ class _AppShell_LargeState extends State<_AppShell_Large> {
     setState(() => _sidebarExpanded = expanded);
   }
 
+  Widget _railScaffold(double t, Widget? child) {
+    return SpringRailScaffold(
+      progress: t,
+      targetProgress: _sidebarExpanded ? 1.0 : 0.0,
+      collapsedWidth: SideNav.collapsedWidth,
+      expandedWidth: SideNav.expandedWidth,
+      rail: ClipRect(
+        child: SideNav(
+          navigationShell: widget.navigationShell,
+          expansion: t.clamp(0.0, 1.0),
+          onExpandedChanged: _handleSidebarExpandedChanged,
+        ),
+      ),
+      body: child!,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -370,24 +392,13 @@ class _AppShell_LargeState extends State<_AppShell_Large> {
             preferredSize: Size.fromHeight(48.0),
             child: TitleBar(),
           ),
-          body: SpringProgress(
-            target: _sidebarExpanded ? 1.0 : 0.0,
-            builder: (context, t, child) {
-              return SpringRailScaffold(
-                progress: t,
-                targetProgress: _sidebarExpanded ? 1.0 : 0.0,
-                collapsedWidth: SideNav.collapsedWidth,
-                expandedWidth: SideNav.expandedWidth,
-                rail: ClipRect(
-                  child: SideNav(
-                    navigationShell: widget.navigationShell,
-                    expansion: t.clamp(0.0, 1.0),
-                    onExpandedChanged: _handleSidebarExpandedChanged,
-                  ),
-                ),
-                body: child!,
-              );
-            },
+          body: TweenAnimationBuilder<double>(
+            duration: MediaQuery.disableAnimationsOf(context)
+                ? Duration.zero
+                : MotionDuration.sidebar,
+            curve: MotionCurve.sidebar,
+            tween: Tween<double>(end: _sidebarExpanded ? 1.0 : 0.0),
+            builder: (context, t, child) => _railScaffold(t, child),
             child: RepaintBoundary(
               child: Stack(
                 children: [widget.navigationShell, const MiniNowPlaying()],
