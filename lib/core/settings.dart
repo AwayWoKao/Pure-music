@@ -338,140 +338,19 @@ class AppSettings {
   AppSettings._();
 
   static Future<void> _readFromJsonOld(Map settingsMap) async {
-    final to = settingsMap['ThemeOption'];
-    if (to != null) {
-      _instance.themeOption = normalizedThemeOption(to);
-    }
-    _instance.themeColorMode = normalizedThemeColorMode(
-      settingsMap['ThemeColorMode'],
-    );
-    final stackedScrollEffect = normalizedBoolSetting(
-      settingsMap['EnableStackedScrollEffect'],
-      defaultValue: true,
-    );
-    _instance.enableStackedScrollEffect = stackedScrollEffect;
-    _instance.enableContentTransitionMotion = normalizedBoolSetting(
-      settingsMap['EnableContentTransitionMotion'],
-      defaultValue: true,
-    );
-    _instance.enableInteractiveSurfaceMotion = normalizedBoolSetting(
-      settingsMap['EnableInteractiveSurfaceMotion'],
-      defaultValue: stackedScrollEffect,
-    );
-    _instance.enableCoverPointerSheen = normalizedBoolSetting(
-      settingsMap['EnableCoverPointerSheen'],
-      defaultValue: stackedScrollEffect,
-    );
-    _instance.enableDetailHeaderCollapseMotion = normalizedBoolSetting(
-      settingsMap['EnableDetailHeaderCollapseMotion'],
-      defaultValue: stackedScrollEffect,
-    );
-    _instance.enableDataTransitionMotion = normalizedBoolSetting(
-      settingsMap['EnableDataTransitionMotion'],
-      defaultValue: stackedScrollEffect,
-    );
-    _instance.alwaysShowNowPlayingControls = normalizedBoolSetting(
-      settingsMap['AlwaysShowNowPlayingControls'],
-      defaultValue: false,
-    );
-    _instance.globalHotkeysEnabled = normalizedBoolSetting(
-      settingsMap['GlobalHotkeysEnabled'],
-      defaultValue: false,
-    );
-    _instance.inAppHotkeys = decodeInAppHotkeys(settingsMap['InAppHotkeys']);
-    _instance.globalHotkeys = decodeGlobalHotkeys(settingsMap['GlobalHotkeys']);
-    _instance.appBackgroundImagePath = normalizedPathSetting(
-      settingsMap['AppBackgroundImagePath'],
-    );
-    final backgroundOpacity = settingsMap['AppBackgroundImageOpacity'];
-    _instance.appBackgroundImageOpacity = backgroundOpacity is num
-        ? backgroundOpacity.clamp(0.1, 0.6).toDouble()
-        : 0.22;
-    final backgroundBlur = settingsMap['AppBackgroundImageBlur'];
-    _instance.appBackgroundImageBlur = backgroundBlur is num
-        ? backgroundBlur.clamp(0.0, 30.0).toDouble()
-        : 0.0;
-    _instance.appWindowTransparent = normalizedBoolSetting(
-      settingsMap['AppWindowTransparent'],
-      defaultValue: false,
-    );
-    final windowOpacity = settingsMap['AppWindowOpacity'];
-    _instance.appWindowOpacity = windowOpacity is num
-        ? windowOpacity.clamp(0.1, 1.0).toDouble()
-        : 1.0;
-    final windowBlur = settingsMap['AppWindowBlur'];
-    _instance.appWindowBlur = windowBlur is num
-        ? windowBlur.clamp(0.0, 30.0).toDouble()
-        : 0.0;
-    _instance.enableTitleBarFrostedGlass = normalizedBoolSetting(
-      settingsMap['EnableTitleBarFrostedGlass'],
-      defaultValue: false,
-    );
-    _instance.enableSidebarFrostedGlass = normalizedBoolSetting(
-      settingsMap['EnableSidebarFrostedGlass'],
-      defaultValue: false,
-    );
+    _readThemeMotionHotkeySettings(settingsMap);
+    _readBackgroundGlassSettings(settingsMap);
+    _readLegacyArtistSeparator(settingsMap);
+    _readLyricPreferenceSettings(settingsMap);
+    _readWindowPlaybackSettings(settingsMap);
+  }
+
+  static void _readLegacyArtistSeparator(Map settingsMap) {
     final oldSep = settingsMap['ArtistSeparator'];
     if (oldSep != null) {
       _instance.artistSeparator = normalizedArtistSeparators(oldSep);
     }
     _instance.artistSplitPattern = _instance.artistSeparator.join('|');
-
-    final llf = settingsMap['LocalLyricFirst'];
-    if (llf != null) {
-      _instance.localLyricFirst = normalizedBoolSetting(
-        llf,
-        defaultValue: true,
-      );
-    }
-
-    final st = settingsMap['ShowTranslation'];
-    if (st != null) {
-      _instance.showTranslation = normalizedBoolSetting(st, defaultValue: true);
-    }
-    final sr = settingsMap['ShowRomanization'];
-    if (sr != null) {
-      _instance.showRomanization = normalizedBoolSetting(
-        sr,
-        defaultValue: true,
-      );
-    }
-    final klm = settingsMap['KeepLyricMetadata'];
-    if (klm != null) {
-      _instance.keepLyricMetadata = normalizedBoolSetting(
-        klm,
-        defaultValue: true,
-      );
-    }
-
-    final sizeStr = settingsMap['WindowSize'];
-    if (sizeStr != null) {
-      final size = normalizedWindowSizeSetting(sizeStr);
-      _instance.windowSize = Size(size.width, size.height);
-    }
-
-    final isMaximized = settingsMap['IsWindowMaximized'];
-    if (isMaximized != null) {
-      _instance.isWindowMaximized = normalizedBoolSetting(
-        isMaximized,
-        defaultValue: false,
-      );
-    }
-
-    _instance.windowCloseBehavior =
-        normalizedSettingEnumValue(
-          settingsMap['WindowCloseBehavior'],
-          WindowCloseBehavior.values,
-        ) ??
-        WindowCloseBehavior.exit;
-    _instance.preventSleepOnNowPlaying = normalizedBoolSetting(
-      settingsMap['PreventSleepOnNowPlaying'],
-      defaultValue: false,
-    );
-    _instance.rememberPlaybackPosition = normalizedBoolSetting(
-      settingsMap['RememberPlaybackPosition'],
-      defaultValue: false,
-    );
   }
 
   @visibleForTesting
@@ -482,7 +361,23 @@ class AppSettings {
     if (settingsMap['Version'] == null) {
       return _readFromJsonOld(settingsMap);
     }
+    _readThemeMotionHotkeySettings(settingsMap);
+    _readLyricPreferenceSettings(settingsMap);
+    _readLyricConversionAndDelaySettings(settingsMap);
+    _readLyricTagSettings(settingsMap);
+    _readMaterialScrobbleSettings(settingsMap);
+    _readCoverColorSettings(settingsMap);
+    _readBackgroundGlassSettings(settingsMap);
+    _readWindowPlaybackSettings(settingsMap);
+    _readDesktopLyricVisibilitySettings(settingsMap);
+    _readDesktopLyricBehaviorSettings(settingsMap);
+    _readDesktopLyricLayoutSettings(settingsMap);
+    _readDesktopLyricTypographySettings(settingsMap);
+    _readDesktopLyricColorSettings(settingsMap);
+    _readFontSettings(settingsMap);
+  }
 
+  static void _readThemeMotionHotkeySettings(Map settingsMap) {
     final to = settingsMap['ThemeOption'];
     if (to != null) {
       _instance.themeOption = normalizedThemeOption(to);
@@ -525,7 +420,9 @@ class AppSettings {
     );
     _instance.inAppHotkeys = decodeInAppHotkeys(settingsMap['InAppHotkeys']);
     _instance.globalHotkeys = decodeGlobalHotkeys(settingsMap['GlobalHotkeys']);
+  }
 
+  static void _readLyricPreferenceSettings(Map settingsMap) {
     final sep = settingsMap['ArtistSeparator'];
     if (sep != null) {
       _instance.artistSeparator = normalizedArtistSeparators(sep);
@@ -567,7 +464,9 @@ class AppSettings {
         defaultValue: true,
       );
     }
+  }
 
+  static void _readLyricConversionAndDelaySettings(Map settingsMap) {
     final zcm = settingsMap['ZhConversionMode'];
     if (zcm != null) {
       final modeName = normalizedSettingEnumName(zcm);
@@ -607,7 +506,9 @@ class AppSettings {
         max: 120,
       );
     }
+  }
 
+  static void _readLyricTagSettings(Map settingsMap) {
     final ltwf = settingsMap['LyricTagWordFormat'];
     if (ltwf != null) {
       _instance.lyricTagWordFormat = normalizedSettingEnumValue(
@@ -640,7 +541,9 @@ class AppSettings {
         defaultValue: false,
       );
     }
+  }
 
+  static void _readMaterialScrobbleSettings(Map settingsMap) {
     final umyl = settingsMap['UseMaterialYouForLyrics'];
     if (umyl != null) {
       _instance.useMaterialYouForLyrics = normalizedBoolSetting(
@@ -688,7 +591,9 @@ class AppSettings {
         settingsMap['WavyBarEnabledModes'],
       );
     }
+  }
 
+  static void _readCoverColorSettings(Map settingsMap) {
     final tbla = settingsMap['TopBarLyricAnimation'];
     if (tbla != null) {
       final storedName = normalizedSettingEnumName(tbla);
@@ -716,7 +621,9 @@ class AppSettings {
         settingsMap['CustomCoverColor'],
       );
     }
+  }
 
+  static void _readBackgroundGlassSettings(Map settingsMap) {
     _instance.appBackgroundImagePath = normalizedPathSetting(
       settingsMap['AppBackgroundImagePath'],
     );
@@ -748,7 +655,9 @@ class AppSettings {
       settingsMap['EnableSidebarFrostedGlass'],
       defaultValue: false,
     );
+  }
 
+  static void _readWindowPlaybackSettings(Map settingsMap) {
     final sizeStr = settingsMap['WindowSize'];
     if (sizeStr != null) {
       final size = normalizedWindowSizeSetting(sizeStr);
@@ -777,7 +686,9 @@ class AppSettings {
       settingsMap['RememberPlaybackPosition'],
       defaultValue: false,
     );
+  }
 
+  static void _readDesktopLyricVisibilitySettings(Map settingsMap) {
     final sdlr = settingsMap['ShowDesktopLyricRoman'];
     if (sdlr != null) {
       _instance.showDesktopLyricRoman = normalizedBoolSetting(
@@ -821,7 +732,9 @@ class AppSettings {
         defaultValue: true,
       );
     }
+  }
 
+  static void _readDesktopLyricBehaviorSettings(Map settingsMap) {
     final dhop = settingsMap['DesktopHideOnPause'];
     if (dhop != null) {
       _instance.desktopHideOnPause = normalizedBoolSetting(
@@ -861,7 +774,9 @@ class AppSettings {
         defaultValue: true,
       );
     }
+  }
 
+  static void _readDesktopLyricLayoutSettings(Map settingsMap) {
     final dvu = settingsMap['DesktopUseVerticalDisplayMode'];
     if (dvu != null) {
       _instance.desktopUseVerticalDisplayMode = normalizedBoolSetting(
@@ -896,7 +811,9 @@ class AppSettings {
         defaultValue: false,
       );
     }
+  }
 
+  static void _readDesktopLyricTypographySettings(Map settingsMap) {
     final dls = settingsMap['DesktopLyricFontSize'];
     if (dls != null) {
       _instance.desktopLyricFontSize = (dls as num).clamp(12, 60).toDouble();
@@ -942,7 +859,9 @@ class AppSettings {
         _instance.desktopLyricTextAlign == 3) {
       _instance.desktopLyricTextAlign = 1;
     }
+  }
 
+  static void _readDesktopLyricColorSettings(Map settingsMap) {
     _instance.desktopLyricAnimation =
         DesktopLyricAnimation.fromString(
           settingsMap['DesktopLyricAnimation']?.toString() ?? '',
@@ -986,7 +905,9 @@ class AppSettings {
           settingsMap['DesktopLyricBrightnessMode']?.toString(),
         ) ??
         DesktopLyricBrightnessMode.follow;
+  }
 
+  static void _readFontSettings(Map settingsMap) {
     final ff = settingsMap['FontFamily'];
     final fp = settingsMap['FontPath'];
     if (ff != null || fp != null) {
@@ -1038,119 +959,150 @@ class AppSettings {
     }
   }
 
+  Map<String, Object?> _themeMotionHotkeySettingsMap() => {
+    'Version': version,
+    'ThemeOption': themeOption.index,
+    'ThemeColorMode': themeColorMode.name,
+    'EnableStackedScrollEffect': enableStackedScrollEffect,
+    'EnableContentTransitionMotion': enableContentTransitionMotion,
+    'EnableInteractiveSurfaceMotion': enableInteractiveSurfaceMotion,
+    'EnableCoverPointerSheen': enableCoverPointerSheen,
+    'EnableDetailHeaderCollapseMotion': enableDetailHeaderCollapseMotion,
+    'EnableDataTransitionMotion': enableDataTransitionMotion,
+    'AlwaysShowNowPlayingControls': alwaysShowNowPlayingControls,
+    ...encodeHotkeySettings(
+      globalEnabled: globalHotkeysEnabled,
+      inApp: inAppHotkeys,
+      global: globalHotkeys,
+    ),
+  };
+
+  Map<String, Object?> _lyricSettingsMap() => {
+    'ArtistSeparator': artistSeparator,
+    'LocalLyricFirst': localLyricFirst,
+    'PreferredOnlineSource': preferredOnlineSource.name,
+    'ShowTranslation': showTranslation,
+    'ShowRomanization': showRomanization,
+    'KeepLyricMetadata': keepLyricMetadata,
+    'ZhConversionMode': zhConversionMode.name,
+    'PromptWriteLyricToTagDelay': promptWriteLyricToTagDelay,
+    'AutoWriteLyricToTag': autoWriteLyricToTag,
+    'AutoWriteLyricToTagDelay': autoWriteLyricToTagDelay,
+    'LyricTagWordFormat': lyricTagWordFormat.name,
+    'LyricTagIncludeTranslation': lyricTagIncludeTranslation,
+    'LyricTagIncludeRomanization': lyricTagIncludeRomanization,
+    'AutoSaveExternalLyric': autoSaveExternalLyric,
+  };
+
+  Map<String, Object?> _desktopLyricSettingsMap() => {
+    'ShowDesktopLyricRoman': showDesktopLyricRoman,
+    'DesktopLyricRomanPosition': desktopLyricRomanPosition,
+    'DesktopShowTranslation': desktopShowTranslation,
+    'DesktopLyricTranslationPosition': desktopLyricTranslationPosition,
+    'DesktopShowNowPlayingInfo': desktopShowNowPlayingInfo,
+    'DesktopHideOnPause': desktopHideOnPause,
+    'DesktopHoverHide': desktopHoverHide,
+    'DesktopFullscreenHide': desktopFullscreenHide,
+    'DesktopEnableStroke': desktopEnableStroke,
+    'DesktopEnablePinTop': desktopEnablePinTop,
+    'DesktopUseVerticalDisplayMode': desktopUseVerticalDisplayMode,
+    'DesktopShowDoubleLine': desktopShowDoubleLine,
+    'DesktopUseMultiLineMode': desktopUseMultiLineMode,
+    'DesktopHidePlayedLines': desktopHidePlayedLines,
+    'DesktopLineGap': desktopLineGap,
+    'DesktopLyricFontSize': desktopLyricFontSize,
+    'DesktopTranslationFontSize': desktopTranslationFontSize,
+    'DesktopLyricFontWeight': desktopLyricFontWeight,
+    'DesktopBackgroundOpacity': desktopBackgroundOpacity,
+    'DesktopFontOpacity': desktopFontOpacity,
+    'DesktopLyricTextAlign': desktopLyricTextAlign,
+    'DesktopLyricAnimation': desktopLyricAnimation.name,
+    'DesktopMultiLineAnimation': desktopMultiLineAnimation.name,
+    'DesktopPlayedColor': desktopPlayedColor,
+    'DesktopUnplayedColor': desktopUnplayedColor,
+    'DesktopFollowThemeColor': desktopFollowThemeColor,
+    'DesktopIconFollowThemeColor': desktopIconFollowThemeColor,
+    'DesktopLyricBrightnessMode': desktopLyricBrightnessMode.name,
+  };
+
+  Map<String, Object?> _materialAppearanceSettingsMap() => {
+    'UseMaterialYouForLyrics': useMaterialYouForLyrics,
+    'UseMaterialYouForProgressBar': useMaterialYouForProgressBar,
+    'UseMaterialYouForTransition': useMaterialYouForTransition,
+    'UseMaterialYouForControls': useMaterialYouForControls,
+    'KeepPitch': keepPitch,
+    'LastFmEnabled': lastFmEnabled,
+    'WavyBarEnabledModes': NowPlayingMode.toList(wavyBarEnabledModes),
+    'TopBarLyricAnimation': topBarLyricAnimation.name,
+    'EnableCoverColorExtraction': enableCoverColorExtraction,
+    'CustomCoverColor': customCoverColor,
+    'AppBackgroundImagePath': appBackgroundImagePath,
+    'AppBackgroundImageOpacity': appBackgroundImageOpacity,
+    'AppBackgroundImageBlur': appBackgroundImageBlur,
+    'AppWindowTransparent': appWindowTransparent,
+    'AppWindowOpacity': appWindowOpacity,
+    'AppWindowBlur': appWindowBlur,
+    'EnableTitleBarFrostedGlass': enableTitleBarFrostedGlass,
+    'EnableSidebarFrostedGlass': enableSidebarFrostedGlass,
+  };
+
+  Map<String, Object?> _windowFontPlaybackSettingsMap() => {
+    'WindowCloseBehavior': windowCloseBehavior.name,
+    'FontFamily': fontFamily,
+    'FontPath': fontPath,
+    'LyricFontFollowsUi': lyricFontFollowsUi,
+    'LyricFontFamily': lyricFontFamily,
+    'LyricFontPath': lyricFontPath,
+    'PreventSleepOnNowPlaying': preventSleepOnNowPlaying,
+    'RememberPlaybackPosition': rememberPlaybackPosition,
+  };
+
+  Future<void> _writeSettingsFile(
+    Map<String, Object?> settingsMap, {
+    required bool isMaximized,
+    required bool isFullScreen,
+    required bool isMinimized,
+  }) async {
+    Size sizeToSave = windowSize;
+    if (!isMaximized && !isFullScreen && !isMinimized) {
+      final currentSize = await windowManager.getSize();
+      if (currentSize.width >= minimumWindowSizeSetting.width &&
+          currentSize.height >= minimumWindowSizeSetting.height) {
+        sizeToSave = currentSize;
+      }
+    }
+    final normalizedSize = normalizedWindowSizeSetting([
+      sizeToSave.width,
+      sizeToSave.height,
+    ]);
+    sizeToSave = Size(normalizedSize.width, normalizedSize.height);
+    windowSize = sizeToSave;
+    settingsMap['WindowSize'] = ',';
+    final settingsStr = json.encode(settingsMap);
+    final dir = await getSettingsDir();
+    final settingsPath = path.join(dir.path, 'settings.json');
+    await writeTextFileAtomically(settingsPath, settingsStr);
+  }
+
   Future<bool> saveSettings() async {
     try {
       final isMaximized = await windowManager.isMaximized();
       final isFullScreen = await windowManager.isFullScreen();
       final isMinimized = await windowManager.isMinimized();
-      final settingsMap = {
-        'Version': version,
-        'ThemeOption': themeOption.index,
-        'ThemeColorMode': themeColorMode.name,
-        'EnableStackedScrollEffect': enableStackedScrollEffect,
-        'EnableContentTransitionMotion': enableContentTransitionMotion,
-        'EnableInteractiveSurfaceMotion': enableInteractiveSurfaceMotion,
-        'EnableCoverPointerSheen': enableCoverPointerSheen,
-        'EnableDetailHeaderCollapseMotion': enableDetailHeaderCollapseMotion,
-        'EnableDataTransitionMotion': enableDataTransitionMotion,
-        'AlwaysShowNowPlayingControls': alwaysShowNowPlayingControls,
-        ...encodeHotkeySettings(
-          globalEnabled: globalHotkeysEnabled,
-          inApp: inAppHotkeys,
-          global: globalHotkeys,
-        ),
-        'ArtistSeparator': artistSeparator,
-        'LocalLyricFirst': localLyricFirst,
-        'PreferredOnlineSource': preferredOnlineSource.name,
-        'ShowTranslation': showTranslation,
-        'ShowRomanization': showRomanization,
-        'KeepLyricMetadata': keepLyricMetadata,
-        'ShowDesktopLyricRoman': showDesktopLyricRoman,
-        'DesktopLyricRomanPosition': desktopLyricRomanPosition,
-        'DesktopShowTranslation': desktopShowTranslation,
-        'DesktopLyricTranslationPosition': desktopLyricTranslationPosition,
-        'DesktopShowNowPlayingInfo': desktopShowNowPlayingInfo,
-        'DesktopHideOnPause': desktopHideOnPause,
-        'DesktopHoverHide': desktopHoverHide,
-        'DesktopFullscreenHide': desktopFullscreenHide,
-        'DesktopEnableStroke': desktopEnableStroke,
-        'DesktopEnablePinTop': desktopEnablePinTop,
-        'DesktopUseVerticalDisplayMode': desktopUseVerticalDisplayMode,
-        'DesktopShowDoubleLine': desktopShowDoubleLine,
-        'DesktopUseMultiLineMode': desktopUseMultiLineMode,
-        'DesktopHidePlayedLines': desktopHidePlayedLines,
-        'DesktopLineGap': desktopLineGap,
-        'DesktopLyricFontSize': desktopLyricFontSize,
-        'DesktopTranslationFontSize': desktopTranslationFontSize,
-        'DesktopLyricFontWeight': desktopLyricFontWeight,
-        'DesktopBackgroundOpacity': desktopBackgroundOpacity,
-        'DesktopFontOpacity': desktopFontOpacity,
-        'DesktopLyricTextAlign': desktopLyricTextAlign,
-        'DesktopLyricAnimation': desktopLyricAnimation.name,
-        'DesktopMultiLineAnimation': desktopMultiLineAnimation.name,
-        'DesktopPlayedColor': desktopPlayedColor,
-        'DesktopUnplayedColor': desktopUnplayedColor,
-        'DesktopFollowThemeColor': desktopFollowThemeColor,
-        'DesktopIconFollowThemeColor': desktopIconFollowThemeColor,
-        'DesktopLyricBrightnessMode': desktopLyricBrightnessMode.name,
-        'ZhConversionMode': zhConversionMode.name,
-        'PromptWriteLyricToTagDelay': promptWriteLyricToTagDelay,
-        'AutoWriteLyricToTag': autoWriteLyricToTag,
-        'AutoWriteLyricToTagDelay': autoWriteLyricToTagDelay,
-        'LyricTagWordFormat': lyricTagWordFormat.name,
-        'LyricTagIncludeTranslation': lyricTagIncludeTranslation,
-        'LyricTagIncludeRomanization': lyricTagIncludeRomanization,
-        'AutoSaveExternalLyric': autoSaveExternalLyric,
-        'UseMaterialYouForLyrics': useMaterialYouForLyrics,
-        'UseMaterialYouForProgressBar': useMaterialYouForProgressBar,
-        'UseMaterialYouForTransition': useMaterialYouForTransition,
-        'UseMaterialYouForControls': useMaterialYouForControls,
-        'KeepPitch': keepPitch,
-        'LastFmEnabled': lastFmEnabled,
-        'WavyBarEnabledModes': NowPlayingMode.toList(wavyBarEnabledModes),
-        'TopBarLyricAnimation': topBarLyricAnimation.name,
-        'EnableCoverColorExtraction': enableCoverColorExtraction,
-        'CustomCoverColor': customCoverColor,
-        'AppBackgroundImagePath': appBackgroundImagePath,
-        'AppBackgroundImageOpacity': appBackgroundImageOpacity,
-        'AppBackgroundImageBlur': appBackgroundImageBlur,
-        'AppWindowTransparent': appWindowTransparent,
-        'AppWindowOpacity': appWindowOpacity,
-        'AppWindowBlur': appWindowBlur,
-        'EnableTitleBarFrostedGlass': enableTitleBarFrostedGlass,
-        'EnableSidebarFrostedGlass': enableSidebarFrostedGlass,
+      final settingsMap = <String, Object?>{
+        ..._themeMotionHotkeySettingsMap(),
+        ..._lyricSettingsMap(),
+        ..._desktopLyricSettingsMap(),
+        ..._materialAppearanceSettingsMap(),
         'IsWindowMaximized': isMaximized,
-        'WindowCloseBehavior': windowCloseBehavior.name,
-        'FontFamily': fontFamily,
-        'FontPath': fontPath,
-        'LyricFontFollowsUi': lyricFontFollowsUi,
-        'LyricFontFamily': lyricFontFamily,
-        'LyricFontPath': lyricFontPath,
-        'PreventSleepOnNowPlaying': preventSleepOnNowPlaying,
-        'RememberPlaybackPosition': rememberPlaybackPosition,
+        ..._windowFontPlaybackSettingsMap(),
       };
-
-      Size sizeToSave = windowSize;
-      if (!isMaximized && !isFullScreen && !isMinimized) {
-        final currentSize = await windowManager.getSize();
-        if (currentSize.width >= minimumWindowSizeSetting.width &&
-            currentSize.height >= minimumWindowSizeSetting.height) {
-          sizeToSave = currentSize;
-        }
-      }
-      final normalizedSize = normalizedWindowSizeSetting([
-        sizeToSave.width,
-        sizeToSave.height,
-      ]);
-      sizeToSave = Size(normalizedSize.width, normalizedSize.height);
-      windowSize = sizeToSave;
-      settingsMap['WindowSize'] =
-          '${sizeToSave.width.toStringAsFixed(1)},${sizeToSave.height.toStringAsFixed(1)}';
-
-      final settingsStr = json.encode(settingsMap);
-      final dir = await getSettingsDir();
-      final settingsPath = path.join(dir.path, 'settings.json');
-      await writeTextFileAtomically(settingsPath, settingsStr);
+      await _writeSettingsFile(
+        settingsMap,
+        isMaximized: isMaximized,
+        isFullScreen: isFullScreen,
+        isMinimized: isMinimized,
+      );
       return true;
     } catch (err, trace) {
       log.settings.error('legacy', err.toString(), stackTrace: trace);
