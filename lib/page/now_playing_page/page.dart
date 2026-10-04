@@ -1,6 +1,7 @@
 // ignore_for_file: camel_case_types
 
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'dart:math';
 import 'dart:ui';
 
@@ -15,6 +16,7 @@ import 'package:pure_music/core/menu_styles.dart';
 import 'package:pure_music/core/color_extraction.dart';
 import 'package:pure_music/core/list_action_state.dart';
 import 'package:pure_music/core/memory_monitor.dart';
+import 'package:pure_music/core/now_playing_perf_probe.dart';
 import 'package:pure_music/core/sleep_blocker.dart';
 import 'package:pure_music/core/theme.dart';
 import 'package:pure_music/core/enums.dart';
@@ -167,114 +169,182 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
     }
     final token = _coverRequestToken;
 
-    _coverDebounceTimer = Timer(MotionDuration.xFast, () async {
-      final audio = playbackService.nowPlaying;
-      if (audio == null || _isCoverRequestStale(token, path)) return;
+    _coverDebounceTimer = Timer(
+      MotionDuration.xFast,
+      () => _loadCoverDetails(token, path),
+    );
+  }
 
-      final cachedPalette = _colorService.getCachedPaletteForPath(path);
-      Uint8List? bytes;
-      List<Color>? palette = cachedPalette;
-      if (cachedPalette == null || cachedPalette.isEmpty) {
-        final (loadedBytes, rustColors) = await getPictureAndColors(
+  Future<void> _loadCoverDetails(int token, String path) async {
+    final audio = playbackService.nowPlaying;
+    if (audio == null || _isCoverRequestStale(token, path)) return;
+    final modified = audio.modified;
+    final cachedPalette = _colorService.getCachedPaletteForPath(
+      path,
+      modified: modified,
+    );
+    final loaded = await _loadCoverBytesAndPalette(
+      path,
+      modified,
+      cachedPalette,
+    );
+    if (_isCoverRequestStale(token, path)) return;
+    _applyLoadedCover(path, modified, loaded.bytes, loaded.palette);
+    if (mounted) setState(() {});
+    NowPlayingPerfProbe.instance.onCoverVisible(
+      fromCache: cachedPalette != null && cachedPalette.isNotEmpty,
+    );
+  }
+
+  Future<({Uint8List? bytes, List<Color>? palette})> _loadCoverBytesAndPalette(
+    String path,
+    int modified,
+    List<Color>? cachedPalette,
+  ) async {
+    if (cachedPalette != null && cachedPalette.isNotEmpty) {
+      final bytes = await CoverImageCache.instance.loadBytes(
+        path: path,
+        modified: modified,
+        width: 160,
+        height: 160,
+      );
+      return (bytes: bytes, palette: cachedPalette);
+    }
+    developer.Timeline.startSync('cover.extractColors');
+    late final Uint8List? loadedBytes;
+    late final List<int> rustColors;
+    try {
+      final result = await getPictureAndColors(
+        path: path,
+        width: 160,
+        height: 160,
+        numColors: 8,
+      );
+      loadedBytes = result.$1;
+      rustColors = result.$2;
+      if (loadedBytes != null) {
+        CoverImageCache.instance.putDecodedBytes(
           path: path,
           width: 160,
           height: 160,
-          numColors: 8,
-        );
-        bytes = loadedBytes;
-        if (rustColors.isNotEmpty) {
-          palette = rustColors.map((argb) => Color(argb)).toList();
-        }
-      } else {
-        bytes = await CoverImageCache.instance.loadBytes(
-          path: path,
-          width: 160,
-          height: 160,
+          bytes: loadedBytes,
+          modified: modified,
         );
       }
-      if (_isCoverRequestStale(token, path)) return;
+    } finally {
+      developer.Timeline.finishSync();
+    }
+    return (
+      bytes: loadedBytes,
+      palette: rustColors.isNotEmpty
+          ? rustColors.map((argb) => Color(argb)).toList()
+          : null,
+    );
+  }
 
-      if (bytes != null) {
-        _nowPlayingCoverBytes = bytes;
-      }
-      if (palette != null && palette.isNotEmpty) {
-        _dominantColor = palette.first;
-        _preExtractedPalette = palette;
-        _palettePath = path;
-        _colorService.cachePaletteForPath(path, palette);
-        ThemeProvider.instance.applySeedColorDirectly(palette.first, path);
-      } else if (bytes == null) {
-        _nowPlayingCoverBytes = null;
-        _dominantColor = null;
-        _preExtractedPalette = null;
-        _palettePath = null;
-        _backgroundUsesCachedLargeCover = false;
-      }
-      if (mounted) setState(() {});
-    });
+  void _applyLoadedCover(
+    String path,
+    int modified,
+    Uint8List? bytes,
+    List<Color>? palette,
+  ) {
+    if (bytes != null) {
+      _nowPlayingCoverBytes = bytes;
+    }
+    if (palette != null && palette.isNotEmpty) {
+      _dominantColor = palette.first;
+      _preExtractedPalette = palette;
+      _palettePath = path;
+      _colorService.cachePaletteForPath(path, palette, modified: modified);
+      ThemeProvider.instance.applySeedColorDirectly(
+        palette.first,
+        path,
+        modified: modified,
+      );
+      return;
+    }
+    if (bytes == null) {
+      _nowPlayingCoverBytes = null;
+      _dominantColor = null;
+      _preExtractedPalette = null;
+      _palettePath = null;
+      _backgroundUsesCachedLargeCover = false;
+    }
   }
 
   void updateCover() {
     final path = playbackService.nowPlaying?.path;
     if (path == null) {
-      if (_nowPlayingCoverPath != null || _nowPlayingCoverBytes != null) {
-        _coverDebounceTimer?.cancel();
-        _songChangeTrimTimer?.cancel();
-        _coverRequestToken++;
-        PaintingBinding.instance.imageCache.clear();
-        setState(() {
-          _nowPlayingCoverPath = null;
-          _nowPlayingCoverBytes = null;
-          _dominantColor = null;
-          _preExtractedPalette = null;
-          _palettePath = null;
-          _backgroundUsesCachedLargeCover = false;
-        });
-      }
+      _clearCoverIfNeeded();
       return;
     }
-
     if (path == _nowPlayingCoverPath) return;
     _nowPlayingCoverPath = path;
     // Keep the previous frame visible until this track's artwork is ready.
     _backgroundUsesCachedLargeCover = false;
-
     _coverDebounceTimer?.cancel();
     _songChangeTrimTimer?.cancel();
     _coverRequestToken++;
-    // 首帧优先复用已解码的大封面，否则沿用小封面。
-    final aud = playbackService.nowPlaying;
-    if (aud != null) {
-      final cachedPalette = _colorService.getCachedPaletteForPath(path);
-      if (cachedPalette != null && cachedPalette.isNotEmpty) {
-        _dominantColor = cachedPalette.first;
-        _preExtractedPalette = cachedPalette;
-        _palettePath = path;
-      } else {
-        final cached = _colorService.getCachedColorForPath(path);
-        if (cached != null) {
-          _dominantColor = cached;
-        }
-      }
-      final cachedLargeCover = aud.cachedLargeCover;
-      if (cachedLargeCover is MemoryImage) {
-        _nowPlayingCoverBytes = cachedLargeCover.bytes;
-        _backgroundUsesCachedLargeCover = true;
-      } else {
-        final smallBytes = aud.smallCoverBytes;
-        if (smallBytes != null) {
-          _nowPlayingCoverBytes = smallBytes;
-        }
-      }
-    }
+    NowPlayingPerfProbe.instance.onSongChanged();
+    _applyCachedCoverFrame(path);
     if (mounted) setState(() {});
-
+    if (_nowPlayingCoverBytes != null) {
+      NowPlayingPerfProbe.instance.onCoverVisible(fromCache: true);
+    }
     _songChangeTrimTimer = Timer(const Duration(seconds: 8), () {
       if (!mounted || playbackService.nowPlaying?.path != path) return;
       MemoryMonitorService.instance.trimAfterSongChange();
     });
-
     _scheduleCoverDetails();
+  }
+
+  void _clearCoverIfNeeded() {
+    if (_nowPlayingCoverPath == null && _nowPlayingCoverBytes == null) return;
+    _coverDebounceTimer?.cancel();
+    _songChangeTrimTimer?.cancel();
+    _coverRequestToken++;
+    PaintingBinding.instance.imageCache.clear();
+    setState(() {
+      _nowPlayingCoverPath = null;
+      _nowPlayingCoverBytes = null;
+      _dominantColor = null;
+      _preExtractedPalette = null;
+      _palettePath = null;
+      _backgroundUsesCachedLargeCover = false;
+    });
+  }
+
+  void _applyCachedCoverFrame(String path) {
+    // 首帧优先复用已解码的大封面，否则沿用小封面。
+    final aud = playbackService.nowPlaying;
+    if (aud == null) return;
+    final cachedPalette = _colorService.getCachedPaletteForPath(
+      path,
+      modified: aud.modified,
+    );
+    if (cachedPalette != null && cachedPalette.isNotEmpty) {
+      _dominantColor = cachedPalette.first;
+      _preExtractedPalette = cachedPalette;
+      _palettePath = path;
+    } else {
+      final cached = _colorService.getCachedColorForPath(
+        path,
+        modified: aud.modified,
+      );
+      if (cached != null) {
+        _dominantColor = cached;
+      }
+    }
+    final cachedLargeCover = aud.cachedLargeCover;
+    if (cachedLargeCover is MemoryImage) {
+      _nowPlayingCoverBytes = cachedLargeCover.bytes;
+      _backgroundUsesCachedLargeCover = true;
+      return;
+    }
+    final smallBytes = aud.smallCoverBytes;
+    if (smallBytes != null) {
+      _nowPlayingCoverBytes = smallBytes;
+    }
   }
 
   void _onViewModeChanged() {
@@ -341,57 +411,37 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
         fit: StackFit.expand,
         children: [
           ColoredBox(color: _neutralBackgroundColor(brightness)),
-          ValueListenableBuilder<NowPlayingBackgroundMode>(
-            valueListenable: nowPlayingBackgroundModeNotifier,
-            builder: (context, backgroundMode, _) {
-              return ValueListenableBuilder<bool>(
-                valueListenable: nowPlayingDynamicFlowingLightNotifier,
-                builder: (context, dynamicFlowingLight, _) {
-                  return ValueListenableBuilder<bool>(
-                    valueListenable: nowPlayingAudioReactiveFlowNotifier,
-                    builder: (context, audioReactiveFlow, _) {
-                      return ValueListenableBuilder<bool>(
-                        valueListenable: _routeReadyNotifier,
-                        builder: (context, routeReady, _) {
-                          return ValueListenableBuilder<PlayerState>(
-                            valueListenable:
-                                playbackService.playerStateNotifier,
-                            builder: (context, playerState, _) {
-                              final backgroundInputs =
-                                  NowPlayingBackgroundInputs(
-                                    albumCoverBytes: _nowPlayingCoverBytes,
-                                    dominantColor: _dominantColor,
-                                    spectrumStream:
-                                        playbackService.spectrumStream,
-                                    enableAnimation: dynamicFlowingLight,
-                                    isVisible: routeReady,
-                                    playerState: playerState,
-                                    flowSpeed: 1.0,
-                                    intensity: brightness == Brightness.dark
-                                        ? 1.0
-                                        : 0.9,
-                                    audioReactiveFlow: audioReactiveFlow,
-                                    preExtractedColors: _preExtractedPalette,
-                                  );
-                              return NowPlayingBackground(
-                                mode: backgroundMode,
-                                inputs: backgroundInputs,
-                                fallbackColor: _neutralBackgroundColor(
-                                  brightness,
-                                ),
-                              );
-                            },
-                          );
-                        },
-                      );
-                    },
-                  );
-                },
-              );
-            },
+          ListenableBuilder(
+            listenable: Listenable.merge([
+              nowPlayingBackgroundModeNotifier,
+              nowPlayingDynamicFlowingLightNotifier,
+              nowPlayingAudioReactiveFlowNotifier,
+              _routeReadyNotifier,
+              playbackService.playerStateNotifier,
+            ]),
+            builder: (context, _) => _flowBackground(brightness),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _flowBackground(Brightness brightness) {
+    return NowPlayingBackground(
+      mode: nowPlayingBackgroundModeNotifier.value,
+      inputs: NowPlayingBackgroundInputs(
+        albumCoverBytes: _nowPlayingCoverBytes,
+        dominantColor: _dominantColor,
+        spectrumStream: playbackService.spectrumStream,
+        enableAnimation: nowPlayingDynamicFlowingLightNotifier.value,
+        isVisible: _routeReadyNotifier.value,
+        playerState: playbackService.playerStateNotifier.value,
+        flowSpeed: 1.0,
+        intensity: brightness == Brightness.dark ? 1.0 : 0.9,
+        audioReactiveFlow: nowPlayingAudioReactiveFlowNotifier.value,
+        preExtractedColors: _preExtractedPalette,
+      ),
+      fallbackColor: _neutralBackgroundColor(brightness),
     );
   }
 
@@ -423,159 +473,19 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
           ),
           drawerEnableOpenDragGesture: !immersive,
           body: Listener(
-            onPointerDown: (_) {
-              _bumpCursor();
-            },
-            onPointerMove: (_) {
-              _bumpCursor();
-            },
-            onPointerHover: (_) {
-              _bumpCursor();
-            },
+            onPointerDown: (_) => _bumpCursor(),
+            onPointerMove: (_) => _bumpCursor(),
+            onPointerHover: (_) => _bumpCursor(),
             child: Stack(
               fit: StackFit.expand,
               alignment: AlignmentDirectional.center,
               children: [
                 _buildBackground(brightness),
-                ListenableBuilder(
-                  listenable: AppSettings.rebuildNotifier,
-                  builder: (context, _) {
-                    final useMonet =
-                        AppSettings.instance.useMaterialYouForControls;
-                    return ValueListenableBuilder<bool>(
-                      valueListenable: _routeReadyNotifier,
-                      builder: (context, routeReady, child) {
-                        return TickerMode(enabled: routeReady, child: child!);
-                      },
-                      child: IconButtonTheme(
-                        data: IconButtonThemeData(
-                          style: ButtonStyle(
-                            foregroundColor: useMonet
-                                ? WidgetStatePropertyAll(scheme.primary)
-                                : null,
-                            backgroundColor: const WidgetStatePropertyAll(
-                              Colors.transparent,
-                            ),
-                            overlayColor: WidgetStateProperty.resolveWith((
-                              states,
-                            ) {
-                              if (states.contains(WidgetState.pressed)) {
-                                return scheme.onSecondaryContainer.withValues(
-                                  alpha: 0.04,
-                                );
-                              }
-                              if (states.contains(WidgetState.hovered) ||
-                                  states.contains(WidgetState.focused)) {
-                                return scheme.onSecondaryContainer.withValues(
-                                  alpha: 0.02,
-                                );
-                              }
-                              return Colors.transparent;
-                            }),
-                          ),
-                        ),
-                        child: ChangeNotifierProvider.value(
-                          value: PlayService.instance.playbackService,
-                          builder: (context, _) => immersive
-                              ? const _NowPlayingImmersivePage()
-                              : ResponsiveBuilder2(
-                                  builder: (context, screenType) {
-                                    if (_usesCompactNowPlayingLayout(
-                                      context,
-                                      screenType,
-                                    )) {
-                                      return _NowPlayingSmallPage(
-                                        cursorHidden: _cursorHiddenNotifier,
-                                      );
-                                    }
-                                    return const _NowPlayingLargePage();
-                                  },
-                                ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
+                _playbackLayer(scheme, immersive),
                 if (immersive) const _ImmersiveHelpOverlay(),
-                if (!immersive)
-                  Positioned(
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    height: 56.0,
-                    child: SafeArea(
-                      bottom: false,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12.0),
-                        child: ValueListenableBuilder(
-                          valueListenable: _cursorHiddenNotifier,
-                          builder: (context, cursorHidden, _) {
-                            return ValueListenableBuilder(
-                              valueListenable: nowPlayingViewMode,
-                              builder: (context, viewMode, _) {
-                                final inPlaylist =
-                                    viewMode == NowPlayingViewMode.withPlaylist;
-                                final shouldHide = cursorHidden || inPlaylist;
-                                return AnimatedOpacity(
-                                  duration: MotionDuration.xFast,
-                                  curve: MotionCurve.standard,
-                                  opacity: shouldHide ? 0.0 : 1.0,
-                                  child: IgnorePointer(
-                                    ignoring: shouldHide,
-                                    child: Row(
-                                      children: [
-                                        ResponsiveBuilder2(
-                                          builder: (context, screenType) {
-                                            if (!_usesCompactNowPlayingLayout(
-                                              context,
-                                              screenType,
-                                            )) {
-                                              return const SizedBox.shrink();
-                                            }
-                                            return Builder(
-                                              builder: (context) => IconButton(
-                                                tooltip: '侧边栏',
-                                                onPressed: () {
-                                                  Scaffold.of(
-                                                    context,
-                                                  ).openDrawer();
-                                                },
-                                                icon: const Icon(Symbols.menu),
-                                              ),
-                                            );
-                                          },
-                                        ),
-                                        const NavBackBtn(),
-                                        const Expanded(
-                                          child: DragToMoveArea(
-                                            child: SizedBox.expand(),
-                                          ),
-                                        ),
-                                        const WindowControlls(),
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              },
-                            );
-                          },
-                        ),
-                      ),
-                    ),
-                  ),
+                if (!immersive) _topChrome(),
                 // Positioned 必须是 Stack 直接子节点，不能包在 Builder 里
-                Positioned.fill(
-                  child: ValueListenableBuilder<bool>(
-                    valueListenable: _cursorHiddenNotifier,
-                    builder: (context, cursorHidden, _) {
-                      if (!cursorHidden) return const SizedBox.shrink();
-                      return const MouseRegion(
-                        cursor: SystemMouseCursors.none,
-                        child: SizedBox.expand(),
-                      );
-                    },
-                  ),
-                ),
+                _hiddenCursorLayer(),
               ],
             ),
           ),
@@ -583,6 +493,141 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
       },
     );
     return FocusTraversalGroup(descendantsAreTraversable: false, child: page);
+  }
+
+  Widget _playbackLayer(ColorScheme scheme, bool immersive) {
+    return ListenableBuilder(
+      listenable: AppSettings.rebuildNotifier,
+      builder: (context, _) {
+        final useMonet = AppSettings.instance.useMaterialYouForControls;
+        return ValueListenableBuilder<bool>(
+          valueListenable: _routeReadyNotifier,
+          builder: (context, routeReady, child) {
+            return TickerMode(enabled: routeReady, child: child!);
+          },
+          child: IconButtonTheme(
+            data: _playbackIconTheme(scheme, useMonet),
+            child: ChangeNotifierProvider.value(
+              value: PlayService.instance.playbackService,
+              builder: (context, _) =>
+                  _nowPlayingForeground(context, immersive),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _nowPlayingForeground(BuildContext context, bool immersive) {
+    if (immersive) return const _NowPlayingImmersivePage();
+    return ResponsiveBuilder2(
+      builder: (context, screenType) {
+        if (_usesCompactNowPlayingLayout(context, screenType)) {
+          return _NowPlayingSmallPage(cursorHidden: _cursorHiddenNotifier);
+        }
+        return const _NowPlayingLargePage();
+      },
+    );
+  }
+
+  IconButtonThemeData _playbackIconTheme(ColorScheme scheme, bool useMonet) {
+    return IconButtonThemeData(
+      style: ButtonStyle(
+        foregroundColor: useMonet
+            ? WidgetStatePropertyAll(scheme.primary)
+            : null,
+        backgroundColor: const WidgetStatePropertyAll(Colors.transparent),
+        overlayColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.pressed)) {
+            return scheme.onSecondaryContainer.withValues(alpha: 0.04);
+          }
+          if (states.contains(WidgetState.hovered) ||
+              states.contains(WidgetState.focused)) {
+            return scheme.onSecondaryContainer.withValues(alpha: 0.02);
+          }
+          return Colors.transparent;
+        }),
+      ),
+    );
+  }
+
+  Widget _topChrome() {
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      height: 56.0,
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12.0),
+          child: _topChromeVisibility(),
+        ),
+      ),
+    );
+  }
+
+  Widget _topChromeVisibility() {
+    return ValueListenableBuilder(
+      valueListenable: _cursorHiddenNotifier,
+      builder: (context, cursorHidden, _) {
+        return ValueListenableBuilder(
+          valueListenable: nowPlayingViewMode,
+          builder: (context, viewMode, _) {
+            final shouldHide =
+                cursorHidden || viewMode == NowPlayingViewMode.withPlaylist;
+            return AnimatedOpacity(
+              duration: MotionDuration.xFast,
+              curve: MotionCurve.standard,
+              opacity: shouldHide ? 0.0 : 1.0,
+              child: IgnorePointer(
+                ignoring: shouldHide,
+                child: _topChromeRow(),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _topChromeRow() {
+    return Row(
+      children: [
+        ResponsiveBuilder2(
+          builder: (context, screenType) {
+            if (!_usesCompactNowPlayingLayout(context, screenType)) {
+              return const SizedBox.shrink();
+            }
+            return Builder(
+              builder: (context) => IconButton(
+                tooltip: '侧边栏',
+                onPressed: () => Scaffold.of(context).openDrawer(),
+                icon: const Icon(Symbols.menu),
+              ),
+            );
+          },
+        ),
+        const NavBackBtn(),
+        const Expanded(child: DragToMoveArea(child: SizedBox.expand())),
+        const WindowControlls(),
+      ],
+    );
+  }
+
+  Widget _hiddenCursorLayer() {
+    return Positioned.fill(
+      child: ValueListenableBuilder<bool>(
+        valueListenable: _cursorHiddenNotifier,
+        builder: (context, cursorHidden, _) {
+          if (!cursorHidden) return const SizedBox.shrink();
+          return const MouseRegion(
+            cursor: SystemMouseCursors.none,
+            child: SizedBox.expand(),
+          );
+        },
+      ),
+    );
   }
 }
 
@@ -652,153 +697,7 @@ class _NowPlayingMoreActionState extends State<_NowPlayingMoreAction> {
       data: MenuThemeData(style: menuStyle),
       child: MenuAnchor(
         style: menuStyle,
-        menuChildren: [
-          ...List.generate(nowPlaying.splitedArtists.length, (i) {
-            final artistName = nowPlaying.splitedArtists[i];
-            final artist = AudioLibrary.instance.artistCollection[artistName];
-            return MenuItemButton(
-              style: menuItemStyle,
-              onPressed: artist == null
-                  ? null
-                  : () {
-                      context.pushReplacement(
-                        app_paths.ARTIST_DETAIL_PAGE,
-                        extra: artist,
-                      );
-                    },
-              leadingIcon: const Icon(Symbols.people),
-              child: Text(artistName),
-            );
-          }),
-          MenuItemButton(
-            style: menuItemStyle,
-            onPressed:
-                AudioLibrary.instance.albumCollection[nowPlaying.album] == null
-                ? null
-                : () {
-                    final album = AudioLibrary
-                        .instance
-                        .albumCollection[nowPlaying.album]!;
-                    context.pushReplacement(
-                      app_paths.ALBUM_DETAIL_PAGE,
-                      extra: album,
-                    );
-                  },
-            leadingIcon: const Icon(Symbols.album),
-            child: Text(nowPlaying.album),
-          ),
-          if (playlists.isEmpty)
-            MenuItemButton(
-              style: menuItemStyle,
-              onPressed: null,
-              leadingIcon: const Icon(Symbols.queue_music),
-              child: const Text('添加到歌单'),
-            )
-          else
-            Builder(
-              builder: (_) {
-                final playlistMemberships = playlists
-                    .map((playlist) => playlist.containsPath(nowPlaying.path))
-                    .toList(growable: false);
-                final isAddingNowPlaying = identical(
-                  _addingAudioToPlaylist,
-                  nowPlaying,
-                );
-                final canOpenAddMenu = canOpenSingleAudioAddToPlaylistMenu(
-                  hasAudio: true,
-                  isBusy: _addingAudioToPlaylist != null,
-                  alreadyInPlaylists: playlistMemberships,
-                );
-                if (!canOpenAddMenu) {
-                  return MenuItemButton(
-                    style: menuItemStyle,
-                    onPressed: null,
-                    leadingIcon: isAddingNowPlaying
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : Icon(
-                            playlistMemberships.every((alreadyIn) => alreadyIn)
-                                ? Symbols.check
-                                : Symbols.queue_music,
-                          ),
-                    child: Text(isAddingNowPlaying ? '添加中' : '添加到歌单'),
-                  );
-                }
-                return SubmenuButton(
-                  style: menuItemStyle,
-                  menuChildren: List.generate(playlists.length, (i) {
-                    final playlist = playlists[i];
-                    final isAddingTarget =
-                        identical(_addingAudioToPlaylist, nowPlaying) &&
-                        identical(_addingTargetPlaylist, playlist);
-                    final alreadyInPlaylist = playlistMemberships[i];
-                    return MenuItemButton(
-                      style: menuItemStyle,
-                      onPressed:
-                          _addingAudioToPlaylist == null && !alreadyInPlaylist
-                          ? () => _addNowPlayingToPlaylist(nowPlaying, playlist)
-                          : null,
-                      leadingIcon: isAddingTarget
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : Icon(
-                              alreadyInPlaylist
-                                  ? Symbols.check
-                                  : Symbols.queue_music,
-                            ),
-                      child: Text(playlist.name),
-                    );
-                  }),
-                  child: Text(isAddingNowPlaying ? '添加中' : '添加到歌单'),
-                );
-              },
-            ),
-          if (widget.showLyricSource)
-            MenuItemButton(
-              style: menuItemStyle,
-              onPressed: () {
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  showDialog<void>(
-                    context: context,
-                    builder: (context) =>
-                        SetLyricSourceDialog(audio: nowPlaying),
-                  );
-                });
-              },
-              leadingIcon: const Icon(Symbols.lyrics),
-              child: const Text('歌词来源'),
-            ),
-          MenuItemButton(
-            style: menuItemStyle,
-            onPressed: () {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                showDialog<void>(
-                  context: context,
-                  builder: (context) => const SleepTimerDialog(),
-                );
-              });
-            },
-            leadingIcon: const Icon(Symbols.bedtime),
-            child: const Text('睡眠定时'),
-          ),
-          MenuItemButton(
-            style: menuItemStyle,
-            onPressed: () {
-              context.pushReplacement(
-                app_paths.AUDIO_DETAIL_PAGE,
-                extra: nowPlaying,
-              );
-            },
-            leadingIcon: const Icon(Symbols.info),
-            child: const Text('详细信息'),
-          ),
-        ],
+        menuChildren: _menuChildren(context, nowPlaying, menuItemStyle),
         builder: (context, controller, _) => IconButton(
           tooltip: '更多',
           onPressed: () {
@@ -812,6 +711,185 @@ class _NowPlayingMoreActionState extends State<_NowPlayingMoreAction> {
           color: useMonet ? scheme.primary : scheme.onSurface,
         ),
       ),
+    );
+  }
+
+  List<Widget> _menuChildren(
+    BuildContext context,
+    Audio nowPlaying,
+    ButtonStyle menuItemStyle,
+  ) {
+    return [
+      ..._artistMenuItems(context, nowPlaying, menuItemStyle),
+      _albumMenuItem(context, nowPlaying, menuItemStyle),
+      _playlistMenuItem(nowPlaying, menuItemStyle),
+      if (widget.showLyricSource)
+        MenuItemButton(
+          style: menuItemStyle,
+          onPressed: () {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              showDialog<void>(
+                context: context,
+                builder: (context) => SetLyricSourceDialog(audio: nowPlaying),
+              );
+            });
+          },
+          leadingIcon: const Icon(Symbols.lyrics),
+          child: const Text('歌词来源'),
+        ),
+      MenuItemButton(
+        style: menuItemStyle,
+        onPressed: () {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            showDialog<void>(
+              context: context,
+              builder: (context) => const SleepTimerDialog(),
+            );
+          });
+        },
+        leadingIcon: const Icon(Symbols.bedtime),
+        child: const Text('睡眠定时'),
+      ),
+      MenuItemButton(
+        style: menuItemStyle,
+        onPressed: () {
+          context.pushReplacement(
+            app_paths.AUDIO_DETAIL_PAGE,
+            extra: nowPlaying,
+          );
+        },
+        leadingIcon: const Icon(Symbols.info),
+        child: const Text('详细信息'),
+      ),
+    ];
+  }
+
+  VoidCallback? _openArtist(BuildContext context, String artistName) {
+    final artist = AudioLibrary.instance.artistCollection[artistName];
+    if (artist == null) return null;
+    return () =>
+        context.pushReplacement(app_paths.ARTIST_DETAIL_PAGE, extra: artist);
+  }
+
+  List<Widget> _artistMenuItems(
+    BuildContext context,
+    Audio nowPlaying,
+    ButtonStyle menuItemStyle,
+  ) {
+    return [
+      for (final artistName in nowPlaying.splitedArtists)
+        MenuItemButton(
+          style: menuItemStyle,
+          onPressed: _openArtist(context, artistName),
+          leadingIcon: const Icon(Symbols.people),
+          child: Text(artistName),
+        ),
+    ];
+  }
+
+  Widget _albumMenuItem(
+    BuildContext context,
+    Audio nowPlaying,
+    ButtonStyle menuItemStyle,
+  ) {
+    final album = AudioLibrary.instance.albumCollection[nowPlaying.album];
+    return MenuItemButton(
+      style: menuItemStyle,
+      onPressed: album == null
+          ? null
+          : () {
+              context.pushReplacement(
+                app_paths.ALBUM_DETAIL_PAGE,
+                extra: album,
+              );
+            },
+      leadingIcon: const Icon(Symbols.album),
+      child: Text(nowPlaying.album),
+    );
+  }
+
+  Widget _playlistMenuItem(Audio nowPlaying, ButtonStyle menuItemStyle) {
+    if (playlists.isEmpty) {
+      return MenuItemButton(
+        style: menuItemStyle,
+        onPressed: null,
+        leadingIcon: const Icon(Symbols.queue_music),
+        child: const Text('添加到歌单'),
+      );
+    }
+    return Builder(builder: (_) => _playlistSubmenu(nowPlaying, menuItemStyle));
+  }
+
+  Widget _playlistAddIcon(bool isAdding, List<bool> memberships) {
+    if (isAdding) {
+      return const SizedBox(
+        width: 18,
+        height: 18,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      );
+    }
+    return Icon(
+      memberships.every((alreadyIn) => alreadyIn)
+          ? Symbols.check
+          : Symbols.queue_music,
+    );
+  }
+
+  Widget _playlistSubmenu(Audio nowPlaying, ButtonStyle menuItemStyle) {
+    final playlistMemberships = playlists
+        .map((playlist) => playlist.containsPath(nowPlaying.path))
+        .toList(growable: false);
+    final isAddingNowPlaying = identical(_addingAudioToPlaylist, nowPlaying);
+    final canOpenAddMenu = canOpenSingleAudioAddToPlaylistMenu(
+      hasAudio: true,
+      isBusy: _addingAudioToPlaylist != null,
+      alreadyInPlaylists: playlistMemberships,
+    );
+    if (!canOpenAddMenu) {
+      return MenuItemButton(
+        style: menuItemStyle,
+        onPressed: null,
+        leadingIcon: _playlistAddIcon(isAddingNowPlaying, playlistMemberships),
+        child: Text(isAddingNowPlaying ? '添加中' : '添加到歌单'),
+      );
+    }
+    return SubmenuButton(
+      style: menuItemStyle,
+      menuChildren: [
+        for (var i = 0; i < playlists.length; i++)
+          _playlistEntry(
+            nowPlaying,
+            playlists[i],
+            playlistMemberships[i],
+            menuItemStyle,
+          ),
+      ],
+      child: Text(isAddingNowPlaying ? '添加中' : '添加到歌单'),
+    );
+  }
+
+  Widget _playlistEntry(
+    Audio nowPlaying,
+    Playlist playlist,
+    bool alreadyInPlaylist,
+    ButtonStyle menuItemStyle,
+  ) {
+    final isAddingTarget =
+        identical(_addingAudioToPlaylist, nowPlaying) &&
+        identical(_addingTargetPlaylist, playlist);
+    return MenuItemButton(
+      style: menuItemStyle,
+      onPressed: _addingAudioToPlaylist == null && !alreadyInPlaylist
+          ? () => _addNowPlayingToPlaylist(nowPlaying, playlist)
+          : null,
+      leadingIcon: isAddingTarget
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : Icon(alreadyInPlaylist ? Symbols.check : Symbols.queue_music),
+      child: Text(playlist.name),
     );
   }
 }
@@ -875,39 +953,37 @@ class _NowPlayingPlaybackModeSwitchState
       builder: (context, _) {
         final shuffle = playbackService.shuffle.value;
         final playMode = playbackService.playMode.value;
-
-        final modeText = switch (true) {
-          _ when shuffle => '随机播放',
-          _ when playMode == PlayMode.singleLoop => '单曲循环',
-          _ => '顺序播放',
-        };
-
-        final icon = switch (true) {
-          _ when shuffle => Symbols.shuffle,
-          _ when playMode == PlayMode.singleLoop => Symbols.repeat_one,
-          _ => Symbols.repeat,
-        };
-
+        final visuals = _modeVisuals(shuffle, playMode);
         return IconButton(
-          tooltip: _isSaving ? '保存中' : modeText,
+          tooltip: _isSaving ? '保存中' : visuals.text,
           onPressed: _isSaving
               ? null
               : () => _changeMode(shuffle: shuffle, playMode: playMode),
-          icon: _isSaving
-              ? SizedBox(
-                  width: 22,
-                  height: 22,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: color,
-                  ),
-                )
-              : Icon(icon, fill: 0.0, weight: 400.0),
+          icon: _modeIcon(visuals.icon, color),
           color: color,
           disabledColor: disabledColor,
         );
       },
     );
+  }
+
+  Widget _modeIcon(IconData icon, Color color) {
+    if (!_isSaving) return Icon(icon, fill: 0.0, weight: 400.0);
+    return SizedBox(
+      width: 22,
+      height: 22,
+      child: CircularProgressIndicator(strokeWidth: 2, color: color),
+    );
+  }
+
+  ({String text, IconData icon}) _modeVisuals(bool shuffle, PlayMode playMode) {
+    if (shuffle) {
+      return (text: '随机播放', icon: Symbols.shuffle);
+    }
+    if (playMode == PlayMode.singleLoop) {
+      return (text: '单曲循环', icon: Symbols.repeat_one);
+    }
+    return (text: '顺序播放', icon: Symbols.repeat);
   }
 }
 
@@ -983,53 +1059,52 @@ class _DesktopLyricSwitchState extends State<_DesktopLyricSwitch> {
         final isKilling = desktopLyricService.isKilling;
 
         if (_isStarting && !isRunning) {
-          return IconButton(
-            tooltip: '正在打开桌面歌词...',
-            onPressed: null,
-            icon: const SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            color: useMonet ? scheme.primary : scheme.onSurface,
-          );
+          return _busyDesktopLyricButton(scheme, useMonet, '正在打开桌面歌词...');
         }
-
-        // 关闭过程中显示loading 并禁用按钮。
         if (isKilling) {
-          return IconButton(
-            tooltip: '正在关闭桌面歌词...',
-            onPressed: null,
-            icon: const SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(),
-            ),
-            color: useMonet ? scheme.primary : scheme.onSurface,
-          );
+          return _busyDesktopLyricButton(scheme, useMonet, '正在关闭桌面歌词...');
         }
-
-        // 激活态也只跟「主题色控件」：关=浅黑/深白，开才用主题色
-        final foregroundColor = useMonet ? scheme.primary : scheme.onSurface;
-
-        return IconButton(
-          tooltip: !isRunning
-              ? '打开桌面歌词'
-              : desktopLyricService.isLocked
-              ? '解锁桌面歌词'
-              : '关闭桌面歌词',
-          onPressed: !isRunning
-              ? _startDesktopLyric
-              : desktopLyricService.isLocked
-              ? desktopLyricService.sendUnlockMessage
-              : desktopLyricService.killDesktopLyric,
-          icon: Icon(
-            desktopLyricService.isLocked ? Symbols.lock : Symbols.toast,
-            fill: isRunning ? 1 : 0,
-          ),
-          color: foregroundColor,
-        );
+        return _desktopLyricButton(scheme, useMonet);
       },
+    );
+  }
+
+  Widget _busyDesktopLyricButton(
+    ColorScheme scheme,
+    bool useMonet,
+    String tooltip,
+  ) {
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: null,
+      icon: const SizedBox(
+        width: 20,
+        height: 20,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      ),
+      color: useMonet ? scheme.primary : scheme.onSurface,
+    );
+  }
+
+  Widget _desktopLyricButton(ColorScheme scheme, bool useMonet) {
+    final desktopLyricService = PlayService.instance.desktopLyricService;
+    final isRunning = desktopLyricService.isRunning;
+    return IconButton(
+      tooltip: !isRunning
+          ? '打开桌面歌词'
+          : desktopLyricService.isLocked
+          ? '解锁桌面歌词'
+          : '关闭桌面歌词',
+      onPressed: !isRunning
+          ? _startDesktopLyric
+          : desktopLyricService.isLocked
+          ? desktopLyricService.sendUnlockMessage
+          : desktopLyricService.killDesktopLyric,
+      icon: Icon(
+        desktopLyricService.isLocked ? Symbols.lock : Symbols.toast,
+        fill: isRunning ? 1 : 0,
+      ),
+      color: useMonet ? scheme.primary : scheme.onSurface,
     );
   }
 }
@@ -1134,221 +1209,9 @@ class _NowPlayingVolDspSliderState extends State<_NowPlayingVolDspSlider> {
 
     return MenuAnchor(
       style: appMenuStyle,
-      onOpen: () {
-        _isMenuOpen = true;
-        if (!isDragging) {
-          dragVolDsp.value = playbackService.volumeDsp;
-        }
-        int ticks = 0;
-        _systemVolBoostTimer?.cancel();
-        _systemVolBoostTimer = Timer.periodic(
-          const Duration(milliseconds: 120),
-          (_) async {
-            if (!mounted || isSystemDragging) return;
-            if (ticks++ > 25) {
-              _systemVolBoostTimer?.cancel();
-              return;
-            }
-            final v = await _readSystemVol(
-              timeout: const Duration(milliseconds: 500),
-            );
-            if (v != null && (v - dragSystemVol.value).abs() > 0.003) {
-              dragSystemVol.value = v;
-            }
-          },
-        );
-      },
-      onClose: () {
-        _isMenuOpen = false;
-        _systemVolBoostTimer?.cancel();
-      },
-      menuChildren: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
-          child: SizedBox(
-            width: menuWidth,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // System Volume Slider
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16.0, 4.0, 16.0, 8.0),
-                  child: Text(
-                    '系统音量',
-                    style: TextStyle(color: scheme.onSurface, fontSize: 12),
-                  ),
-                ),
-                SliderTheme(
-                  data: const SliderThemeData(
-                    showValueIndicator: ShowValueIndicator.never,
-                  ),
-                  child: ValueListenableBuilder(
-                    valueListenable: dragSystemVol,
-                    builder: (context, systemVolValue, _) {
-                      return LayoutBuilder(
-                        builder: (context, constraints) {
-                          const double padding = 24.0;
-                          final double trackWidth =
-                              constraints.maxWidth - (padding * 2);
-                          const double min = 0.0;
-                          const double max = 1.0;
-                          final double percent =
-                              (systemVolValue - min) / (max - min);
-                          final double leftOffset =
-                              padding + (trackWidth * percent);
-
-                          return MouseRegion(
-                            onEnter: (_) =>
-                                setState(() => _isSystemHovering = true),
-                            onExit: (_) =>
-                                setState(() => _isSystemHovering = false),
-                            child: Stack(
-                              clipBehavior: Clip.none,
-                              alignment: Alignment.centerLeft,
-                              children: [
-                                Slider(
-                                  thumbColor: scheme.secondary,
-                                  activeColor: scheme.secondary,
-                                  inactiveColor: scheme.outline,
-                                  min: min,
-                                  max: max,
-                                  value: systemVolValue,
-                                  onChangeStart: (value) {
-                                    isSystemDragging = true;
-                                    dragSystemVol.value = value;
-                                    systemVolumeService.set(value);
-                                    _triggerSystemIndicator();
-                                  },
-                                  onChanged: (value) {
-                                    dragSystemVol.value = value;
-                                    systemVolumeService.set(value);
-                                    if (isSystemDragging) {
-                                      _triggerSystemIndicator();
-                                    }
-                                  },
-                                  onChangeEnd: (value) {
-                                    isSystemDragging = false;
-                                    dragSystemVol.value = value;
-                                    systemVolumeService.set(value);
-                                  },
-                                ),
-                                if (_showSystemCustomIndicator ||
-                                    _isSystemHovering)
-                                  Positioned(
-                                    left: leftOffset - 24.0,
-                                    top: -40,
-                                    child: IgnorePointer(
-                                      child: _CustomValueIndicator(
-                                        value: systemVolValue * 100,
-                                        suffix: '%',
-                                        color: scheme.secondary,
-                                        textColor: scheme.onSecondary,
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          );
-                        },
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 8.0),
-                const Divider(height: 20),
-                const SizedBox(height: 4.0),
-                // App Volume Slider
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16.0, 4.0, 16.0, 8.0),
-                  child: Text(
-                    '应用音量',
-                    style: TextStyle(color: scheme.onSurface, fontSize: 12),
-                  ),
-                ),
-                SliderTheme(
-                  data: const SliderThemeData(
-                    showValueIndicator: ShowValueIndicator.never,
-                  ),
-                  child: ListenableBuilder(
-                    listenable: Listenable.merge([dragVolDsp, playbackService]),
-                    builder: (context, _) {
-                      final dragVolDspValue = dragVolDsp.value;
-                      final currentValue = isDragging
-                          ? dragVolDspValue
-                          : playbackService.volumeDsp;
-
-                      return LayoutBuilder(
-                        builder: (context, constraints) {
-                          const double padding = 24.0;
-                          final double trackWidth =
-                              constraints.maxWidth - (padding * 2);
-                          const double min = 0.0;
-                          const double max = 1.0;
-                          final double percent =
-                              (currentValue - min) / (max - min);
-                          final double leftOffset =
-                              padding + (trackWidth * percent);
-
-                          return MouseRegion(
-                            onEnter: (_) => setState(() => _isHovering = true),
-                            onExit: (_) => setState(() => _isHovering = false),
-                            child: Stack(
-                              clipBehavior: Clip.none,
-                              alignment: Alignment.centerLeft,
-                              children: [
-                                Slider(
-                                  thumbColor: scheme.primary,
-                                  activeColor: scheme.primary,
-                                  inactiveColor: scheme.outline,
-                                  min: min,
-                                  max: max,
-                                  value: currentValue,
-                                  onChangeStart: (value) {
-                                    isDragging = true;
-                                    dragVolDsp.value = value;
-                                    playbackService.setVolumeDsp(value);
-                                    _triggerIndicator();
-                                  },
-                                  onChanged: (value) {
-                                    dragVolDsp.value = value;
-                                    playbackService.setVolumeDsp(value);
-                                    // Also trigger indicator on drag
-                                    if (isDragging) _triggerIndicator();
-                                  },
-                                  onChangeEnd: (value) {
-                                    isDragging = false;
-                                    dragVolDsp.value = value;
-                                    playbackService.setVolumeDsp(value);
-                                  },
-                                ),
-                                if (_showCustomIndicator || _isHovering)
-                                  Positioned(
-                                    left:
-                                        leftOffset -
-                                        24.0, // Center the bubble (width 48)
-                                    top: -40,
-                                    child: IgnorePointer(
-                                      child: _CustomValueIndicator(
-                                        value: currentValue * 100,
-                                        suffix: '%',
-                                        color: scheme.primary,
-                                        textColor: scheme.onPrimary,
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          );
-                        },
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
+      onOpen: _onVolumeMenuOpen,
+      onClose: _onVolumeMenuClose,
+      menuChildren: [_volumeMenuBody(scheme, menuWidth)],
       builder: (context, controller, _) {
         return IconButton(
           tooltip: '音量',
@@ -1363,6 +1226,217 @@ class _NowPlayingVolDspSliderState extends State<_NowPlayingVolDspSlider> {
           color: useMonet ? scheme.primary : scheme.onSurface,
         );
       },
+    );
+  }
+
+  void _onVolumeMenuOpen() {
+    _isMenuOpen = true;
+    if (!isDragging) {
+      dragVolDsp.value = playbackService.volumeDsp;
+    }
+    int ticks = 0;
+    _systemVolBoostTimer?.cancel();
+    _systemVolBoostTimer = Timer.periodic(const Duration(milliseconds: 120), (
+      _,
+    ) async {
+      if (!mounted || isSystemDragging) return;
+      if (ticks++ > 25) {
+        _systemVolBoostTimer?.cancel();
+        return;
+      }
+      final v = await _readSystemVol(
+        timeout: const Duration(milliseconds: 500),
+      );
+      if (v != null && (v - dragSystemVol.value).abs() > 0.003) {
+        dragSystemVol.value = v;
+      }
+    });
+  }
+
+  void _onVolumeMenuClose() {
+    _isMenuOpen = false;
+    _systemVolBoostTimer?.cancel();
+  }
+
+  Widget _volumeMenuBody(ColorScheme scheme, double menuWidth) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
+      child: SizedBox(
+        width: menuWidth,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _labeledSlider(
+              scheme,
+              label: '系统音量',
+              child: _systemVolumeSlider(scheme),
+            ),
+            const SizedBox(height: 8.0),
+            const Divider(height: 20),
+            const SizedBox(height: 4.0),
+            _labeledSlider(
+              scheme,
+              label: '应用音量',
+              child: _appVolumeSlider(scheme),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _labeledSlider(
+    ColorScheme scheme, {
+    required String label,
+    required Widget child,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16.0, 4.0, 16.0, 8.0),
+          child: Text(
+            label,
+            style: TextStyle(color: scheme.onSurface, fontSize: 12),
+          ),
+        ),
+        SliderTheme(
+          data: const SliderThemeData(
+            showValueIndicator: ShowValueIndicator.never,
+          ),
+          child: child,
+        ),
+      ],
+    );
+  }
+
+  Widget _systemVolumeSlider(ColorScheme scheme) {
+    return ValueListenableBuilder(
+      valueListenable: dragSystemVol,
+      builder: (context, systemVolValue, _) {
+        return _volumeSliderStack(
+          scheme: scheme,
+          value: systemVolValue,
+          color: scheme.secondary,
+          textColor: scheme.onSecondary,
+          showBubble: _showSystemCustomIndicator || _isSystemHovering,
+          onHover: (hovering) => setState(() => _isSystemHovering = hovering),
+          onChangeStart: (value) {
+            isSystemDragging = true;
+            dragSystemVol.value = value;
+            systemVolumeService.set(value);
+            _triggerSystemIndicator();
+          },
+          onChanged: (value) {
+            dragSystemVol.value = value;
+            systemVolumeService.set(value);
+            if (isSystemDragging) _triggerSystemIndicator();
+          },
+          onChangeEnd: (value) {
+            isSystemDragging = false;
+            dragSystemVol.value = value;
+            systemVolumeService.set(value);
+          },
+        );
+      },
+    );
+  }
+
+  Widget _appVolumeSlider(ColorScheme scheme) {
+    return ListenableBuilder(
+      listenable: Listenable.merge([dragVolDsp, playbackService]),
+      builder: (context, _) {
+        final currentValue = isDragging
+            ? dragVolDsp.value
+            : playbackService.volumeDsp;
+        return _volumeSliderStack(
+          scheme: scheme,
+          value: currentValue,
+          color: scheme.primary,
+          textColor: scheme.onPrimary,
+          showBubble: _showCustomIndicator || _isHovering,
+          onHover: (hovering) => setState(() => _isHovering = hovering),
+          onChangeStart: (value) {
+            isDragging = true;
+            dragVolDsp.value = value;
+            playbackService.setVolumeDsp(value);
+            _triggerIndicator();
+          },
+          onChanged: (value) {
+            dragVolDsp.value = value;
+            playbackService.setVolumeDsp(value);
+            if (isDragging) _triggerIndicator();
+          },
+          onChangeEnd: (value) {
+            isDragging = false;
+            dragVolDsp.value = value;
+            playbackService.setVolumeDsp(value);
+          },
+        );
+      },
+    );
+  }
+
+  Widget _volumeSliderStack({
+    required ColorScheme scheme,
+    required double value,
+    required Color color,
+    required Color textColor,
+    required bool showBubble,
+    required ValueChanged<bool> onHover,
+    required ValueChanged<double> onChangeStart,
+    required ValueChanged<double> onChanged,
+    required ValueChanged<double> onChangeEnd,
+  }) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const padding = 24.0;
+        final trackWidth = constraints.maxWidth - (padding * 2);
+        final leftOffset = padding + trackWidth * value;
+        return MouseRegion(
+          onEnter: (_) => onHover(true),
+          onExit: (_) => onHover(false),
+          child: Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.centerLeft,
+            children: [
+              Slider(
+                thumbColor: color,
+                activeColor: color,
+                inactiveColor: scheme.outline,
+                min: 0,
+                max: 1,
+                value: value,
+                onChangeStart: onChangeStart,
+                onChanged: onChanged,
+                onChangeEnd: onChangeEnd,
+              ),
+              if (showBubble)
+                _volumeBubble(leftOffset, value, color, textColor),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _volumeBubble(
+    double leftOffset,
+    double value,
+    Color color,
+    Color textColor,
+  ) {
+    return Positioned(
+      left: leftOffset - 24.0,
+      top: -40,
+      child: IgnorePointer(
+        child: _CustomValueIndicator(
+          value: value * 100,
+          suffix: '%',
+          color: color,
+          textColor: textColor,
+        ),
+      ),
     );
   }
 }
@@ -1461,11 +1535,7 @@ class _GlowingIconButtonState extends State<_GlowingIconButton> {
 
   @override
   Widget build(BuildContext context) {
-    final showGlow = _isHovering;
     final scheme = Theme.of(context).colorScheme;
-    final isHoverOrPressed = _isHovering || _isPressed;
-    final hoverBgAlpha = _isPressed ? 0.04 : 0.02;
-
     return Tooltip(
       message: widget.tooltip,
       child: MouseRegion(
@@ -1476,57 +1546,64 @@ class _GlowingIconButtonState extends State<_GlowingIconButton> {
           onTapUp: (_) => setState(() => _isPressed = false),
           onTapCancel: () => setState(() => _isPressed = false),
           onTap: widget.onPressed,
-          child: SizedBox(
-            width: widget.size + 16,
-            height: widget.size + 16,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                // Hover Background
-                AnimatedOpacity(
-                  duration: MotionDuration.fast,
-                  curve: MotionCurve.standard,
-                  opacity: isHoverOrPressed ? 1.0 : 0.0,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: scheme.onSecondaryContainer.withValues(
-                        alpha: hoverBgAlpha,
-                      ),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                ),
-                // Glow Layer
-                if (showGlow)
-                  Positioned.fill(
-                    child: ImageFiltered(
-                      imageFilter: _GlowingIconButton._glowBlurFilter,
-                      child: Center(
-                        child: Icon(
-                          widget.iconData,
-                          size: widget.size,
-                          color: widget.glowColor,
-                          fill: 0.0,
-                          weight: 400.0,
-                        ),
-                      ),
-                    ),
-                  ),
-                // Icon Layer
-                AnimatedScale(
-                  duration: const Duration(milliseconds: 120),
-                  curve: const Cubic(0.4, 0, 0.2, 1),
-                  scale: _isPressed ? 0.97 : 1.0,
-                  child: Icon(
-                    widget.iconData,
-                    size: widget.size,
-                    color: widget.iconColor,
-                    fill: 0.0,
-                    weight: 400.0,
-                  ),
-                ),
-              ],
+          child: _glowStack(scheme),
+        ),
+      ),
+    );
+  }
+
+  Widget _glowStack(ColorScheme scheme) {
+    return SizedBox(
+      width: widget.size + 16,
+      height: widget.size + 16,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          _hoverBackdrop(scheme, BorderRadius.circular(8)),
+          if (_isHovering) _glowIconLayer(),
+          AnimatedScale(
+            duration: const Duration(milliseconds: 120),
+            curve: const Cubic(0.4, 0, 0.2, 1),
+            scale: _isPressed ? 0.97 : 1.0,
+            child: Icon(
+              widget.iconData,
+              size: widget.size,
+              color: widget.iconColor,
+              fill: 0.0,
+              weight: 400.0,
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _hoverBackdrop(ColorScheme scheme, BorderRadius borderRadius) {
+    final hoverBgAlpha = _isPressed ? 0.04 : 0.02;
+    return AnimatedOpacity(
+      duration: MotionDuration.fast,
+      curve: MotionCurve.standard,
+      opacity: (_isHovering || _isPressed) ? 1.0 : 0.0,
+      child: Container(
+        decoration: BoxDecoration(
+          color: scheme.onSecondaryContainer.withValues(alpha: hoverBgAlpha),
+          borderRadius: borderRadius,
+        ),
+      ),
+    );
+  }
+
+  Widget _glowIconLayer() {
+    return Positioned.fill(
+      child: ImageFiltered(
+        imageFilter: _GlowingIconButton._glowBlurFilter,
+        child: Center(
+          child: Icon(
+            widget.iconData,
+            size: widget.size,
+            color: widget.glowColor,
+            fill: 0.0,
+            weight: 400.0,
           ),
         ),
       ),
@@ -1627,84 +1704,77 @@ class _MorphPlayPauseButtonState extends State<_MorphPlayPauseButton>
         onTapDown: (_) => setState(() => _isPressed = true),
         onTapUp: (_) => setState(() => _isPressed = false),
         onTapCancel: () => setState(() => _isPressed = false),
-        child: Builder(
-          builder: (context) {
-            final isPlaying = _state == PlayerState.playing;
+        child: _morphButton(scheme),
+      ),
+    );
+  }
 
-            late final VoidCallback onPressed;
-            if (_state == PlayerState.playing) {
-              onPressed = widget.onPause;
-            } else if (_state == PlayerState.completed) {
-              onPressed = widget.onReplay;
-            } else {
-              onPressed = widget.onPlay;
-            }
+  VoidCallback get _morphAction {
+    if (_state == PlayerState.playing) return widget.onPause;
+    if (_state == PlayerState.completed) return widget.onReplay;
+    return widget.onPlay;
+  }
 
-            final showGlow = _isHovering;
-            final isHoverOrPressed = _isHovering || _isPressed;
-            final hoverBgAlpha = _isPressed ? 0.04 : 0.02;
-
-            return SizedBox(
-              width: widget.size + 16,
-              height: widget.size + 16,
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  // Hover Background
-                  AnimatedOpacity(
-                    duration: MotionDuration.fast,
-                    curve: MotionCurve.standard,
-                    opacity: isHoverOrPressed ? 1.0 : 0.0,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: scheme.onSecondaryContainer.withValues(
-                          alpha: hoverBgAlpha,
-                        ),
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                  ),
-                  if (showGlow)
-                    Positioned.fill(
-                      child: ImageFiltered(
-                        imageFilter: _MorphPlayPauseButton._glowBlurFilter,
-                        child: Center(
-                          child: AnimatedIcon(
-                            icon: AnimatedIcons.play_pause,
-                            progress: _controller,
-                            color: widget.glowColor,
-                            size: widget.size,
-                          ),
-                        ),
-                      ),
-                    ),
-                  AnimatedScale(
-                    duration: const Duration(milliseconds: 120),
-                    curve: const Cubic(0.4, 0, 0.2, 1),
-                    scale: _isPressed ? 0.97 : 1.0,
-                    child: IconButton(
-                      tooltip: isPlaying ? '暂停' : '播放',
-                      onPressed: onPressed,
-                      icon: AnimatedIcon(
-                        icon: AnimatedIcons.play_pause,
-                        progress: _controller,
-                        color: widget.color,
-                        size: widget.size,
-                      ),
-                      style: const ButtonStyle(
-                        backgroundColor: WidgetStatePropertyAll(
-                          Colors.transparent,
-                        ),
-                        overlayColor: WidgetStatePropertyAll(
-                          Colors.transparent,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+  Widget _morphButton(ColorScheme scheme) {
+    final isPlaying = _state == PlayerState.playing;
+    return SizedBox(
+      width: widget.size + 16,
+      height: widget.size + 16,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          _hoverCircle(scheme),
+          if (_isHovering) _morphGlow(),
+          AnimatedScale(
+            duration: const Duration(milliseconds: 120),
+            curve: const Cubic(0.4, 0, 0.2, 1),
+            scale: _isPressed ? 0.97 : 1.0,
+            child: IconButton(
+              tooltip: isPlaying ? '暂停' : '播放',
+              onPressed: _morphAction,
+              icon: AnimatedIcon(
+                icon: AnimatedIcons.play_pause,
+                progress: _controller,
+                color: widget.color,
+                size: widget.size,
               ),
-            );
-          },
+              style: const ButtonStyle(
+                backgroundColor: WidgetStatePropertyAll(Colors.transparent),
+                overlayColor: WidgetStatePropertyAll(Colors.transparent),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _hoverCircle(ColorScheme scheme) {
+    final hoverBgAlpha = _isPressed ? 0.04 : 0.02;
+    return AnimatedOpacity(
+      duration: MotionDuration.fast,
+      curve: MotionCurve.standard,
+      opacity: (_isHovering || _isPressed) ? 1.0 : 0.0,
+      child: Container(
+        decoration: BoxDecoration(
+          color: scheme.onSecondaryContainer.withValues(alpha: hoverBgAlpha),
+          shape: BoxShape.circle,
+        ),
+      ),
+    );
+  }
+
+  Widget _morphGlow() {
+    return Positioned.fill(
+      child: ImageFiltered(
+        imageFilter: _MorphPlayPauseButton._glowBlurFilter,
+        child: Center(
+          child: AnimatedIcon(
+            icon: AnimatedIcons.play_pause,
+            progress: _controller,
+            color: widget.glowColor,
+            size: widget.size,
+          ),
         ),
       ),
     );
@@ -1960,115 +2030,153 @@ class _NowPlayingSliderState extends State<_NowPlayingSlider>
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _PlaybackPositionText(
-                secondsListenable: livePositionSeconds,
-                color: scheme.onSurface,
-              ),
-              Text(
-                Duration(
-                  milliseconds: (nowPlayingLength * 1000).toInt(),
-                ).toStringMSS(),
-                style: TextStyle(
-                  color: scheme.onSurface,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 0.5,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
-              ),
-            ],
-          ),
-        ),
+        _timeRow(scheme, nowPlayingLength),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16.0),
           child: SizedBox(
             height: 24,
             child: LayoutBuilder(
-              builder: (context, constraints) {
-                final width = constraints.maxWidth;
-                final max = nowPlayingLength > 0 ? nowPlayingLength : 1.0;
-                return MouseRegion(
-                  onEnter: (_) => isHovering.value = true,
-                  onExit: (_) => isHovering.value = false,
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onHorizontalDragStart: (details) {
-                      isDragging.value = true;
-                      final value =
-                          (details.localPosition.dx / width).clamp(0.0, 1.0) *
-                          max;
-                      dragPosition.value = value;
-                      _syncLivePosition(value, force: true);
-                    },
-                    onHorizontalDragUpdate: (details) {
-                      final value =
-                          (details.localPosition.dx / width).clamp(0.0, 1.0) *
-                          max;
-                      dragPosition.value = value;
-                      _syncLivePosition(value, force: true);
-                    },
-                    onHorizontalDragEnd: (details) {
-                      isDragging.value = false;
-                      _syncLivePosition(dragPosition.value, force: true);
-                      playbackService.seek(dragPosition.value);
-                    },
-                    onTapDown: (details) {
-                      final value =
-                          (details.localPosition.dx / width).clamp(0.0, 1.0) *
-                          max;
-                      _syncLivePosition(value, force: true);
-                      playbackService.seek(value);
-                    },
-                    child: ListenableBuilder(
-                      listenable: Listenable.merge([isDragging, isHovering]),
-                      builder: (context, _) {
-                        final reduceMotion = MediaQuery.disableAnimationsOf(
-                          context,
-                        );
-                        final thumbRadius = isDragging.value
-                            ? 10.0
-                            : (isHovering.value ? 8.0 : 6.0);
-                        return TweenAnimationBuilder<double>(
-                          duration: reduceMotion
-                              ? Duration.zero
-                              : MotionDuration.xFast,
-                          curve: MotionCurve.entrance,
-                          tween: Tween(begin: thumbRadius, end: thumbRadius),
-                          builder: (context, radius, _) {
-                            return CustomPaint(
-                              painter: _ProgressSliderPainter(
-                                livePosition: livePosition,
-                                dragPosition: dragPosition,
-                                isDragging: isDragging,
-                                max: max,
-                                color: barColor,
-                                glowColor: barGlow,
-                                inactiveColor:
-                                    scheme.brightness == Brightness.dark
-                                    ? scheme.surfaceContainerHighest
-                                    : const Color(0x33FFFFFF),
-                                useWavyBar: useWavyBar,
-                                wavyController: _wavyController,
-                                thumbRadius: radius,
-                              ),
-                              size: Size(width, 24),
-                            );
-                          },
-                        );
-                      },
-                    ),
-                  ),
-                );
-              },
+              builder: (context, constraints) => _seekBar(
+                context,
+                scheme,
+                playbackService,
+                constraints.maxWidth,
+                nowPlayingLength > 0 ? nowPlayingLength : 1.0,
+                barColor,
+                barGlow,
+                useWavyBar,
+              ),
             ),
           ),
         ),
       ],
+    );
+  }
+
+  Widget _timeRow(ColorScheme scheme, double nowPlayingLength) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          _PlaybackPositionText(
+            secondsListenable: livePositionSeconds,
+            color: scheme.onSurface,
+          ),
+          Text(
+            Duration(
+              milliseconds: (nowPlayingLength * 1000).toInt(),
+            ).toStringMSS(),
+            style: TextStyle(
+              color: scheme.onSurface,
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0.5,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  double _seekValue(double dx, double width, double max) {
+    return (dx / width).clamp(0.0, 1.0) * max;
+  }
+
+  Widget _seekBar(
+    BuildContext context,
+    ColorScheme scheme,
+    PlaybackService playbackService,
+    double width,
+    double max,
+    Color barColor,
+    Color barGlow,
+    bool useWavyBar,
+  ) {
+    return MouseRegion(
+      onEnter: (_) => isHovering.value = true,
+      onExit: (_) => isHovering.value = false,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragStart: (details) {
+          isDragging.value = true;
+          final value = _seekValue(details.localPosition.dx, width, max);
+          dragPosition.value = value;
+          _syncLivePosition(value, force: true);
+        },
+        onHorizontalDragUpdate: (details) {
+          final value = _seekValue(details.localPosition.dx, width, max);
+          dragPosition.value = value;
+          _syncLivePosition(value, force: true);
+        },
+        onHorizontalDragEnd: (details) {
+          isDragging.value = false;
+          _syncLivePosition(dragPosition.value, force: true);
+          playbackService.seek(dragPosition.value);
+        },
+        onTapDown: (details) {
+          final value = _seekValue(details.localPosition.dx, width, max);
+          _syncLivePosition(value, force: true);
+          playbackService.seek(value);
+        },
+        child: _progressPaint(
+          scheme,
+          width,
+          max,
+          barColor,
+          barGlow,
+          useWavyBar,
+        ),
+      ),
+    );
+  }
+
+  Color _inactiveBarColor(ColorScheme scheme) {
+    if (scheme.brightness == Brightness.dark) {
+      return scheme.surfaceContainerHighest;
+    }
+    return const Color(0x33FFFFFF);
+  }
+
+  Widget _progressPaint(
+    ColorScheme scheme,
+    double width,
+    double max,
+    Color barColor,
+    Color barGlow,
+    bool useWavyBar,
+  ) {
+    return ListenableBuilder(
+      listenable: Listenable.merge([isDragging, isHovering]),
+      builder: (context, _) {
+        final reduceMotion = MediaQuery.disableAnimationsOf(context);
+        final thumbRadius = isDragging.value
+            ? 10.0
+            : (isHovering.value ? 8.0 : 6.0);
+        return TweenAnimationBuilder<double>(
+          duration: reduceMotion ? Duration.zero : MotionDuration.xFast,
+          curve: MotionCurve.entrance,
+          tween: Tween(begin: thumbRadius, end: thumbRadius),
+          builder: (context, radius, _) {
+            return CustomPaint(
+              painter: _ProgressSliderPainter(
+                livePosition: livePosition,
+                dragPosition: dragPosition,
+                isDragging: isDragging,
+                max: max,
+                color: barColor,
+                glowColor: barGlow,
+                inactiveColor: _inactiveBarColor(scheme),
+                useWavyBar: useWavyBar,
+                wavyController: _wavyController,
+                thumbRadius: radius,
+              ),
+              size: Size(width, 24),
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -2189,12 +2297,13 @@ class _ProgressSliderPainter extends CustomPainter {
       _paintWavy(canvas, size, fraction, wavyController.value * 2 * pi);
       return;
     }
+    _paintSolid(canvas, size, fraction);
+  }
 
-    const double height = 4.0;
-    final double centerY = size.height / 2;
-    final double activeWidth = size.width * fraction;
-
-    // Inactive track
+  void _paintSolid(Canvas canvas, Size size, double fraction) {
+    const height = 4.0;
+    final centerY = size.height / 2;
+    final activeWidth = size.width * fraction;
     _paint
       ..style = PaintingStyle.fill
       ..strokeCap = StrokeCap.round
@@ -2208,24 +2317,18 @@ class _ProgressSliderPainter extends CustomPainter {
       ),
       _paint,
     );
-
-    // Active track (Solid color, no animation/glow on the track itself to reduce visual noise)
-    final Rect activeRect = Rect.fromLTWH(
-      0,
-      centerY - height / 2,
-      activeWidth,
-      height,
-    );
     if (activeWidth > 0) {
       _paint
         ..color = color
         ..shader = null;
       canvas.drawRRect(
-        RRect.fromRectAndRadius(activeRect, const Radius.circular(height / 2)),
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(0, centerY - height / 2, activeWidth, height),
+          const Radius.circular(height / 2),
+        ),
         _paint,
       );
     }
-
     _paint
       ..shader = null
       ..color = color;
@@ -2260,26 +2363,8 @@ class _ProgressSliderPainter extends CustomPainter {
 
     if (activeWidth <= 0) return;
 
-    // Active track: sine wave
-    const double amplitude = 2.5;
-    const double wavelength = 44.0;
-    const double sampleStep = 1.5;
-    const double freq = 2 * pi / wavelength;
-
-    final wavePath = _wavePath..reset();
-    wavePath.moveTo(0, centerY + amplitude * sin(phase));
-    for (double x = 0.0; x <= activeWidth; x += sampleStep) {
-      wavePath.lineTo(x, centerY + amplitude * sin(phase + x * freq));
-    }
-    if (activeWidth > 0) {
-      wavePath.lineTo(
-        activeWidth,
-        centerY + amplitude * sin(phase + activeWidth * freq),
-      );
-    }
-
     paint.color = color;
-    canvas.drawPath(wavePath, paint);
+    canvas.drawPath(_wavePathFor(centerY, activeWidth, phase), paint);
 
     paint
       ..style = PaintingStyle.fill
@@ -2292,6 +2377,25 @@ class _ProgressSliderPainter extends CustomPainter {
       ..maskFilter = null
       ..color = color;
     canvas.drawCircle(Offset(activeWidth, centerY), thumbRadius, paint);
+  }
+
+  Path _wavePathFor(double centerY, double activeWidth, double phase) {
+    const amplitude = 2.5;
+    const wavelength = 44.0;
+    const sampleStep = 1.5;
+    const freq = 2 * pi / wavelength;
+    final wavePath = _wavePath..reset();
+    wavePath.moveTo(0, centerY + amplitude * sin(phase));
+    for (double x = 0.0; x <= activeWidth; x += sampleStep) {
+      wavePath.lineTo(x, centerY + amplitude * sin(phase + x * freq));
+    }
+    if (activeWidth > 0) {
+      wavePath.lineTo(
+        activeWidth,
+        centerY + amplitude * sin(phase + activeWidth * freq),
+      );
+    }
+    return wavePath;
   }
 
   @override
@@ -2369,21 +2473,41 @@ class __NowPlayingInfoState extends State<_NowPlayingInfo> {
     _hiResDebounceTimer?.cancel();
     final nextAudio = playbackService.nowPlaying;
     if (nextAudio == null) {
-      _removeRouteAnimationListener();
-      if (_hiResCoverPath != null || _immediateCoverPath != null) {
-        setState(() {
-          _hiResCover = null;
-          _hiResCoverPath = null;
-          _immediateCover = null;
-          _immediateCoverPath = null;
-          _cachedImmediateCoverImage = null;
-        });
-      }
+      _clearInfoCovers();
       return;
     }
-
     final path = nextAudio.path;
     final cachedLargeCover = nextAudio.cachedLargeCover;
+    _applyImmediateCover(nextAudio, path, cachedLargeCover);
+    if (_immediateCover == null) {
+      _loadSmallCover(nextAudio, token, path);
+    }
+    if (!_routeReady) {
+      _waitForRouteReady();
+      return;
+    }
+    _removeRouteAnimationListener();
+    if (cachedLargeCover != null) return;
+    _scheduleHiResCover(nextAudio, token, path);
+  }
+
+  void _clearInfoCovers() {
+    _removeRouteAnimationListener();
+    if (_hiResCoverPath == null && _immediateCoverPath == null) return;
+    setState(() {
+      _hiResCover = null;
+      _hiResCoverPath = null;
+      _immediateCover = null;
+      _immediateCoverPath = null;
+      _cachedImmediateCoverImage = null;
+    });
+  }
+
+  void _applyImmediateCover(
+    Audio nextAudio,
+    String path,
+    ImageProvider? cachedLargeCover,
+  ) {
     setState(() {
       _immediateCover = nextAudio.smallCoverBytes;
       _immediateCoverPath = path;
@@ -2393,42 +2517,29 @@ class __NowPlayingInfoState extends State<_NowPlayingInfo> {
           ? MemoryImage(_immediateCover!)
           : null;
     });
+  }
 
-    if (_immediateCover == null) {
-      nextAudio.loadSmallCoverBytes().then((bytes) {
+  void _loadSmallCover(Audio nextAudio, int token, String path) {
+    nextAudio.loadSmallCoverBytes().then((bytes) {
+      if (!mounted || token != _coverRequestToken) return;
+      if (playbackService.nowPlaying?.path != path) return;
+      setState(() {
+        _immediateCover = bytes;
+        _cachedImmediateCoverImage = bytes != null ? MemoryImage(bytes) : null;
+      });
+    });
+  }
+
+  void _scheduleHiResCover(Audio nextAudio, int token, String path) {
+    _hiResDebounceTimer = Timer(MotionDuration.xFast, () {
+      if (!mounted || token != _coverRequestToken) return;
+      nextAudio.largeCover.then((image) async {
         if (!mounted || token != _coverRequestToken) return;
         if (playbackService.nowPlaying?.path != path) return;
-        setState(() {
-          _immediateCover = bytes;
-          _cachedImmediateCoverImage = bytes != null
-              ? MemoryImage(bytes)
-              : null;
-        });
-      });
-    }
-
-    if (!_routeReady) {
-      _waitForRouteReady();
-      return;
-    }
-    _removeRouteAnimationListener();
-    if (cachedLargeCover != null) return;
-
-    _hiResDebounceTimer = Timer(MotionDuration.xFast, () {
-      if (!mounted) return;
-      if (token != _coverRequestToken) return;
-
-      nextAudio.largeCover.then((image) async {
-        if (!mounted) return;
-        if (token != _coverRequestToken) return;
-        if (playbackService.nowPlaying?.path != path) return;
-
         if (image != null) {
           await precacheImage(image, context);
         }
-
-        if (!mounted) return;
-        if (token != _coverRequestToken) return;
+        if (!mounted || token != _coverRequestToken) return;
         setState(() {
           _hiResCover = image;
           _hiResCoverPath = image == null ? null : path;
@@ -2467,144 +2578,191 @@ class __NowPlayingInfoState extends State<_NowPlayingInfo> {
     final heroEnabled = !playbackService.nowPlayingChangedRecently;
 
     return LayoutBuilder(
-      builder: (context, constraints) {
-        final viewportSize = MediaQuery.sizeOf(context);
-        final maxWidth = constraints.maxWidth.isFinite
-            ? constraints.maxWidth
-            : viewportSize.width;
-        final maxHeight = constraints.maxHeight.isFinite
-            ? constraints.maxHeight
-            : viewportSize.height;
-        final coverSize =
-            widget.coverSizeOverride ??
-            (widget.usePortraitCoverSize
-                ? _portraitNowPlayingCoverSize(
-                    maxWidth: maxWidth,
-                    maxHeight: maxHeight,
-                  )
-                : _responsiveNowPlayingCoverSize(
-                    maxWidth: maxWidth,
-                    maxHeight: maxHeight,
-                  ));
-        final textWidth = min(maxWidth, max(coverSize, min(maxWidth, 240.0)));
-        final placeholder = Icon(
-          Symbols.queue_music,
-          size: coverSize * 0.42,
-          color: scheme.onSurface.withAlpha(60),
-        );
+      builder: (context, constraints) => _infoBody(
+        scheme,
+        nowPlaying,
+        nowPlayingPath,
+        heroEnabled,
+        constraints,
+      ),
+    );
+  }
 
-        final currentCover = _hiResCoverPath == nowPlayingPath
-            ? _hiResCover
-            : null;
-        final fallbackCover =
-            currentCover == null &&
-                nowPlaying != null &&
-                _immediateCoverPath == nowPlayingPath
-            ? _cachedImmediateCoverImage
-            : null;
-        final coverWidget = currentCover == null && fallbackCover == null
-            ? Center(child: placeholder)
-            : Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12.0),
-                  boxShadow: [
-                    BoxShadow(
-                      color: scheme.shadow.withValues(alpha: 0.2),
-                      spreadRadius: 0,
-                      blurRadius: 16,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12.0),
-                  child: Image(
-                    image: currentCover ?? fallbackCover!,
-                    fit: BoxFit.cover,
-                    gaplessPlayback: true,
-                    filterQuality: _routeReady
-                        ? FilterQuality.high
-                        : FilterQuality.medium,
-                    errorBuilder: (_, _, _) =>
-                        FittedBox(fit: BoxFit.contain, child: placeholder),
-                  ),
-                ),
-              );
-
-        return AnimatedSwitcher(
-          duration: const Duration(milliseconds: 500),
-          switchInCurve: Curves.easeOutQuart,
-          switchOutCurve: Curves.easeInQuart,
-          transitionBuilder: (child, animation) {
-            final offsetAnimation = Tween<Offset>(
-              begin: const Offset(0, 0.08),
-              end: Offset.zero,
-            ).animate(animation);
-
-            final scaleAnimation = Tween<double>(
-              begin: 0.92,
-              end: 1.0,
-            ).animate(animation);
-
-            return FadeTransition(
-              opacity: animation,
-              child: SlideTransition(
-                position: offsetAnimation,
-                child: ScaleTransition(scale: scaleAnimation, child: child),
-              ),
-            );
-          },
-          child: Container(
-            key: ValueKey(nowPlayingPath ?? 'now_playing_none'),
-            alignment: Alignment.center,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                SizedBox(
-                  width: coverSize,
-                  height: coverSize,
-                  child: heroEnabled && nowPlayingPath != null
-                      ? Hero(tag: nowPlayingPath, child: coverWidget)
-                      : RepaintBoundary(child: coverWidget),
-                ),
-                const SizedBox(height: 24.0),
-                SizedBox(
-                  width: textWidth,
-                  child: Text(
-                    nowPlaying == null ? 'Pure Music' : nowPlaying.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: scheme.onSurface,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 24,
-                      height: 1.2,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                SizedBox(
-                  width: textWidth,
-                  child: Text(
-                    nowPlaying == null ? 'Enjoy Music' : nowPlaying.artist,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: scheme.onSurface.withValues(alpha: 0.7),
-                      fontSize: 16,
-                      height: 1.2,
-                    ),
-                  ),
-                ),
-              ],
+  Widget _infoBody(
+    ColorScheme scheme,
+    Audio? nowPlaying,
+    String? nowPlayingPath,
+    bool heroEnabled,
+    BoxConstraints constraints,
+  ) {
+    final coverSize = _coverSizeFor(constraints);
+    final textWidth = _textWidthFor(constraints, coverSize);
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 500),
+      switchInCurve: Curves.easeOutQuart,
+      switchOutCurve: Curves.easeInQuart,
+      transitionBuilder: _coverTransition,
+      child: Container(
+        key: ValueKey(nowPlayingPath ?? 'now_playing_none'),
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            _coverBox(scheme, nowPlayingPath, coverSize, heroEnabled),
+            const SizedBox(height: 24.0),
+            _infoText(
+              nowPlaying == null ? 'Pure Music' : nowPlaying.title,
+              scheme.onSurface,
+              24,
+              FontWeight.bold,
+              textWidth,
             ),
+            const SizedBox(height: 8),
+            _infoText(
+              nowPlaying == null ? 'Enjoy Music' : nowPlaying.artist,
+              scheme.onSurface.withValues(alpha: 0.7),
+              16,
+              FontWeight.normal,
+              textWidth,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  double _textWidthFor(BoxConstraints constraints, double coverSize) {
+    final maxWidth = constraints.maxWidth.isFinite
+        ? constraints.maxWidth
+        : MediaQuery.sizeOf(context).width;
+    return min(maxWidth, max(coverSize, min(maxWidth, 240.0)));
+  }
+
+  Widget _coverBox(
+    ColorScheme scheme,
+    String? nowPlayingPath,
+    double coverSize,
+    bool heroEnabled,
+  ) {
+    final image = _coverImage(scheme, nowPlayingPath, coverSize);
+    return SizedBox(
+      width: coverSize,
+      height: coverSize,
+      child: heroEnabled && nowPlayingPath != null
+          ? Hero(tag: nowPlayingPath, child: image)
+          : RepaintBoundary(child: image),
+    );
+  }
+
+  double _coverSizeFor(BoxConstraints constraints) {
+    final viewportSize = MediaQuery.sizeOf(context);
+    final maxWidth = constraints.maxWidth.isFinite
+        ? constraints.maxWidth
+        : viewportSize.width;
+    final maxHeight = constraints.maxHeight.isFinite
+        ? constraints.maxHeight
+        : viewportSize.height;
+    return widget.coverSizeOverride ??
+        (widget.usePortraitCoverSize
+            ? _portraitNowPlayingCoverSize(
+                maxWidth: maxWidth,
+                maxHeight: maxHeight,
+              )
+            : _responsiveNowPlayingCoverSize(
+                maxWidth: maxWidth,
+                maxHeight: maxHeight,
+              ));
+  }
+
+  Widget _coverTransition(Widget child, Animation<double> animation) {
+    final offsetAnimation = Tween<Offset>(
+      begin: const Offset(0, 0.08),
+      end: Offset.zero,
+    ).animate(animation);
+    final scaleAnimation = Tween<double>(
+      begin: 0.92,
+      end: 1.0,
+    ).animate(animation);
+    return FadeTransition(
+      opacity: animation,
+      child: SlideTransition(
+        position: offsetAnimation,
+        child: ScaleTransition(scale: scaleAnimation, child: child),
+      ),
+    );
+  }
+
+  Widget _coverImage(
+    ColorScheme scheme,
+    String? nowPlayingPath,
+    double coverSize,
+  ) {
+    final placeholder = Icon(
+      Symbols.queue_music,
+      size: coverSize * 0.42,
+      color: scheme.onSurface.withAlpha(60),
+    );
+    final currentCover = _hiResCoverPath == nowPlayingPath ? _hiResCover : null;
+    final fallbackCover =
+        currentCover == null &&
+            playbackService.nowPlaying != null &&
+            _immediateCoverPath == nowPlayingPath
+        ? _cachedImmediateCoverImage
+        : null;
+    if (currentCover == null && fallbackCover == null) {
+      return Center(child: placeholder);
+    }
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12.0),
+        boxShadow: [
+          BoxShadow(
+            color: scheme.shadow.withValues(alpha: 0.2),
+            spreadRadius: 0,
+            blurRadius: 16,
+            offset: const Offset(0, 8),
           ),
-        );
-      },
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12.0),
+        child: Image(
+          image: currentCover ?? fallbackCover!,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          filterQuality: _routeReady
+              ? FilterQuality.high
+              : FilterQuality.medium,
+          errorBuilder: (_, _, _) =>
+              FittedBox(fit: BoxFit.contain, child: placeholder),
+        ),
+      ),
+    );
+  }
+
+  Widget _infoText(
+    String text,
+    Color color,
+    double fontSize,
+    FontWeight weight,
+    double width,
+  ) {
+    return SizedBox(
+      width: width,
+      child: Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: color,
+          fontWeight: weight,
+          fontSize: fontSize,
+          height: 1.2,
+        ),
+      ),
     );
   }
 

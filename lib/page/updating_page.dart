@@ -40,7 +40,6 @@ class _UpdatingPageState extends State<UpdatingPage> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-
     return Scaffold(
       backgroundColor: scheme.surface,
       body: Center(
@@ -48,72 +47,89 @@ class _UpdatingPageState extends State<UpdatingPage> {
           future: _appDataDirFuture,
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
-              return Padding(
-                padding: const EdgeInsets.all(32.0),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 420.0),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      CircularProgressIndicator(color: scheme.primary),
-                      const SizedBox(height: 16.0),
-                      Text(
-                        '正在准备应用数据...',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: scheme.onSurface),
-                      ),
-                    ],
-                  ),
-                ),
-              );
+              return _PreparingView(scheme: scheme);
             }
-
             if (snapshot.hasError ||
                 !snapshot.hasData ||
                 snapshot.data == null) {
-              return Padding(
-                padding: const EdgeInsets.all(32.0),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 420.0),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.error_outline,
-                        color: scheme.error,
-                        size: 40.0,
-                      ),
-                      const SizedBox(height: 12.0),
-                      Text(
-                        '初始化失败',
-                        style: TextStyle(
-                          color: scheme.error,
-                          fontSize: 18.0,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 8.0),
-                      Text(
-                        '应用数据目录不可用，请查看日志',
-                        textAlign: TextAlign.center,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: scheme.onSurfaceVariant),
-                      ),
-                      const SizedBox(height: 16.0),
-                      FilledButton.icon(
-                        onPressed: WindowLifecycleService.instance.exitApp,
-                        icon: const Icon(Icons.close),
-                        label: const Text('退出'),
-                      ),
-                    ],
-                  ),
-                ),
-              );
+              return _InitErrorView(scheme: scheme, message: '应用数据目录不可用，请查看日志');
             }
-
             return UpdatingStateView(indexPath: snapshot.data!);
           },
+        ),
+      ),
+    );
+  }
+}
+
+class _PreparingView extends StatelessWidget {
+  const _PreparingView({required this.scheme});
+
+  final ColorScheme scheme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(32.0),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(color: scheme.primary),
+            const SizedBox(height: 16.0),
+            Text(
+              '正在准备应用数据...',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: scheme.onSurface),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InitErrorView extends StatelessWidget {
+  const _InitErrorView({required this.scheme, required this.message});
+
+  final ColorScheme scheme;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(32.0),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline, color: scheme.error, size: 40.0),
+            const SizedBox(height: 12.0),
+            Text(
+              '初始化失败',
+              style: TextStyle(
+                color: scheme.error,
+                fontSize: 18.0,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8.0),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: scheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 16.0),
+            FilledButton.icon(
+              onPressed: WindowLifecycleService.instance.exitApp,
+              icon: const Icon(Icons.close),
+              label: const Text('退出'),
+            ),
+          ],
         ),
       ),
     );
@@ -170,14 +186,22 @@ class _UpdatingStateViewState extends State<UpdatingStateView> {
         ).listen(
           (action) {
             if (action.message.isNotEmpty) {
-              log.library.info('legacy', '[update index] ${action.progress}: ${action.message}');
+              log.library.info(
+                'legacy',
+                '[update index] ${action.progress}: ${action.message}',
+              );
             }
             if (mounted) {
               setState(() => _latestAction = action);
             }
           },
           onError: (Object error, StackTrace stackTrace) {
-            log.library.error('legacy', '更新音乐库索引失败', error: error, stackTrace: stackTrace);
+            log.library.error(
+              'legacy',
+              '更新音乐库索引失败',
+              error: error,
+              stackTrace: stackTrace,
+            );
             if (mounted) {
               setState(() => _errorMessage = '音乐库索引失败，请查看日志');
             }
@@ -197,94 +221,68 @@ class _UpdatingStateViewState extends State<UpdatingStateView> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final errorMessage = _errorMessage;
-
+    if (errorMessage != null) {
+      return Center(
+        child: _InitErrorView(scheme: scheme, message: errorMessage),
+      );
+    }
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32.0),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 420.0),
-          child: errorMessage != null
-              ? Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.error_outline, color: scheme.error, size: 40.0),
-                    const SizedBox(height: 12.0),
-                    Text(
-                      '初始化失败',
-                      style: TextStyle(
-                        color: scheme.error,
-                        fontSize: 18.0,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 8.0),
-                    Text(
-                      errorMessage,
-                      textAlign: TextAlign.center,
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: scheme.onSurfaceVariant),
-                    ),
-                    const SizedBox(height: 16.0),
-                    FilledButton.icon(
-                      onPressed: WindowLifecycleService.instance.exitApp,
-                      icon: const Icon(Icons.close),
-                      label: const Text('退出'),
-                    ),
-                  ],
-                )
-              : Column(
-                  mainAxisSize: MainAxisSize.min,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    LinearProgressIndicator(
-                      value: _latestAction?.progress,
-                      backgroundColor: scheme.onSurface.withValues(alpha: 0.1),
-                      color: scheme.primary,
-                      borderRadius: BorderRadius.circular(2.0),
-                      minHeight: 8,
-                    ),
-                    const SizedBox(height: 16.0),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Flexible(
-                          child: Text(
-                            _latestAction?.message ?? '正在初始化...',
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: scheme.onSurface,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ),
-                        if (_latestAction != null) ...[
-                          const SizedBox(width: 8.0),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8.0,
-                              vertical: 4.0,
-                            ),
-                            decoration: BoxDecoration(
-                              color: scheme.surfaceContainerHighest,
-                              borderRadius: BorderRadius.circular(12.0),
-                            ),
-                            child: Text(
-                              '${(_latestAction!.progress.clamp(0.0, 1.0) * 100).round()}%',
-                              style: TextStyle(
-                                color: scheme.onSurfaceVariant,
-                                fontSize: 12.0,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ],
-                ),
+          child: _progressBody(scheme),
         ),
       ),
+    );
+  }
+
+
+  Widget _percentBadge(ColorScheme scheme) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12.0),
+      ),
+      child: Text(
+        '${(_latestAction!.progress.clamp(0.0, 1.0) * 100).round()}%',
+        style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12.0),
+      ),
+    );
+  }
+
+  Widget _progressBody(ColorScheme scheme) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        LinearProgressIndicator(
+          value: _latestAction?.progress,
+          backgroundColor: scheme.onSurface.withValues(alpha: 0.1),
+          color: scheme.primary,
+          borderRadius: BorderRadius.circular(2.0),
+          minHeight: 8,
+        ),
+        const SizedBox(height: 16.0),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Flexible(
+              child: Text(
+                _latestAction?.message ?? '正在初始化...',
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: scheme.onSurface, fontSize: 14),
+              ),
+            ),
+            if (_latestAction != null) ...[
+              const SizedBox(width: 8.0),
+              _percentBadge(scheme),
+            ],
+          ],
+        ),
+      ],
     );
   }
 }

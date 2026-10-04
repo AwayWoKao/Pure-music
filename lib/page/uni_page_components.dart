@@ -84,59 +84,66 @@ class SortMethodComboBox<T> extends StatelessWidget {
   Widget build(BuildContext context) {
     return MenuAnchor(
       style: appMenuStyle,
-      menuChildren: List.generate(sortMethods.length, (i) {
-        final sortMethod = sortMethods[i];
-        final selected = identical(sortMethod, currSortMethod);
-        return MenuItemButton(
-          style: const ButtonStyle(
-            padding: WidgetStatePropertyAll(EdgeInsets.all(12)),
-          ),
-          leadingIcon: Icon(sortMethod.icon),
-          trailingIcon: selected ? const Icon(Symbols.check) : null,
-          onPressed: selected ? null : () => setSortMethod(sortMethod),
-          child: Text(sortMethod.name),
-        );
-      }),
-      builder: (context, menuController, _) {
-        final scheme = Theme.of(context).colorScheme;
-        return FilledButton.tonal(
-          onPressed: () {
-            if (menuController.isOpen) {
-              menuController.close();
-            } else {
-              menuController.open();
-            }
-          },
-          style: ButtonStyle(
-            backgroundColor: WidgetStatePropertyAll(scheme.secondaryContainer),
-            foregroundColor: WidgetStatePropertyAll(
-              scheme.onSecondaryContainer,
-            ),
-            fixedSize: const WidgetStatePropertyAll(Size.fromHeight(40)),
-            padding: const WidgetStatePropertyAll(
-              EdgeInsets.symmetric(horizontal: 16),
-            ),
-            shape: WidgetStatePropertyAll(
-              RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Symbols.sort, size: 20),
-              const SizedBox(width: 4.0),
-              Text(currSortMethod.name),
-              const SizedBox(width: 4.0),
-              AnimatedRotation(
-                duration: MotionDuration.fast,
-                curve: MotionCurve.standard,
-                turns: menuController.isOpen ? 0.5 : 0.0,
-                child: const Icon(Symbols.arrow_drop_down, size: 20),
-              ),
-            ],
-          ),
-        );
+      menuChildren: [
+        for (final sortMethod in sortMethods) _sortMenuItem(sortMethod),
+      ],
+      builder: (context, menuController, _) =>
+          _sortAnchorButton(context, menuController),
+    );
+  }
+
+  Widget _sortMenuItem(SortMethodDesc<T> sortMethod) {
+    final selected = identical(sortMethod, currSortMethod);
+    return MenuItemButton(
+      style: const ButtonStyle(
+        padding: WidgetStatePropertyAll(EdgeInsets.all(12)),
+      ),
+      leadingIcon: Icon(sortMethod.icon),
+      trailingIcon: selected ? const Icon(Symbols.check) : null,
+      onPressed: selected ? null : () => setSortMethod(sortMethod),
+      child: Text(sortMethod.name),
+    );
+  }
+
+  Widget _sortAnchorButton(
+    BuildContext context,
+    MenuController menuController,
+  ) {
+    final scheme = Theme.of(context).colorScheme;
+    return FilledButton.tonal(
+      onPressed: () {
+        if (menuController.isOpen) {
+          menuController.close();
+        } else {
+          menuController.open();
+        }
       },
+      style: ButtonStyle(
+        backgroundColor: WidgetStatePropertyAll(scheme.secondaryContainer),
+        foregroundColor: WidgetStatePropertyAll(scheme.onSecondaryContainer),
+        fixedSize: const WidgetStatePropertyAll(Size.fromHeight(40)),
+        padding: const WidgetStatePropertyAll(
+          EdgeInsets.symmetric(horizontal: 16),
+        ),
+        shape: WidgetStatePropertyAll(
+          RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Symbols.sort, size: 20),
+          const SizedBox(width: 4.0),
+          Text(currSortMethod.name),
+          const SizedBox(width: 4.0),
+          AnimatedRotation(
+            duration: MotionDuration.fast,
+            curve: MotionCurve.standard,
+            turns: menuController.isOpen ? 0.5 : 0.0,
+            child: const Icon(Symbols.arrow_drop_down, size: 20),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -306,6 +313,16 @@ class _AddAllToPlaylistState extends State<AddAllToPlaylist> {
     }
   }
 
+
+  List<Playlist> _targetPlaylists() {
+    final excluded = widget.excludedPlaylist;
+    if (excluded == null) return playlists;
+    return [
+      for (final playlist in playlists)
+        if (!identical(playlist, excluded)) playlist,
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -314,78 +331,90 @@ class _AddAllToPlaylistState extends State<AddAllToPlaylist> {
         final selectedAudios = _uniqueAudiosByPath(
           widget.multiSelectController.selected,
         );
-        final targetPlaylists = widget.excludedPlaylist == null
-            ? playlists
-            : playlists
-                  .where(
-                    (playlist) => !identical(playlist, widget.excludedPlaylist),
-                  )
-                  .toList(growable: false);
+        final targetPlaylists = _targetPlaylists();
         final addableCounts = targetPlaylists
             .map((playlist) => _addableAudioCount(playlist, selectedAudios))
             .toList(growable: false);
         return MenuAnchor(
           style: appMenuStyle,
-          menuChildren: List.generate(targetPlaylists.length, (i) {
-            final playlist = targetPlaylists[i];
-            final isAdding = identical(_addingPlaylist, playlist);
-            final addableCount = addableCounts[i];
-            final allAlreadyAdded =
-                selectedAudios.isNotEmpty && addableCount == 0;
-            return MenuItemButton(
-              style: const ButtonStyle(
-                padding: WidgetStatePropertyAll(
-                  EdgeInsets.symmetric(horizontal: 20),
-                ),
+          menuChildren: [
+            for (var i = 0; i < targetPlaylists.length; i++)
+              _playlistMenuItem(
+                targetPlaylists[i],
+                addableCounts[i],
+                selectedAudios,
               ),
-              onPressed: _addingPlaylist == null && addableCount > 0
-                  ? () => _addToPlaylist(playlist)
-                  : null,
-              leadingIcon: isAdding
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Icon(allAlreadyAdded ? Symbols.check : Symbols.queue_music),
-              child: Text(playlist.name),
-            );
-          }),
-          builder: (context, controller, _) {
-            final enabled = canOpenAddToPlaylistMenu(
-              hasSelectedAudios: selectedAudios.isNotEmpty,
-              isAdding: _addingPlaylist != null,
-              addableCounts: addableCounts,
-            );
-            final isAdding = _addingPlaylist != null;
-            return FilledButton.icon(
-              onPressed: enabled
-                  ? () {
-                      if (controller.isOpen) {
-                        controller.close();
-                      } else {
-                        controller.open();
-                      }
-                    }
-                  : null,
-              icon: isAdding
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Symbols.add, size: 20),
-              label: Text(isAdding ? '添加中' : widget.label),
-              style: const ButtonStyle(
-                fixedSize: WidgetStatePropertyAll(Size.fromHeight(40)),
-                padding: WidgetStatePropertyAll(
-                  EdgeInsets.symmetric(horizontal: 16),
-                ),
-              ),
-            );
-          },
+          ],
+          builder: (context, controller, _) => _addMenuButton(
+            controller,
+            selectedAudios,
+            addableCounts,
+            widget.label,
+          ),
         );
       },
+    );
+  }
+
+  Widget _playlistMenuItem(
+    Playlist playlist,
+    int addableCount,
+    List<Audio> selectedAudios,
+  ) {
+    final isAdding = identical(_addingPlaylist, playlist);
+    final allAlreadyAdded = selectedAudios.isNotEmpty && addableCount == 0;
+    return MenuItemButton(
+      style: const ButtonStyle(
+        padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 20)),
+      ),
+      onPressed: _addingPlaylist == null && addableCount > 0
+          ? () => _addToPlaylist(playlist)
+          : null,
+      leadingIcon: isAdding
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : Icon(allAlreadyAdded ? Symbols.check : Symbols.queue_music),
+      child: Text(playlist.name),
+    );
+  }
+
+  Widget _addMenuButton(
+    MenuController controller,
+    List<Audio> selectedAudios,
+    List<int> addableCounts,
+    String label,
+  ) {
+    final enabled = canOpenAddToPlaylistMenu(
+      hasSelectedAudios: selectedAudios.isNotEmpty,
+      isAdding: _addingPlaylist != null,
+      addableCounts: addableCounts,
+    );
+    final isAdding = _addingPlaylist != null;
+    return FilledButton.icon(
+      onPressed: enabled
+          ? () {
+              if (controller.isOpen) {
+                controller.close();
+              } else {
+                controller.open();
+              }
+            }
+          : null,
+      icon: isAdding
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Symbols.add, size: 20),
+      label: Text(isAdding ? '添加中' : label),
+      style: const ButtonStyle(
+        fixedSize: WidgetStatePropertyAll(Size.fromHeight(40)),
+        padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 16)),
+      ),
     );
   }
 }
@@ -453,66 +482,75 @@ class _AddSelectedAudiosToPlaylistState<T>
             .toList(growable: false);
         return MenuAnchor(
           style: appMenuStyle,
-          menuChildren: List.generate(playlists.length, (i) {
-            final playlist = playlists[i];
-            final isAdding = identical(_addingPlaylist, playlist);
-            final addableCount = addableCounts[i];
-            final allAlreadyAdded =
-                selectedAudios.isNotEmpty && addableCount == 0;
-            return MenuItemButton(
-              style: const ButtonStyle(
-                padding: WidgetStatePropertyAll(
-                  EdgeInsets.symmetric(horizontal: 20),
-                ),
-              ),
-              onPressed: _addingPlaylist == null && addableCount > 0
-                  ? () => _addToPlaylist(playlist)
-                  : null,
-              leadingIcon: isAdding
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Icon(allAlreadyAdded ? Symbols.check : Symbols.queue_music),
-              child: Text(playlist.name),
-            );
-          }),
-          builder: (context, controller, _) {
-            final enabled = canOpenAddToPlaylistMenu(
-              hasSelectedAudios: selectedAudios.isNotEmpty,
-              isAdding: _addingPlaylist != null,
-              addableCounts: addableCounts,
-            );
-            final isAdding = _addingPlaylist != null;
-            return FilledButton.icon(
-              onPressed: enabled
-                  ? () {
-                      if (controller.isOpen) {
-                        controller.close();
-                      } else {
-                        controller.open();
-                      }
-                    }
-                  : null,
-              icon: isAdding
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Symbols.add, size: 20),
-              label: Text(isAdding ? '添加中' : '添加到歌单'),
-              style: const ButtonStyle(
-                fixedSize: WidgetStatePropertyAll(Size.fromHeight(40)),
-                padding: WidgetStatePropertyAll(
-                  EdgeInsets.symmetric(horizontal: 16),
-                ),
-              ),
-            );
-          },
+          menuChildren: [
+            for (var i = 0; i < playlists.length; i++)
+              _playlistMenuItem(playlists[i], addableCounts[i], selectedAudios),
+          ],
+          builder: (context, controller, _) =>
+              _addMenuButton(controller, selectedAudios, addableCounts),
         );
       },
+    );
+  }
+
+  Widget _playlistMenuItem(
+    Playlist playlist,
+    int addableCount,
+    List<Audio> selectedAudios,
+  ) {
+    final isAdding = identical(_addingPlaylist, playlist);
+    final allAlreadyAdded = selectedAudios.isNotEmpty && addableCount == 0;
+    return MenuItemButton(
+      style: const ButtonStyle(
+        padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 20)),
+      ),
+      onPressed: _addingPlaylist == null && addableCount > 0
+          ? () => _addToPlaylist(playlist)
+          : null,
+      leadingIcon: isAdding
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : Icon(allAlreadyAdded ? Symbols.check : Symbols.queue_music),
+      child: Text(playlist.name),
+    );
+  }
+
+  Widget _addMenuButton(
+    MenuController controller,
+    List<Audio> selectedAudios,
+    List<int> addableCounts,
+  ) {
+    final enabled = canOpenAddToPlaylistMenu(
+      hasSelectedAudios: selectedAudios.isNotEmpty,
+      isAdding: _addingPlaylist != null,
+      addableCounts: addableCounts,
+    );
+    final isAdding = _addingPlaylist != null;
+    return FilledButton.icon(
+      onPressed: enabled
+          ? () {
+              if (controller.isOpen) {
+                controller.close();
+              } else {
+                controller.open();
+              }
+            }
+          : null,
+      icon: isAdding
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Symbols.add, size: 20),
+      label: Text(isAdding ? '添加中' : '添加到歌单'),
+      style: const ButtonStyle(
+        fixedSize: WidgetStatePropertyAll(Size.fromHeight(40)),
+        padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 16)),
+      ),
     );
   }
 }
@@ -529,6 +567,19 @@ class MultiSelectPlaySelectedAudios<T> extends StatelessWidget {
   final List<Audio> Function(Set<T> selected) toAudios;
   final bool shuffle;
 
+
+  void _playSelected(List<Audio> audios) {
+    if (shuffle) {
+      PlayService.instance.playbackService.shuffleAndPlay(audios);
+      showTextOnSnackBar('已随机播放', variant: ToastVariant.success);
+    } else {
+      PlayService.instance.playbackService.play(0, audios);
+      showTextOnSnackBar('已开始播放', variant: ToastVariant.success);
+    }
+    multiSelectController.useMultiSelectView(false);
+    multiSelectController.clear();
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -538,20 +589,7 @@ class MultiSelectPlaySelectedAudios<T> extends StatelessWidget {
           toAudios(multiSelectController.selected),
         );
         return FilledButton.icon(
-          onPressed: audios.isEmpty
-              ? null
-              : () {
-                  if (shuffle) {
-                    PlayService.instance.playbackService.shuffleAndPlay(audios);
-                    showTextOnSnackBar('已随机播放', variant: ToastVariant.success);
-                  } else {
-                    PlayService.instance.playbackService.play(0, audios);
-                    showTextOnSnackBar('已开始播放', variant: ToastVariant.success);
-                  }
-
-                  multiSelectController.useMultiSelectView(false);
-                  multiSelectController.clear();
-                },
+          onPressed: audios.isEmpty ? null : () => _playSelected(audios),
           icon: Icon(shuffle ? Symbols.shuffle : Symbols.play_arrow, size: 20),
           label: Text(shuffle ? '随机播放' : '播放'),
           style: const ButtonStyle(
@@ -576,6 +614,15 @@ class MultiSelectSelectOrClearAll<T> extends StatelessWidget {
     required this.contentList,
   });
 
+
+  void _toggleSelectAll(bool allSelected) {
+    if (allSelected) {
+      multiSelectController.clear();
+    } else {
+      multiSelectController.selectAll(contentList);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -589,13 +636,7 @@ class MultiSelectSelectOrClearAll<T> extends StatelessWidget {
           tooltip: allSelected ? '取消全选' : '全选',
           onPressed: contentList.isEmpty
               ? null
-              : () {
-                  if (allSelected) {
-                    multiSelectController.clear();
-                  } else {
-                    multiSelectController.selectAll(contentList);
-                  }
-                },
+              : () => _toggleSelectAll(allSelected),
           iconSize: 20,
           icon: Icon(allSelected ? Symbols.deselect : Symbols.select_all),
           style: ButtonStyle(

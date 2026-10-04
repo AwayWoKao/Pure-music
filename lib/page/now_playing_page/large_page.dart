@@ -7,217 +7,244 @@ class _NowPlayingLargePage extends StatelessWidget {
   Widget build(BuildContext context) {
     final useMonet = AppSettings.instance.useMaterialYouForControls;
     final scheme = Theme.of(context).colorScheme;
-    final playbackService = PlayService.instance.playbackService;
     final controlColor = useMonet ? scheme.primary : scheme.onSurface;
-    final disabledColor = controlColor.withValues(alpha: 0.38);
-    const spacer = SizedBox(width: 8.0);
     return Column(
       children: [
+        Expanded(child: _stage()),
+        _bottomArea(context, controlColor, useMonet),
+      ],
+    );
+  }
+
+  Widget _stage() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24.0, 8.0, 24.0, 8.0),
+      child: LayoutBuilder(
+        builder: (context, constraints) => _stageRow(context, constraints),
+      ),
+    );
+  }
+
+
+  Widget _stageRow(BuildContext context, BoxConstraints constraints) {
+    final immersiveViewportHeight = MediaQuery.sizeOf(context).height - 16.0;
+    final currentLineAlignment =
+        (immersiveViewportHeight * 0.45 / constraints.maxHeight)
+            .clamp(0.0, 1.0)
+            .toDouble();
+    final coverSize = _responsiveNowPlayingCoverSize(
+      maxWidth: constraints.maxWidth / 2,
+      maxHeight: immersiveViewportHeight,
+    );
+    return Row(
+      children: [
         Expanded(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(24.0, 8.0, 24.0, 8.0),
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final immersiveViewportHeight =
-                    MediaQuery.sizeOf(context).height - 16.0;
-                final currentLineAlignment =
-                    (immersiveViewportHeight * 0.45 / constraints.maxHeight)
-                        .clamp(0.0, 1.0)
-                        .toDouble();
-                // 封面尺寸按整个窗口高度计算，与横屏沉浸模式一致
-                final coverSize = _responsiveNowPlayingCoverSize(
-                  maxWidth: constraints.maxWidth / 2,
-                  maxHeight: immersiveViewportHeight,
-                );
-                return Row(
-                  children: [
-                    // 左侧：封面+ 歌曲信息 (50%) - 封面垂直居中于整个窗口
-                    Expanded(
-                      child: Transform.translate(
-                        offset: const Offset(
-                          0,
-                          _normalLandscapeBottomAreaHeight / 2,
-                        ),
-                        child: Center(
-                          child: _NowPlayingInfo(coverSizeOverride: coverSize),
-                        ),
-                      ),
-                    ),
-                    // 右侧：歌词区域(50%)
-                    Expanded(
-                      child: ValueListenableBuilder(
-                        valueListenable: nowPlayingViewMode,
-                        builder: (context, value, _) => AnimatedSwitcher(
-                          duration: MotionDuration.base,
-                          switchInCurve: MotionCurve.standard,
-                          switchOutCurve: MotionCurve.standard,
-                          child: switch (value) {
-                            NowPlayingViewMode.withPlaylist =>
-                              const CurrentPlaylistView(),
-                            _ => Padding(
-                              padding: const EdgeInsets.only(right: 8.0),
-                              child: VerticalLyricView(
-                                enableEdgeSpacer: true,
-                                currentLineAlignment: currentLineAlignment,
-                              ),
-                            ),
-                          },
-                        ),
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
+          child: Transform.translate(
+            offset: const Offset(0, _normalLandscapeBottomAreaHeight / 2),
+            child: Center(child: _NowPlayingInfo(coverSizeOverride: coverSize)),
           ),
         ),
-        Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _NowPlayingSlider(
-              mode: MediaQuery.of(context).orientation == Orientation.portrait
-                  ? NowPlayingMode.portrait
-                  : NowPlayingMode.landscape,
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(
-                          tooltip: '收起播放页',
-                          onPressed: () {
-                            if (context.canPop()) context.pop();
-                          },
-                          icon: const Icon(Symbols.keyboard_arrow_down),
-                          color: controlColor,
-                        ),
-                        spacer,
-                        const _DesktopLyricSwitch(),
-                        spacer,
-                        const _ExclusiveModeSwitch(),
-                        spacer,
-                        IconButton(
-                          tooltip: '均衡器',
-                          onPressed: () {
-                            showDialog(
-                              context: context,
-                              builder: (context) => const EqualizerDialog(),
-                            );
-                          },
-                          icon: const Icon(Symbols.graphic_eq),
-                          color: useMonet
-                              ? Theme.of(context).colorScheme.primary
-                              : Theme.of(context).colorScheme.onSurface,
-                        ),
-                      ],
-                    ),
-                  ),
-                  _AutoHidingControlBar(
-                    child: ListenableBuilder(
-                      listenable: playbackService.nowPlayingNotifier,
-                      builder: (context, _) {
-                        final hasNowPlaying =
-                            playbackService.nowPlaying != null;
+        Expanded(child: _rightPane(currentLineAlignment)),
+      ],
+    );
+  }
 
-                        return Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const _NowPlayingPlaybackModeSwitch(),
-                            spacer,
-                            IconButton(
-                              tooltip: hasNowPlaying ? '上一曲' : '暂无正在播放',
-                              onPressed: hasNowPlaying
-                                  ? playbackService.lastAudio
-                                  : null,
-                              icon: const Icon(
-                                Symbols.skip_previous,
-                                fill: 1.0,
-                              ),
-                              iconSize: 28,
-                              color: controlColor,
-                              disabledColor: disabledColor,
-                            ),
-                            spacer,
-                            ValueListenableBuilder<PlayerState>(
-                              valueListenable:
-                                  playbackService.playerStateNotifier,
-                              builder: (context, state, _) {
-                                final isPlaying = state == PlayerState.playing;
-                                final isCompleted =
-                                    state == PlayerState.completed;
-
-                                return IconButton(
-                                  tooltip: hasNowPlaying
-                                      ? (isPlaying ? '暂停' : '播放')
-                                      : '暂无正在播放',
-                                  onPressed: hasNowPlaying
-                                      ? () {
-                                          if (isPlaying) {
-                                            playbackService.pause();
-                                          } else if (isCompleted) {
-                                            playbackService.playAgain();
-                                          } else {
-                                            playbackService.start();
-                                          }
-                                        }
-                                      : null,
-                                  icon: Icon(
-                                    isPlaying
-                                        ? Symbols.pause
-                                        : Symbols.play_arrow,
-                                    fill: 1.0,
-                                  ),
-                                  iconSize: 36,
-                                  color: controlColor,
-                                  disabledColor: disabledColor,
-                                );
-                              },
-                            ),
-                            spacer,
-                            IconButton(
-                              tooltip: hasNowPlaying ? '下一曲' : '暂无正在播放',
-                              onPressed: hasNowPlaying
-                                  ? playbackService.nextAudio
-                                  : null,
-                              icon: const Icon(Symbols.skip_next, fill: 1.0),
-                              iconSize: 28,
-                              color: controlColor,
-                              disabledColor: disabledColor,
-                            ),
-                            spacer,
-                            const _NowPlayingLargeViewSwitch(),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-                  const Align(
-                    alignment: Alignment.centerRight,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _NowPlayingVolDspSlider(),
-                        spacer,
-                        NowPlayingPitchControl(),
-                        spacer,
-                        SetLyricSourceBtn(),
-                        spacer,
-                        _NowPlayingMoreAction(showLyricSource: false),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
+  Widget _rightPane(double currentLineAlignment) {
+    return ValueListenableBuilder(
+      valueListenable: nowPlayingViewMode,
+      builder: (context, value, _) => AnimatedSwitcher(
+        duration: MotionDuration.base,
+        switchInCurve: MotionCurve.standard,
+        switchOutCurve: MotionCurve.standard,
+        child: switch (value) {
+          NowPlayingViewMode.withPlaylist => const CurrentPlaylistView(),
+          _ => Padding(
+            padding: const EdgeInsets.only(right: 8.0),
+            child: VerticalLyricView(
+              enableEdgeSpacer: true,
+              currentLineAlignment: currentLineAlignment,
             ),
-          ],
+          ),
+        },
+      ),
+    );
+  }
+
+  Widget _bottomArea(BuildContext context, Color controlColor, bool useMonet) {
+    final playbackService = PlayService.instance.playbackService;
+    final disabledColor = controlColor.withValues(alpha: 0.38);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _NowPlayingSlider(
+          mode: MediaQuery.of(context).orientation == Orientation.portrait
+              ? NowPlayingMode.portrait
+              : NowPlayingMode.landscape,
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+          child: _controlStack(context, playbackService, controlColor, useMonet, disabledColor),
         ),
       ],
+    );
+  }
+
+
+  Widget _controlStack(
+    BuildContext context,
+    PlaybackService playbackService,
+    Color controlColor,
+    bool useMonet,
+    Color disabledColor,
+  ) {
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: _leftButtons(context, controlColor, useMonet),
+        ),
+        _AutoHidingControlBar(
+          child: ListenableBuilder(
+            listenable: playbackService.nowPlayingNotifier,
+            builder: (context, _) =>
+                _transport(playbackService, controlColor, disabledColor),
+          ),
+        ),
+        Align(alignment: Alignment.centerRight, child: _rightTools()),
+      ],
+    );
+  }
+
+  Widget _rightTools() {
+    return const Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _NowPlayingVolDspSlider(),
+        SizedBox(width: 8.0),
+        NowPlayingPitchControl(),
+        SizedBox(width: 8.0),
+        SetLyricSourceBtn(),
+        SizedBox(width: 8.0),
+        _NowPlayingMoreAction(showLyricSource: false),
+      ],
+    );
+  }
+
+  Widget _leftButtons(BuildContext context, Color controlColor, bool useMonet) {
+    const spacer = SizedBox(width: 8.0);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          tooltip: '收起播放页',
+          onPressed: () {
+            if (context.canPop()) context.pop();
+          },
+          icon: const Icon(Symbols.keyboard_arrow_down),
+          color: controlColor,
+        ),
+        spacer,
+        const _DesktopLyricSwitch(),
+        spacer,
+        const _ExclusiveModeSwitch(),
+        spacer,
+        IconButton(
+          tooltip: '均衡器',
+          onPressed: () {
+            showDialog(
+              context: context,
+              builder: (context) => const EqualizerDialog(),
+            );
+          },
+          icon: const Icon(Symbols.graphic_eq),
+          color: useMonet
+              ? Theme.of(context).colorScheme.primary
+              : Theme.of(context).colorScheme.onSurface,
+        ),
+      ],
+    );
+  }
+
+  Widget _transport(
+    PlaybackService playbackService,
+    Color controlColor,
+    Color disabledColor,
+  ) {
+    const spacer = SizedBox(width: 8.0);
+    final hasNowPlaying = playbackService.nowPlaying != null;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const _NowPlayingPlaybackModeSwitch(),
+        spacer,
+        IconButton(
+          tooltip: hasNowPlaying ? '上一曲' : '暂无正在播放',
+          onPressed: hasNowPlaying ? playbackService.lastAudio : null,
+          icon: const Icon(Symbols.skip_previous, fill: 1.0),
+          iconSize: 28,
+          color: controlColor,
+          disabledColor: disabledColor,
+        ),
+        spacer,
+        _playPauseButton(
+          playbackService,
+          hasNowPlaying,
+          controlColor,
+          disabledColor,
+        ),
+        spacer,
+        IconButton(
+          tooltip: hasNowPlaying ? '下一曲' : '暂无正在播放',
+          onPressed: hasNowPlaying ? playbackService.nextAudio : null,
+          icon: const Icon(Symbols.skip_next, fill: 1.0),
+          iconSize: 28,
+          color: controlColor,
+          disabledColor: disabledColor,
+        ),
+        spacer,
+        const _NowPlayingLargeViewSwitch(),
+      ],
+    );
+  }
+
+
+  void _togglePlay(
+    PlaybackService playbackService,
+    bool isPlaying,
+    bool isCompleted,
+  ) {
+    if (isPlaying) {
+      playbackService.pause();
+    } else if (isCompleted) {
+      playbackService.playAgain();
+    } else {
+      playbackService.start();
+    }
+  }
+
+  Widget _playPauseButton(
+    PlaybackService playbackService,
+    bool hasNowPlaying,
+    Color controlColor,
+    Color disabledColor,
+  ) {
+    return ValueListenableBuilder<PlayerState>(
+      valueListenable: playbackService.playerStateNotifier,
+      builder: (context, state, _) {
+        final isPlaying = state == PlayerState.playing;
+        final isCompleted = state == PlayerState.completed;
+        return IconButton(
+          tooltip: hasNowPlaying ? (isPlaying ? '暂停' : '播放') : '暂无正在播放',
+          onPressed: hasNowPlaying
+              ? () => _togglePlay(playbackService, isPlaying, isCompleted)
+              : null,
+          icon: Icon(isPlaying ? Symbols.pause : Symbols.play_arrow, fill: 1.0),
+          iconSize: 36,
+          color: controlColor,
+          disabledColor: disabledColor,
+        );
+      },
     );
   }
 }

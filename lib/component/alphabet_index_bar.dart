@@ -129,7 +129,8 @@ class _AlphabetIndexBarState extends State<AlphabetIndexBar>
     if (dt <= 0) return;
     dt = min(dt, 1 / 30);
     final next =
-        _bubbleTop + (_bubbleTarget - _bubbleTop) * (1 - exp(-_bubbleFollowK * dt));
+        _bubbleTop +
+        (_bubbleTarget - _bubbleTop) * (1 - exp(-_bubbleFollowK * dt));
     if ((next - _bubbleTarget).abs() < 0.05) {
       if (_bubbleTop != _bubbleTarget) {
         setState(() => _bubbleTop = _bubbleTarget);
@@ -254,100 +255,128 @@ class _AlphabetIndexBarState extends State<AlphabetIndexBar>
             child: Stack(
               clipBehavior: Clip.none,
               children: [
-                if (_pressedSection != null)
-                  Positioned(
-                    right: 40,
-                    top: indicatorTop,
-                    child: IgnorePointer(
-                      child: Container(
-                        width: 40,
-                        height: 40,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: scheme.secondaryContainer.withValues(
-                            alpha: 0.92,
-                          ),
-                          borderRadius: AppRadius.smCircular,
-                        ),
-                        child: Text(
-                          _pressedSection!,
-                          style: TextStyle(
-                            color: scheme.onSecondaryContainer,
-                            fontSize: AppType.sectionTitle,
-                            fontWeight: AppType.weightBold,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTapDown: (details) =>
-                      _selectAt(details.localPosition.dy, barHeight),
-                  onTapUp: (_) => _clearSelection(),
-                  onTapCancel: _clearSelection,
-                  onVerticalDragStart: (details) =>
-                      _selectAt(details.localPosition.dy, barHeight),
-                  onVerticalDragUpdate: (details) =>
-                      _selectAt(details.localPosition.dy, barHeight),
-                  onVerticalDragEnd: (_) => _clearSelection(),
-                  onVerticalDragCancel: _clearSelection,
-                  child: Align(
-                    alignment: Alignment.topCenter,
-                    child: Padding(
-                      padding: EdgeInsets.only(top: contentTop, right: 4),
-                      child: Column(
-                        children: [
-                          for (final section in sections)
-                            SizedBox(
-                              width: 24,
-                              height: cellHeight,
-                              child: Center(
-                                child: DecoratedBox(
-                                  decoration: BoxDecoration(
-                                    color: section == _pressedSection
-                                        ? scheme.primary.withValues(alpha: 0.12)
-                                        : Colors.transparent,
-                                    borderRadius: AppRadius.xsCircular,
-                                  ),
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 4,
-                                      vertical: 1,
-                                    ),
-                                    child: Text(
-                                      section,
-                                      style: TextStyle(
-                                        color: section == highlightedSection
-                                            ? scheme.primary
-                                            : scheme.onSurfaceVariant
-                                                  .withValues(alpha: 0.68),
-                                        fontSize:
-                                            cellHeight < AppType.microlabel
-                                            ? (cellHeight * 0.72)
-                                                  .clamp(7.0, 10.0)
-                                                  .toDouble()
-                                            : AppType.microlabel,
-                                        fontWeight: section == _pressedSection
-                                            ? AppType.weightSemibold
-                                            : section == _activeSection
-                                            ? AppType.weightSemibold
-                                            : AppType.weightMedium,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
+                if (_pressedSection != null) _bubble(scheme, indicatorTop),
+                _letterColumn(
+                  scheme,
+                  sections,
+                  highlightedSection,
+                  barHeight,
+                  cellHeight,
+                  contentTop,
                 ),
               ],
             ),
           );
         },
+      ),
+    );
+  }
+
+  Widget _bubble(ColorScheme scheme, double indicatorTop) {
+    return Positioned(
+      right: 40,
+      top: indicatorTop,
+      child: IgnorePointer(
+        child: Container(
+          width: 40,
+          height: 40,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: scheme.secondaryContainer.withValues(alpha: 0.92),
+            borderRadius: AppRadius.smCircular,
+          ),
+          child: Text(
+            _pressedSection!,
+            style: TextStyle(
+              color: scheme.onSecondaryContainer,
+              fontSize: AppType.sectionTitle,
+              fontWeight: AppType.weightBold,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _letterColumn(
+    ColorScheme scheme,
+    List<String> sections,
+    String? highlightedSection,
+    double barHeight,
+    double cellHeight,
+    double contentTop,
+  ) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (details) => _selectAt(details.localPosition.dy, barHeight),
+      onTapUp: (_) => _clearSelection(),
+      onTapCancel: _clearSelection,
+      onVerticalDragStart: (details) =>
+          _selectAt(details.localPosition.dy, barHeight),
+      onVerticalDragUpdate: (details) =>
+          _selectAt(details.localPosition.dy, barHeight),
+      onVerticalDragEnd: (_) => _clearSelection(),
+      onVerticalDragCancel: _clearSelection,
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: Padding(
+          padding: EdgeInsets.only(top: contentTop, right: 4),
+          child: Column(
+            children: [
+              for (final section in sections)
+                _letterCell(scheme, section, highlightedSection, cellHeight),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+
+  TextStyle _letterStyle(
+    ColorScheme scheme,
+    String section,
+    String? highlightedSection,
+    double cellHeight,
+  ) {
+    return TextStyle(
+      color: section == highlightedSection
+          ? scheme.primary
+          : scheme.onSurfaceVariant.withValues(alpha: 0.68),
+      fontSize: cellHeight < AppType.microlabel
+          ? (cellHeight * 0.72).clamp(7.0, 10.0).toDouble()
+          : AppType.microlabel,
+      fontWeight: section == _pressedSection || section == _activeSection
+          ? AppType.weightSemibold
+          : AppType.weightMedium,
+    );
+  }
+
+  Widget _letterCell(
+    ColorScheme scheme,
+    String section,
+    String? highlightedSection,
+    double cellHeight,
+  ) {
+    return SizedBox(
+      width: 24,
+      height: cellHeight,
+      child: Center(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: section == _pressedSection
+                ? scheme.primary.withValues(alpha: 0.12)
+                : Colors.transparent,
+            borderRadius: AppRadius.xsCircular,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+            child: Text(
+              section,
+              style: _letterStyle(scheme, section, highlightedSection, cellHeight),
+            ),
+          ),
+        ),
       ),
     );
   }

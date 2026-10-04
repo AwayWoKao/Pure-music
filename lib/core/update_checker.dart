@@ -162,16 +162,61 @@ class UpdateInfo {
   }
 
   factory UpdateInfo.fromJson(Map<String, dynamic> json) {
-    final legacyInstallerUrl = _normalizedOptionalString(json['installer_url']);
-    final legacyPortableUrl = _normalizedOptionalString(json['portable_url']);
-    final legacyInstallerChecksum = _normalizedOptionalString(
-      json['installer_checksum_url'],
-    );
-    final legacyPortableChecksum = _normalizedOptionalString(
-      json['portable_checksum_url'],
-    );
+    final legacy = _legacyUpdateUrls(json);
     final githubReleasePage = _normalizedOptionalString(json['html_url']);
     final fallbackSize = _normalizedInt(json['size']);
+    final installer = _channelUpdateUrls(
+      json,
+      githubUrl: legacy.installerUrl,
+      githubChecksum: legacy.installerChecksum,
+      giteeUrlKey: 'gitee_installer_url',
+      giteeChecksumKey: 'gitee_installer_checksum_url',
+      shaKey: 'installer_sha256',
+      sizeKey: 'installer_size',
+      fallbackSize: fallbackSize,
+    );
+    final portable = _channelUpdateUrls(
+      json,
+      githubUrl: legacy.portableUrl,
+      githubChecksum: legacy.portableChecksum,
+      giteeUrlKey: 'gitee_portable_url',
+      giteeChecksumKey: 'gitee_portable_checksum_url',
+      shaKey: 'portable_sha256',
+      sizeKey: 'portable_size',
+      fallbackSize: fallbackSize,
+    );
+    return _updateInfoFromParts(
+      json: json,
+      githubReleasePage: githubReleasePage,
+      installer: installer,
+      portable: portable,
+      fallbackSize: fallbackSize,
+    );
+  }
+
+  static UpdateInfo _updateInfoFromParts({
+    required Map<String, dynamic> json,
+    required String? githubReleasePage,
+    required ({
+      String? url,
+      String? giteeUrl,
+      String? sha256,
+      String? checksumUrl,
+      String? giteeChecksumUrl,
+      int? size,
+    })
+    installer,
+    required ({
+      String? url,
+      String? giteeUrl,
+      String? sha256,
+      String? checksumUrl,
+      String? giteeChecksumUrl,
+      int? size,
+    })
+    portable,
+    required int? fallbackSize,
+  }) {
     return UpdateInfo(
       tagName: _normalizedRequiredString(json['tag_name']),
       name: _normalizedOptionalString(json['name']),
@@ -184,39 +229,74 @@ class UpdateInfo {
         'gitee_release_url',
         _replaceHost(githubReleasePage, 'gitee.com'),
       ),
-      installerUrl: legacyInstallerUrl,
-      giteeInstallerUrl: _optionalStringOrFallback(
-        json,
-        'gitee_installer_url',
-        _replaceHost(legacyInstallerUrl, 'gitee.com'),
-      ),
-      installerSha256: _normalizeDigest(json['installer_sha256']),
-      installerChecksumUrl: legacyInstallerChecksum,
-      giteeInstallerChecksumUrl: _optionalStringOrFallback(
-        json,
-        'gitee_installer_checksum_url',
-        _replaceHost(legacyInstallerChecksum, 'gitee.com'),
-      ),
-      installerSize: _optionalIntOrFallback(
-        json,
-        'installer_size',
-        fallbackSize,
-      ),
-      portableUrl: legacyPortableUrl,
-      giteePortableUrl: _optionalStringOrFallback(
-        json,
-        'gitee_portable_url',
-        _replaceHost(legacyPortableUrl, 'gitee.com'),
-      ),
-      portableSha256: _normalizeDigest(json['portable_sha256']),
-      portableChecksumUrl: legacyPortableChecksum,
-      giteePortableChecksumUrl: _optionalStringOrFallback(
-        json,
-        'gitee_portable_checksum_url',
-        _replaceHost(legacyPortableChecksum, 'gitee.com'),
-      ),
-      portableSize: _optionalIntOrFallback(json, 'portable_size', fallbackSize),
+      installerUrl: installer.url,
+      giteeInstallerUrl: installer.giteeUrl,
+      installerSha256: installer.sha256,
+      installerChecksumUrl: installer.checksumUrl,
+      giteeInstallerChecksumUrl: installer.giteeChecksumUrl,
+      installerSize: installer.size,
+      portableUrl: portable.url,
+      giteePortableUrl: portable.giteeUrl,
+      portableSha256: portable.sha256,
+      portableChecksumUrl: portable.checksumUrl,
+      giteePortableChecksumUrl: portable.giteeChecksumUrl,
+      portableSize: portable.size,
       size: fallbackSize,
+    );
+  }
+
+  static ({
+    String? installerUrl,
+    String? portableUrl,
+    String? installerChecksum,
+    String? portableChecksum,
+  })
+  _legacyUpdateUrls(Map<String, dynamic> json) {
+    return (
+      installerUrl: _normalizedOptionalString(json['installer_url']),
+      portableUrl: _normalizedOptionalString(json['portable_url']),
+      installerChecksum: _normalizedOptionalString(
+        json['installer_checksum_url'],
+      ),
+      portableChecksum: _normalizedOptionalString(
+        json['portable_checksum_url'],
+      ),
+    );
+  }
+
+  static ({
+    String? url,
+    String? giteeUrl,
+    String? sha256,
+    String? checksumUrl,
+    String? giteeChecksumUrl,
+    int? size,
+  })
+  _channelUpdateUrls(
+    Map<String, dynamic> json, {
+    required String? githubUrl,
+    required String? githubChecksum,
+    required String giteeUrlKey,
+    required String giteeChecksumKey,
+    required String shaKey,
+    required String sizeKey,
+    required int? fallbackSize,
+  }) {
+    return (
+      url: githubUrl,
+      giteeUrl: _optionalStringOrFallback(
+        json,
+        giteeUrlKey,
+        _replaceHost(githubUrl, 'gitee.com'),
+      ),
+      sha256: _normalizeDigest(json[shaKey]),
+      checksumUrl: githubChecksum,
+      giteeChecksumUrl: _optionalStringOrFallback(
+        json,
+        giteeChecksumKey,
+        _replaceHost(githubChecksum, 'gitee.com'),
+      ),
+      size: _optionalIntOrFallback(json, sizeKey, fallbackSize),
     );
   }
 
@@ -476,7 +556,10 @@ class UpdateChecker {
       if (info.tagName.isEmpty) return null;
       return info;
     } catch (error) {
-      log.update.warn('legacy', '[UpdateChecker] ${channel.name} release API failed: ${error.runtimeType}',);
+      log.update.warn(
+        'legacy',
+        '[UpdateChecker] ${channel.name} release API failed: ${error.runtimeType}',
+      );
       return null;
     }
   }
@@ -514,7 +597,10 @@ class UpdateChecker {
       if (info.tagName.isEmpty) return null;
       return info;
     } catch (error) {
-      log.update.warn('legacy', '[UpdateChecker] ${channel.name} fallback failed: ${error.runtimeType}',);
+      log.update.warn(
+        'legacy',
+        '[UpdateChecker] ${channel.name} fallback failed: ${error.runtimeType}',
+      );
       return null;
     }
   }

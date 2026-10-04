@@ -24,7 +24,6 @@ class QuietEmptyState extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-
     return Center(
       child: SingleChildScrollView(
         padding: padding,
@@ -34,42 +33,35 @@ class QuietEmptyState extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(
-                icon,
-                size: 28.0,
-                color: scheme.onSurfaceVariant,
-              ),
+              Icon(icon, size: 28.0, color: scheme.onSurfaceVariant),
               const SizedBox(width: 14.0),
-              Flexible(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: textTheme.titleMedium?.copyWith(
-                        color: scheme.onSurface,
-                        fontWeight: AppType.weightSemibold,
-                      ),
-                    ),
-                    const SizedBox(height: 4.0),
-                    Text(
-                      message,
-                      style: textTheme.bodyMedium?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                    if (action != null) ...[
-                      const SizedBox(height: 14.0),
-                      action!,
-                    ],
-                  ],
-                ),
-              ),
+              Flexible(child: _copy(scheme, textTheme)),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _copy(ColorScheme scheme, TextTheme textTheme) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: textTheme.titleMedium?.copyWith(
+            color: scheme.onSurface,
+            fontWeight: AppType.weightSemibold,
+          ),
+        ),
+        const SizedBox(height: 4.0),
+        Text(
+          message,
+          style: textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+        ),
+        if (action != null) ...[const SizedBox(height: 14.0), action!],
+      ],
     );
   }
 }

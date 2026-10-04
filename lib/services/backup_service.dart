@@ -54,49 +54,71 @@ Future<String?> exportBackup({
   final root = await getAppDataDir();
   final archive = Archive();
   final externalFiles = <String, String>{};
-
   if (categories.contains(BackupCategory.settings)) {
-    _collectExternalFiles(root, externalFiles);
-    for (final rel in _settingsFiles) {
-      final file = File(p.join(root.path, rel));
-      if (!file.existsSync()) continue;
-      final bytes = rel == 'settings/settings.json'
-          ? _readSettingsBackupFile(file, externalFiles)
-          : _readBackupFile(file);
-      archive.addFile(ArchiveFile(rel, bytes.length, bytes));
-    }
+    _exportSettingsCategory(root, archive, externalFiles);
   }
-
   if (categories.contains(BackupCategory.playlists)) {
-    final db = await AppDb.instance.db();
-    _addJsonEntry(archive, _playlistsEntryName, _exportPlaylists(db));
-    _addJsonEntry(archive, _lyricSourcesEntryName, _exportLyricSources(db));
+    await _exportPlaylistsCategory(archive);
   }
-
   if (categories.contains(BackupCategory.playCounts)) {
-    final entries = await library_db.exportPlayCounts(indexPath: root.path);
-    final list = entries
-        .map(
-          (e) => {
-            'path': e.path,
-            'title': e.title,
-            'artist': e.artist,
-            'album': e.album,
-            'playCount': e.playCount,
-          },
-        )
-        .toList();
-    _addJsonEntry(archive, _playCountsEntryName, list);
+    await _exportPlayCountsCategory(root, archive);
   }
-
   if (categories.contains(BackupCategory.lastfm)) {
-    final db = await AppDb.instance.db();
-    final credentials = _readMetaMap(db, 'lastfm_credentials');
-    if (credentials != null) {
-      _addJsonEntry(archive, _lastfmEntryName, credentials);
-    }
+    await _exportLastfmCategory(archive);
   }
+  _exportExternalFiles(archive, externalFiles);
+  _exportManifest(archive, categories, externalFiles);
+  await _writeBackupArchive(targetPath, archive);
+  return targetPath;
+}
 
+void _exportSettingsCategory(
+  Directory root,
+  Archive archive,
+  Map<String, String> externalFiles,
+) {
+  _collectExternalFiles(root, externalFiles);
+  for (final rel in _settingsFiles) {
+    final file = File(p.join(root.path, rel));
+    if (!file.existsSync()) continue;
+    final bytes = rel == 'settings/settings.json'
+        ? _readSettingsBackupFile(file, externalFiles)
+        : _readBackupFile(file);
+    archive.addFile(ArchiveFile(rel, bytes.length, bytes));
+  }
+}
+
+Future<void> _exportPlaylistsCategory(Archive archive) async {
+  final db = await AppDb.instance.db();
+  _addJsonEntry(archive, _playlistsEntryName, _exportPlaylists(db));
+  _addJsonEntry(archive, _lyricSourcesEntryName, _exportLyricSources(db));
+}
+
+Future<void> _exportPlayCountsCategory(Directory root, Archive archive) async {
+  final entries = await library_db.exportPlayCounts(indexPath: root.path);
+  final list = entries
+      .map(
+        (e) => {
+          'path': e.path,
+          'title': e.title,
+          'artist': e.artist,
+          'album': e.album,
+          'playCount': e.playCount,
+        },
+      )
+      .toList();
+  _addJsonEntry(archive, _playCountsEntryName, list);
+}
+
+Future<void> _exportLastfmCategory(Archive archive) async {
+  final db = await AppDb.instance.db();
+  final credentials = _readMetaMap(db, 'lastfm_credentials');
+  if (credentials != null) {
+    _addJsonEntry(archive, _lastfmEntryName, credentials);
+  }
+}
+
+void _exportExternalFiles(Archive archive, Map<String, String> externalFiles) {
   for (final entry in externalFiles.entries) {
     final source = File(entry.value);
     if (!source.existsSync()) continue;
@@ -104,7 +126,13 @@ Future<String?> exportBackup({
     final name = p.basename(source.path);
     archive.addFile(ArchiveFile('$_externalDir/$name', bytes.length, bytes));
   }
+}
 
+void _exportManifest(
+  Archive archive,
+  Set<BackupCategory> categories,
+  Map<String, String> externalFiles,
+) {
   final manifestExternalFiles = <String, String>{};
   for (final entry in externalFiles.entries) {
     final name = p.basename(entry.value);
@@ -121,7 +149,9 @@ Future<String?> exportBackup({
   archive.addFile(
     ArchiveFile(_manifestName, manifestBytes.length, manifestBytes),
   );
+}
 
+Future<void> _writeBackupArchive(String targetPath, Archive archive) async {
   final encoder = ZipEncoder();
   final data = encoder.encode(archive);
   if (data == null) {
@@ -131,7 +161,6 @@ Future<String?> exportBackup({
     throw StateError('备份文件过大');
   }
   await File(targetPath).writeAsBytes(data, flush: true);
-  return targetPath;
 }
 
 List<int> _readBackupFile(File file) {
@@ -261,139 +290,182 @@ Future<Set<BackupCategory>> importBackup({
   final archive = ZipDecoder().decodeBytes(bytes);
   _validateBackupArchive(archive);
 
-  final manifestFile = archive.findFile(_manifestName);
-  final categories = <BackupCategory>{};
-  final externalFiles = <String, String>{};
-  if (manifestFile != null) {
-    try {
-      final manifest = jsonDecode(utf8.decode(manifestFile.content));
-      final names = manifest['categories'];
-      if (names is List) {
-        for (final name in names) {
-          final category = BackupCategory.values
-              .where((c) => c.name == name)
-              .firstOrNull;
-          if (category != null) categories.add(category);
-        }
-      }
-      final ext = manifest['externalFiles'];
-      if (ext is Map) {
-        for (final entry in ext.entries) {
-          if (entry.key is String && entry.value is String) {
-            final name = p.basename(entry.value as String);
-            if (name.isNotEmpty && name != '.' && name != p.separator) {
-              externalFiles[entry.key as String] = name;
-            }
-          }
-        }
-      }
-    } catch (_) {
-      // 清单损坏时回退为按条目存在性推断
-    }
-  }
-
-  if (categories.isEmpty) {
-    if (_settingsFiles.any((rel) => archive.findFile(rel) != null)) {
-      categories.add(BackupCategory.settings);
-    }
-    if (archive.findFile(_playlistsEntryName) != null ||
-        archive.findFile(_lyricSourcesEntryName) != null) {
-      categories.add(BackupCategory.playlists);
-    }
-    if (archive.findFile(_playCountsEntryName) != null) {
-      categories.add(BackupCategory.playCounts);
-    }
-    if (archive.findFile(_lastfmEntryName) != null) {
-      categories.add(BackupCategory.lastfm);
-    }
-  }
-
+  final manifest = _readBackupManifest(archive);
+  final categories = manifest.categories.isEmpty
+      ? _inferBackupCategories(archive)
+      : manifest.categories;
   final root = dataRoot ?? await getAppDataDir();
   final imported = <BackupCategory>{};
 
   if (categories.contains(BackupCategory.settings)) {
-    final transaction = BackupFileTransaction(root);
-    try {
-      await _importSettings(root, archive, mode, transaction);
-      if (externalFiles.isNotEmpty) {
-        await _restoreExternalFiles(
-          root,
-          archive,
-          externalFiles,
-          mode,
-          transaction,
-        );
-      }
-      await transaction.commit();
-    } catch (_) {
-      try {
-        await transaction.rollback();
-      } catch (rollbackError, rollbackTrace) {
-        log.settings.error('legacy', '备份设置回滚失败', error: rollbackError, stackTrace: rollbackTrace);
-      }
-      rethrow;
-    }
+    await _importSettingsCategory(
+      root: root,
+      archive: archive,
+      mode: mode,
+      externalFiles: manifest.externalFiles,
+    );
     imported.add(BackupCategory.settings);
   }
-
   if (categories.contains(BackupCategory.playlists)) {
     final db = await AppDb.instance.db();
     _importPlaylistsAndLyricSources(db, archive, mode);
     imported.add(BackupCategory.playlists);
   }
-
   if (categories.contains(BackupCategory.playCounts)) {
-    final entry = archive.findFile(_playCountsEntryName);
-    if (entry != null && entry.isFile) {
-      final list = jsonDecode(utf8.decode(entry.content));
-      if (list is List) {
-        final playCountEntries = list
-            .whereType<Map>()
-            .map(
-              (m) => library_db.PlayCountEntry(
-                path: _readString(m['path']) ?? '',
-                title: _readString(m['title']) ?? '',
-                artist: _readString(m['artist']) ?? '',
-                album: _readString(m['album']) ?? '',
-                playCount: _readInt(
-                  m['playCount'],
-                ).clamp(0, 0x7fffffffffffffff).toInt(),
-              ),
-            )
-            .where((e) => e.path.isNotEmpty)
-            .toList();
-        await library_db.importPlayCounts(
-          indexPath: root.path,
-          entries: playCountEntries,
-          overwrite: mode == BackupImportMode.overwrite,
-        );
-      }
-    }
+    await _importPlayCountsCategory(root, archive, mode);
     imported.add(BackupCategory.playCounts);
   }
-
   if (categories.contains(BackupCategory.lastfm)) {
-    final entry = archive.findFile(_lastfmEntryName);
-    if (entry != null && entry.isFile) {
-      final decoded = jsonDecode(utf8.decode(entry.content));
-      if (decoded is Map) {
-        final db = await AppDb.instance.db();
-        final local = LastFmCredentials.fromMap(
-          _readMetaMap(db, 'lastfm_credentials'),
-        );
-        if (shouldImportLastFmCredentials(mode: mode, local: local)) {
-          db.execute(
-            'INSERT INTO meta(key, value) VALUES(?, ?) '
-            'ON CONFLICT(key) DO UPDATE SET value = excluded.value',
-            ['lastfm_credentials', jsonEncode(decoded)],
-          );
-        }
-      }
-    }
+    await _importLastFmCategory(archive, mode);
     imported.add(BackupCategory.lastfm);
   }
-
   return imported;
+}
+
+({Set<BackupCategory> categories, Map<String, String> externalFiles})
+_readBackupManifest(Archive archive) {
+  final categories = <BackupCategory>{};
+  final externalFiles = <String, String>{};
+  final manifestFile = archive.findFile(_manifestName);
+  if (manifestFile == null) {
+    return (categories: categories, externalFiles: externalFiles);
+  }
+  try {
+    final manifest = jsonDecode(utf8.decode(manifestFile.content));
+    _addManifestCategories(manifest, categories);
+    _addManifestExternalFiles(manifest, externalFiles);
+  } catch (_) {}
+  return (categories: categories, externalFiles: externalFiles);
+}
+
+void _addManifestCategories(Object? manifest, Set<BackupCategory> categories) {
+  if (manifest is! Map) return;
+  final names = manifest['categories'];
+  if (names is! List) return;
+  for (final name in names) {
+    final category = BackupCategory.values
+        .where((c) => c.name == name)
+        .firstOrNull;
+    if (category != null) categories.add(category);
+  }
+}
+
+void _addManifestExternalFiles(
+  Object? manifest,
+  Map<String, String> externalFiles,
+) {
+  if (manifest is! Map) return;
+  final ext = manifest['externalFiles'];
+  if (ext is! Map) return;
+  for (final entry in ext.entries) {
+    if (entry.key is! String || entry.value is! String) continue;
+    final name = p.basename(entry.value as String);
+    if (name.isEmpty || name == '.' || name == p.separator) continue;
+    externalFiles[entry.key as String] = name;
+  }
+}
+
+Set<BackupCategory> _inferBackupCategories(Archive archive) {
+  final categories = <BackupCategory>{};
+  if (_settingsFiles.any((rel) => archive.findFile(rel) != null)) {
+    categories.add(BackupCategory.settings);
+  }
+  if (archive.findFile(_playlistsEntryName) != null ||
+      archive.findFile(_lyricSourcesEntryName) != null) {
+    categories.add(BackupCategory.playlists);
+  }
+  if (archive.findFile(_playCountsEntryName) != null) {
+    categories.add(BackupCategory.playCounts);
+  }
+  if (archive.findFile(_lastfmEntryName) != null) {
+    categories.add(BackupCategory.lastfm);
+  }
+  return categories;
+}
+
+Future<void> _importSettingsCategory({
+  required Directory root,
+  required Archive archive,
+  required BackupImportMode mode,
+  required Map<String, String> externalFiles,
+}) async {
+  final transaction = BackupFileTransaction(root);
+  try {
+    await _importSettings(root, archive, mode, transaction);
+    if (externalFiles.isNotEmpty) {
+      await _restoreExternalFiles(
+        root,
+        archive,
+        externalFiles,
+        mode,
+        transaction,
+      );
+    }
+    await transaction.commit();
+  } catch (_) {
+    try {
+      await transaction.rollback();
+    } catch (rollbackError, rollbackTrace) {
+      log.settings.error(
+        'legacy',
+        '备份设置回滚失败',
+        error: rollbackError,
+        stackTrace: rollbackTrace,
+      );
+    }
+    rethrow;
+  }
+}
+
+Future<void> _importPlayCountsCategory(
+  Directory root,
+  Archive archive,
+  BackupImportMode mode,
+) async {
+  final entry = archive.findFile(_playCountsEntryName);
+  if (entry == null || !entry.isFile) return;
+  final list = jsonDecode(utf8.decode(entry.content));
+  if (list is! List) return;
+  final playCountEntries = list
+      .whereType<Map>()
+      .map(
+        (m) => library_db.PlayCountEntry(
+          path: _readString(m['path']) ?? '',
+          title: _readString(m['title']) ?? '',
+          artist: _readString(m['artist']) ?? '',
+          album: _readString(m['album']) ?? '',
+          playCount: _readInt(
+            m['playCount'],
+          ).clamp(0, 0x7fffffffffffffff).toInt(),
+        ),
+      )
+      .where((e) => e.path.isNotEmpty)
+      .toList();
+  await library_db.importPlayCounts(
+    indexPath: root.path,
+    entries: playCountEntries,
+    overwrite: mode == BackupImportMode.overwrite,
+  );
+}
+
+Future<void> _importLastFmCategory(
+  Archive archive,
+  BackupImportMode mode,
+) async {
+  final entry = archive.findFile(_lastfmEntryName);
+  if (entry == null || !entry.isFile) return;
+  final decoded = jsonDecode(utf8.decode(entry.content));
+  if (decoded is! Map) return;
+  final db = await AppDb.instance.db();
+  final local = LastFmCredentials.fromMap(
+    _readMetaMap(db, 'lastfm_credentials'),
+  );
+  if (!shouldImportLastFmCredentials(mode: mode, local: local)) return;
+  db.execute(
+    'INSERT INTO meta(key, value) VALUES(?, ?) '
+    'ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+    ['lastfm_credentials', jsonEncode(decoded)],
+  );
 }
 
 Future<void> _importSettings(
@@ -448,61 +520,57 @@ void _importPlaylistsRows(Database db, Archive archive, BackupImportMode mode) {
   if (entry == null || !entry.isFile) return;
   final decoded = jsonDecode(utf8.decode(entry.content));
   if (decoded is! List) return;
-
   if (mode == BackupImportMode.overwrite) {
     db.execute('DELETE FROM playlist_items');
     db.execute('DELETE FROM playlists');
   }
-
   for (final item in decoded) {
     if (item is! Map) continue;
-    final name = _readString(item['name']);
-    if (name == null || name.isEmpty) continue;
-    final coverSource = _readString(item['coverSource']);
-    final items = item['items'] is List ? item['items'] as List : const [];
-
-    final existing = db.select('SELECT id FROM playlists WHERE name = ?', [
-      name,
-    ]);
-
-    int playlistId;
-    if (existing.isNotEmpty) {
-      if (mode == BackupImportMode.merge) continue;
-      playlistId = _readInt(existing.first['id']);
-      db.execute('UPDATE playlists SET cover_source = ? WHERE id = ?', [
-        coverSource,
-        playlistId,
-      ]);
-      db.execute('DELETE FROM playlist_items WHERE playlist_id = ?', [
-        playlistId,
-      ]);
-    } else {
-      db.execute('INSERT INTO playlists(name, cover_source) VALUES(?, ?)', [
-        name,
-        coverSource,
-      ]);
-      playlistId = db.lastInsertRowId;
-    }
-
-    for (final rawItem in items) {
-      if (rawItem is! Map) continue;
-      final path = _readString(rawItem['path']);
-      if (path == null || path.isEmpty) continue;
-      db.execute(
-        'INSERT INTO playlist_items(playlist_id, path, sort_order, added_at) '
-        'VALUES(?, ?, ?, ?)',
-        [
-          playlistId,
-          path,
-          _readInt(rawItem['sortOrder']),
-          _readString(rawItem['addedAt']),
-        ],
-      );
-    }
+    _importOnePlaylistRow(db, item, mode);
   }
 }
 
-/// 歌词来源按 path 去重：本机没有该曲目才写入；已有时 merge 跳过、overwrite 覆盖。
+void _importOnePlaylistRow(Database db, Map item, BackupImportMode mode) {
+  final name = _readString(item['name']);
+  if (name == null || name.isEmpty) return;
+  final coverSource = _readString(item['coverSource']);
+  final items = item['items'] is List ? item['items'] as List : const [];
+  final existing = db.select('SELECT id FROM playlists WHERE name = ?', [name]);
+  int playlistId;
+  if (existing.isNotEmpty) {
+    if (mode == BackupImportMode.merge) return;
+    playlistId = _readInt(existing.first['id']);
+    db.execute('UPDATE playlists SET cover_source = ? WHERE id = ?', [
+      coverSource,
+      playlistId,
+    ]);
+    db.execute('DELETE FROM playlist_items WHERE playlist_id = ?', [
+      playlistId,
+    ]);
+  } else {
+    db.execute('INSERT INTO playlists(name, cover_source) VALUES(?, ?)', [
+      name,
+      coverSource,
+    ]);
+    playlistId = db.lastInsertRowId;
+  }
+  for (final rawItem in items) {
+    if (rawItem is! Map) continue;
+    final path = _readString(rawItem['path']);
+    if (path == null || path.isEmpty) continue;
+    db.execute(
+      'INSERT INTO playlist_items(playlist_id, path, sort_order, added_at) '
+      'VALUES(?, ?, ?, ?)',
+      [
+        playlistId,
+        path,
+        _readInt(rawItem['sortOrder']),
+        _readString(rawItem['addedAt']),
+      ],
+    );
+  }
+}
+
 void _importLyricSourceRows(
   Database db,
   Archive archive,
@@ -560,50 +628,73 @@ Future<void> _restoreExternalFiles(
 ) async {
   final externalRoot = Directory(p.join(root.path, _externalDir));
   await externalRoot.create(recursive: true);
-
   final settingsFile = File(p.join(root.path, 'settings/settings.json'));
-  Map? settingsMap;
-  if (settingsFile.existsSync()) {
-    try {
-      final decoded = jsonDecode(settingsFile.readAsStringSync());
-      if (decoded is Map) settingsMap = decoded;
-    } catch (_) {}
-  }
+  final settingsMap = _readSettingsMap(settingsFile);
+  final pathRewrites = await _externalPathRewrites(
+    archive,
+    externalFiles,
+    externalRoot,
+    settingsMap,
+    mode,
+    transaction,
+  );
+  if (pathRewrites.isEmpty) return;
+  await _rewriteSettingsPaths(settingsFile, pathRewrites, transaction);
+}
 
+Map? _readSettingsMap(File settingsFile) {
+  if (!settingsFile.existsSync()) return null;
+  try {
+    final decoded = jsonDecode(settingsFile.readAsStringSync());
+    return decoded is Map ? decoded : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<Map<String, String>> _externalPathRewrites(
+  Archive archive,
+  Map<String, String> externalFiles,
+  Directory externalRoot,
+  Map? settingsMap,
+  BackupImportMode mode,
+  BackupFileTransaction transaction,
+) async {
   final pathRewrites = <String, String>{};
   for (final entry in externalFiles.entries) {
-    final key = entry.key;
     final name = p.basename(entry.value);
     if (name.isEmpty || name == '.' || name == p.separator) continue;
     final archiveEntry = archive.findFile('$_externalDir/$name');
     if (archiveEntry == null || !archiveEntry.isFile) continue;
-
     final target = File(p.join(externalRoot.path, name));
     if (mode == BackupImportMode.overwrite || !target.existsSync()) {
       await transaction.writeBytes(target, archiveEntry.content);
     }
-    final localValue = settingsMap?[key];
+    final localValue = settingsMap?[entry.key];
     final keepLocalPath =
         mode == BackupImportMode.merge &&
         localValue is String &&
         localValue.isNotEmpty &&
         File(localValue).existsSync();
-    if (!keepLocalPath) pathRewrites[key] = target.path;
+    if (!keepLocalPath) pathRewrites[entry.key] = target.path;
   }
-
-  if (pathRewrites.isEmpty) return;
-
-  if (!settingsFile.existsSync()) return;
-  final decoded = jsonDecode(settingsFile.readAsStringSync());
-  if (decoded is Map) {
-    for (final entry in pathRewrites.entries) {
-      decoded[entry.key] = entry.value;
-    }
-    await transaction.writeText(settingsFile, jsonEncode(decoded));
-  }
+  return pathRewrites;
 }
 
-/// JSON 文件按顶层键合并：本机已有键保留，缺失键补入。
+Future<void> _rewriteSettingsPaths(
+  File settingsFile,
+  Map<String, String> pathRewrites,
+  BackupFileTransaction transaction,
+) async {
+  if (!settingsFile.existsSync()) return;
+  final decoded = jsonDecode(settingsFile.readAsStringSync());
+  if (decoded is! Map) return;
+  for (final entry in pathRewrites.entries) {
+    decoded[entry.key] = entry.value;
+  }
+  await transaction.writeText(settingsFile, jsonEncode(decoded));
+}
+
 Future<void> _mergeJsonFile(
   File target,
   List<int> content,

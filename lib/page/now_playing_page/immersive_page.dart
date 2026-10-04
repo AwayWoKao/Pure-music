@@ -28,63 +28,67 @@ class _ImmersivePortraitLayout extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(12.0, 32.0, 12.0, 16.0),
           child: Column(
             children: [
-              const Padding(
-                // 封面额外右移 24px，使封面左缘与歌词文字左缘对齐
-                padding: EdgeInsets.only(left: 24.0),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    SizedBox(
-                      width: 64.0,
-                      height: 64.0,
-                      child: _ImmersiveCoverThumbnail(),
-                    ),
-                    SizedBox(width: 12.0),
-                    Expanded(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _ImmersiveTitleText(),
-                          SizedBox(height: 2),
-                          _ImmersiveArtistText(),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              _header(),
               const SizedBox(height: 8),
-              Expanded(
-                child: ShaderMask(
-                  shaderCallback: (Rect bounds) {
-                    return const LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.transparent,
-                        Colors.black,
-                        Colors.black,
-                        Colors.transparent,
-                      ],
-                      stops: [0.0, 0.05, 0.95, 1.0],
-                    ).createShader(bounds);
-                  },
-                  blendMode: BlendMode.dstIn,
-                  child: const VerticalLyricView(
-                    showControls: false,
-                    enableSeekOnTap: true,
-                    centerVertically: false,
-                    enableEdgeSpacer: true,
-                    // 压缩顶部空间后，进一步降低对齐位置，使当前行更靠上
-                    currentLineAlignment: 0.10,
-                  ),
-                ),
-              ),
+              Expanded(child: _lyricMask()),
             ],
           ),
         ),
       ],
+    );
+  }
+
+  Widget _header() {
+    return const Padding(
+      padding: EdgeInsets.only(left: 24.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 64.0,
+            height: 64.0,
+            child: _ImmersiveCoverThumbnail(),
+          ),
+          SizedBox(width: 12.0),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _ImmersiveTitleText(),
+                SizedBox(height: 2),
+                _ImmersiveArtistText(),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _lyricMask() {
+    return ShaderMask(
+      shaderCallback: (Rect bounds) {
+        return const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.transparent,
+            Colors.black,
+            Colors.black,
+            Colors.transparent,
+          ],
+          stops: [0.0, 0.05, 0.95, 1.0],
+        ).createShader(bounds);
+      },
+      blendMode: BlendMode.dstIn,
+      child: const VerticalLyricView(
+        showControls: false,
+        enableSeekOnTap: true,
+        centerVertically: false,
+        enableEdgeSpacer: true,
+        currentLineAlignment: 0.10,
+      ),
     );
   }
 }
@@ -122,71 +126,74 @@ class _ImmersiveHelpOverlayState extends State<_ImmersiveHelpOverlay> {
   }
 
   void _showDialog() {
-    showDialog<void>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          insetPadding: const EdgeInsets.symmetric(
-            horizontal: 20.0,
-            vertical: 24.0,
+    showDialog<void>(context: context, builder: (context) => _shortcutDialog());
+  }
+
+  Widget _shortcutDialog() {
+    return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(
+        horizontal: 20.0,
+        vertical: 24.0,
+      ),
+      shape: RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
+      titlePadding: const EdgeInsets.fromLTRB(24.0, 20.0, 24.0, 8.0),
+      contentPadding: const EdgeInsets.fromLTRB(24.0, 8.0, 24.0, 12.0),
+      actionsPadding: const EdgeInsets.fromLTRB(16.0, 0.0, 16.0, 12.0),
+      title: const Text('快捷键'),
+      content: SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 320.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: _shortcutRows(),
           ),
-          shape: RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
-          titlePadding: const EdgeInsets.fromLTRB(24.0, 20.0, 24.0, 8.0),
-          contentPadding: const EdgeInsets.fromLTRB(24.0, 8.0, 24.0, 12.0),
-          actionsPadding: const EdgeInsets.fromLTRB(16.0, 0.0, 16.0, 12.0),
-          title: const Text('快捷键'),
-          content: SingleChildScrollView(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 320.0),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _ImmersiveShortcutRow(
-                    keys: HotkeysHelper.inAppLabel(HotkeyAction.playPause),
-                    label: '播放 / 暂停',
-                  ),
-                  _ImmersiveShortcutRow(
-                    keys: HotkeysHelper.inAppLabel(HotkeyAction.previous),
-                    label: '上一曲',
-                  ),
-                  _ImmersiveShortcutRow(
-                    keys: HotkeysHelper.inAppLabel(HotkeyAction.next),
-                    label: '下一曲',
-                  ),
-                  _ImmersiveShortcutRow(
-                    keys: HotkeysHelper.inAppLabel(HotkeyAction.volumeUp),
-                    label: '提高音量',
-                  ),
-                  _ImmersiveShortcutRow(
-                    keys: HotkeysHelper.inAppLabel(HotkeyAction.volumeDown),
-                    label: '降低音量',
-                  ),
-                  _ImmersiveShortcutRow(
-                    keys: HotkeysHelper.inAppLabel(HotkeyAction.immersive),
-                    label: '进入 / 退出沉浸模式',
-                  ),
-                  _ImmersiveShortcutRow(
-                    keys: HotkeysHelper.inAppLabel(HotkeyAction.fullscreen),
-                    label: '全屏 / 还原窗口',
-                  ),
-                  _ImmersiveShortcutRow(
-                    keys: HotkeysHelper.inAppLabel(HotkeyAction.escape),
-                    label: '退出沉浸并回到主界面',
-                    isLast: true,
-                  ),
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('关闭'),
-            ),
-          ],
-        );
-      },
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('关闭'),
+        ),
+      ],
     );
+  }
+
+  List<Widget> _shortcutRows() {
+    return [
+      _ImmersiveShortcutRow(
+        keys: HotkeysHelper.inAppLabel(HotkeyAction.playPause),
+        label: '播放 / 暂停',
+      ),
+      _ImmersiveShortcutRow(
+        keys: HotkeysHelper.inAppLabel(HotkeyAction.previous),
+        label: '上一曲',
+      ),
+      _ImmersiveShortcutRow(
+        keys: HotkeysHelper.inAppLabel(HotkeyAction.next),
+        label: '下一曲',
+      ),
+      _ImmersiveShortcutRow(
+        keys: HotkeysHelper.inAppLabel(HotkeyAction.volumeUp),
+        label: '提高音量',
+      ),
+      _ImmersiveShortcutRow(
+        keys: HotkeysHelper.inAppLabel(HotkeyAction.volumeDown),
+        label: '降低音量',
+      ),
+      _ImmersiveShortcutRow(
+        keys: HotkeysHelper.inAppLabel(HotkeyAction.immersive),
+        label: '进入 / 退出沉浸模式',
+      ),
+      _ImmersiveShortcutRow(
+        keys: HotkeysHelper.inAppLabel(HotkeyAction.fullscreen),
+        label: '全屏 / 还原窗口',
+      ),
+      _ImmersiveShortcutRow(
+        keys: HotkeysHelper.inAppLabel(HotkeyAction.escape),
+        label: '退出沉浸并回到主界面',
+        isLast: true,
+      ),
+    ];
   }
 
   @override
@@ -213,55 +220,57 @@ class _ImmersiveHelpOverlayState extends State<_ImmersiveHelpOverlay> {
               opacity: _visible ? 1.0 : 0.0,
               child: IgnorePointer(
                 ignoring: !_visible,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SizedBox(
-                      height: 40,
-                      child: Material(
-                        color: scheme.secondaryContainer.withAlpha(235),
-                        borderRadius: AppRadius.smCircular,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12.0),
-                          child: Center(
-                            child: Text(
-                              '快捷键说明',
-                              style: TextStyle(
-                                color: scheme.onSecondaryContainer,
-                                fontWeight: AppType.weightSemibold,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    IconButton.filledTonal(
-                      tooltip: '快捷键说明',
-                      onPressed: _showDialog,
-                      iconSize: 20,
-                      style: ButtonStyle(
-                        fixedSize: const WidgetStatePropertyAll(Size(40, 40)),
-                        padding: const WidgetStatePropertyAll(EdgeInsets.zero),
-                        backgroundColor: WidgetStatePropertyAll(
-                          scheme.secondaryContainer.withAlpha(235),
-                        ),
-                        foregroundColor: WidgetStatePropertyAll(
-                          scheme.onSecondaryContainer,
-                        ),
-                        shape: WidgetStatePropertyAll(
-                          RoundedRectangleBorder(
-                            borderRadius: AppRadius.smCircular,
-                          ),
-                        ),
-                      ),
-                      icon: const Icon(Symbols.help_outline),
-                    ),
-                  ],
+                child: _helpChip(scheme),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _helpChip(ColorScheme scheme) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          height: 40,
+          child: Material(
+            color: scheme.secondaryContainer.withAlpha(235),
+            borderRadius: AppRadius.smCircular,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12.0),
+              child: Center(
+                child: Text(
+                  '快捷键说明',
+                  style: TextStyle(
+                    color: scheme.onSecondaryContainer,
+                    fontWeight: AppType.weightSemibold,
+                  ),
                 ),
               ),
             ),
           ),
+        ),
+        const SizedBox(width: 10),
+        IconButton.filledTonal(
+          tooltip: '快捷键说明',
+          onPressed: _showDialog,
+          iconSize: 20,
+          style: ButtonStyle(
+            fixedSize: const WidgetStatePropertyAll(Size(40, 40)),
+            padding: const WidgetStatePropertyAll(EdgeInsets.zero),
+            backgroundColor: WidgetStatePropertyAll(
+              scheme.secondaryContainer.withAlpha(235),
+            ),
+            foregroundColor: WidgetStatePropertyAll(
+              scheme.onSecondaryContainer,
+            ),
+            shape: WidgetStatePropertyAll(
+              RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
+            ),
+          ),
+          icon: const Icon(Symbols.help_outline),
         ),
       ],
     );
@@ -473,53 +482,53 @@ class _ImmersiveLandscapeLayout extends StatelessWidget {
               // 64/2 处，下移 32 让封面中心落在窗口中心（与普通横屏一致）。
               return Row(
                 children: [
-                  // 左侧：封面 + 歌曲信息 (50%)
-                  Expanded(
-                    child: Transform.translate(
-                      offset: const Offset(0, _immersiveCoverBelowHeight / 2),
-                      child: Align(
-                        alignment: Alignment.center,
-                        child: SizedBox(
-                          width: infoWidth,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              _NowPlayingInfo(coverSizeOverride: coverSize),
-                              const SizedBox(height: 24.0),
-                              const _NowPlayingSlider(
-                                mode: NowPlayingMode.immersive,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  // 右侧：歌词区域 (50%) - 与普通模式一致，无外层 ShaderMask
-                  const Expanded(
-                    child: ClipRect(
-                      child: Stack(
-                        children: [
-                          Padding(
-                            padding: EdgeInsets.only(right: 8.0),
-                            child: VerticalLyricView(
-                              showControls: false,
-                              enableSeekOnTap: false,
-                              centerVertically: true,
-                              enableEdgeSpacer: true,
-                              currentLineAlignment: 0.45,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+                  Expanded(child: _leftInfo(coverSize, infoWidth)),
+                  Expanded(child: _rightLyrics()),
                 ],
               );
             },
           ),
         ),
       ],
+    );
+  }
+
+  Widget _leftInfo(double coverSize, double infoWidth) {
+    return Transform.translate(
+      offset: const Offset(0, _immersiveCoverBelowHeight / 2),
+      child: Align(
+        alignment: Alignment.center,
+        child: SizedBox(
+          width: infoWidth,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _NowPlayingInfo(coverSizeOverride: coverSize),
+              const SizedBox(height: 24.0),
+              const _NowPlayingSlider(mode: NowPlayingMode.immersive),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _rightLyrics() {
+    return const ClipRect(
+      child: Stack(
+        children: [
+          Padding(
+            padding: EdgeInsets.only(right: 8.0),
+            child: VerticalLyricView(
+              showControls: false,
+              enableSeekOnTap: false,
+              centerVertically: true,
+              enableEdgeSpacer: true,
+              currentLineAlignment: 0.45,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

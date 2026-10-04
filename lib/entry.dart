@@ -80,52 +80,43 @@ class SlideTransitionPage<T> extends CustomTransitionPage<T> {
   ) {
     if (MediaQuery.disableAnimationsOf(context)) return child;
     if (!_contentTransitionEnabled()) {
-      final curved = CurvedAnimation(
-        parent: animation,
-        curve: MotionCurve.standard,
-        reverseCurve: MotionCurve.standard,
-      );
-      final slide = Tween<Offset>(
-        begin: const Offset(0.03, 0.0),
-        end: Offset.zero,
-      ).animate(curved);
-      return FadeTransition(
-        opacity: curved,
-        child: SlideTransition(position: slide, child: child),
-      );
+      return _reducedMotionPageTransition(animation, child);
     }
+    return _contentSlidePageTransition(
+      context,
+      animation,
+      secondaryAnimation,
+      child,
+    );
+  }
 
-    final textDirection = Directionality.of(context);
-
-    // 新页：从右侧 100% 宽度滑入，全程不透明。
-    final primaryCurve = CurvedAnimation(
+  static Widget _reducedMotionPageTransition(
+    Animation<double> animation,
+    Widget child,
+  ) {
+    final curved = CurvedAnimation(
       parent: animation,
-      curve: Curves.fastEaseInToSlowEaseOut,
-      reverseCurve: Curves.fastEaseInToSlowEaseOut.flipped,
+      curve: MotionCurve.standard,
+      reverseCurve: MotionCurve.standard,
     );
-    final primaryPosition = Tween<Offset>(
-      begin: const Offset(1.0, 0.0),
+    final slide = Tween<Offset>(
+      begin: const Offset(0.03, 0.0),
       end: Offset.zero,
-    ).animate(primaryCurve);
-
-    // 旧页：被新页推向左侧 1/3 宽度，同时淡化淡出。
-    final secondaryCurve = CurvedAnimation(
-      parent: secondaryAnimation,
-      curve: Curves.linearToEaseOut,
-      reverseCurve: Curves.easeInToLinear,
+    ).animate(curved);
+    return FadeTransition(
+      opacity: curved,
+      child: SlideTransition(position: slide, child: child),
     );
-    final secondaryPosition = Tween<Offset>(
-      begin: Offset.zero,
-      end: const Offset(-1.0 / 3.0, 0.0),
-    ).animate(secondaryCurve);
-    final secondaryFade = Tween<double>(
-      begin: 1.0,
-      end: 0.0,
-    ).animate(secondaryCurve);
+  }
 
-    // 旧页淡出 + 左移次层，新页右滑入顶层。
-    // 被上层路由覆盖（退出中或已退出）时禁用命中测试，
-    // 避免点到已淡出/视觉移位的旧页内容。
+  static Widget _contentSlidePageTransition(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    final textDirection = Directionality.of(context);
+    final slides = _contentSlideAnimations(animation, secondaryAnimation);
     return AnimatedBuilder(
       animation: secondaryAnimation,
       child: child,
@@ -133,13 +124,13 @@ class SlideTransitionPage<T> extends CustomTransitionPage<T> {
         return IgnorePointer(
           ignoring: secondaryAnimation.value > 0.001,
           child: FadeTransition(
-            opacity: secondaryFade,
+            opacity: slides.secondaryFade,
             child: SlideTransition(
-              position: secondaryPosition,
+              position: slides.secondaryPosition,
               textDirection: textDirection,
               transformHitTests: false,
               child: SlideTransition(
-                position: primaryPosition,
+                position: slides.primaryPosition,
                 textDirection: textDirection,
                 child: child,
               ),
@@ -147,6 +138,41 @@ class SlideTransitionPage<T> extends CustomTransitionPage<T> {
           ),
         );
       },
+    );
+  }
+
+  static ({
+    Animation<Offset> primaryPosition,
+    Animation<Offset> secondaryPosition,
+    Animation<double> secondaryFade,
+  })
+  _contentSlideAnimations(
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+  ) {
+    final primaryCurve = CurvedAnimation(
+      parent: animation,
+      curve: Curves.fastEaseInToSlowEaseOut,
+      reverseCurve: Curves.fastEaseInToSlowEaseOut.flipped,
+    );
+    final secondaryCurve = CurvedAnimation(
+      parent: secondaryAnimation,
+      curve: Curves.linearToEaseOut,
+      reverseCurve: Curves.easeInToLinear,
+    );
+    return (
+      primaryPosition: Tween<Offset>(
+        begin: const Offset(1.0, 0.0),
+        end: Offset.zero,
+      ).animate(primaryCurve),
+      secondaryPosition: Tween<Offset>(
+        begin: Offset.zero,
+        end: const Offset(-1.0 / 3.0, 0.0),
+      ).animate(secondaryCurve),
+      secondaryFade: Tween<double>(
+        begin: 1.0,
+        end: 0.0,
+      ).animate(secondaryCurve),
     );
   }
 }
@@ -168,6 +194,91 @@ Page<T> _slidePage<T>({
     reverseTransitionDuration: enabled
         ? const Duration(milliseconds: 420)
         : MotionDuration.fast,
+  );
+}
+
+
+
+
+GoRoute _detailRoute<T>({
+  required String fallback,
+  required Widget Function(T extra) builder,
+}) {
+  return GoRoute(
+    path: 'detail',
+    redirect: (context, state) => _redirectUnlessExtra<T>(state, fallback),
+    pageBuilder: (context, state) => _slidePage(
+      key: state.pageKey,
+      child: builder(state.extra as T),
+    ),
+  );
+}
+
+StatefulShellBranch _maintainedBranch({
+  required String path,
+  required Widget child,
+  List<RouteBase> routes = const [],
+}) {
+  return StatefulShellBranch(
+    routes: [
+      GoRoute(
+        path: path,
+        pageBuilder: (context, state) => _slidePage(
+          key: state.pageKey,
+          maintainState: true,
+          child: child,
+        ),
+        routes: routes,
+      ),
+    ],
+  );
+}
+
+StatefulShellBranch _builderBranch({
+  required String path,
+  required Widget child,
+}) {
+  return StatefulShellBranch(
+    routes: [GoRoute(path: path, builder: (context, state) => child)],
+  );
+}
+
+Page<void> _audiosPage(GoRouterState state) {
+  final extra = state.extra;
+  final page = extra is Audio ? AudiosPage(locateTo: extra) : const AudiosPage();
+  return _slidePage(
+    key: state.pageKey,
+    maintainState: true,
+    child: page,
+  );
+}
+
+String? _redirectUnlessExtra<T>(GoRouterState state, String fallback) {
+  return state.extra is T ? null : fallback;
+}
+
+Page<void> _folderDetailPage(GoRouterState state) {
+  final folder = state.extra as AudioFolder?;
+  if (folder == null) {
+    return NoTransitionPage(
+      key: state.pageKey,
+      child: FolderDetailPage(folder: AudioFolder([], '', 0, 0)),
+    );
+  }
+  return _slidePage(key: state.pageKey, child: FolderDetailPage(folder: folder));
+}
+
+Page<void> _playlistDetailPage(GoRouterState state) {
+  final playlist = state.extra as Playlist?;
+  if (playlist == null) {
+    return NoTransitionPage(
+      key: state.pageKey,
+      child: PlaylistDetailPage(playlist: Playlist('', [])),
+    );
+  }
+  return _slidePage(
+    key: state.pageKey,
+    child: PlaylistDetailPage(playlist: playlist),
   );
 }
 
@@ -218,16 +329,14 @@ class _EntryState extends State<Entry>
     final settings = AppSettings.instance;
     if (settings.appWindowTransparent) {
       windowManager.setBackgroundColor(Colors.transparent);
-    } else {
-      windowManager.setBackgroundColor(
-        Color(
-          settings.appBackgroundImagePath != null
-              ? 0xFF000000
-              : ThemeProvider.instance.currScheme.surfaceContainerLow
-                    .toARGB32(),
-        ),
-      );
+      return;
     }
+    windowManager.setBackgroundColor(Color(_windowBackgroundArgb(settings)));
+  }
+
+  int _windowBackgroundArgb(AppSettings settings) {
+    if (settings.appBackgroundImagePath != null) return 0xFF000000;
+    return ThemeProvider.instance.currScheme.surfaceContainerLow.toARGB32();
   }
 
   @override
@@ -322,58 +431,64 @@ class _EntryState extends State<Entry>
   /// 启动后延迟检查更新（1 小时节流）
   Future<void> _autoCheckUpdate() async {
     if (!AppPreference.instance.autoCheckUpdate) return;
-
-    // 延迟 5 秒，避免影响启动性能
     await Future.delayed(const Duration(seconds: 5));
     if (!mounted) return;
-
     final hadSavedChannel =
         UpdateChannel.parse(AppPreference.instance.updateChannel) != null;
     final overlayContext = routerKey.currentState?.overlay?.context;
     if (overlayContext == null || !overlayContext.mounted) return;
     final channel = await ensureUpdateChannel(overlayContext);
     if (!mounted || !overlayContext.mounted || channel == null) return;
+    if (_shouldSkipAutoUpdateCheck(hadSavedChannel)) return;
+    final update = await _checkNewestUpdate(channel);
+    if (!mounted || !overlayContext.mounted || update == null) return;
+    await _notifyNewestUpdate(overlayContext, update, channel);
+  }
 
+  bool _shouldSkipAutoUpdateCheck(bool hadSavedChannel) {
     final lastRaw = AppPreference.instance.lastUpdateCheckTime;
     final last = lastRaw == null ? null : DateTime.tryParse(lastRaw);
     final now = DateTime.now().toUtc();
-    if (hadSavedChannel &&
+    return hadSavedChannel &&
         last != null &&
-        now.isBefore(last.toUtc().add(const Duration(hours: 1)))) {
-      return;
-    }
+        now.isBefore(last.toUtc().add(const Duration(hours: 1)));
+  }
 
+  Future<UpdateInfo?> _checkNewestUpdate(UpdateChannel channel) async {
     UpdateInfo? newest;
     try {
       newest = await UpdateChecker.checkForUpdate(channel: channel);
     } catch (err, trace) {
-      log.app.warn('legacy', '[UpdateChecker] automatic check failed', error: err,
-        stackTrace: trace,);
+      log.app.warn(
+        'legacy',
+        '[UpdateChecker] automatic check failed',
+        error: err,
+        stackTrace: trace,
+      );
     } finally {
-      // 请求后无论是否弹窗都记录节流时间
       AppPreference.instance.lastUpdateCheckTime = DateTime.now()
           .toUtc()
           .toIso8601String();
       await AppPreference.instance.save();
     }
-
-    final update = newest;
-    if (!mounted || !overlayContext.mounted || update == null) return;
-
-    if (UpdateChecker.shouldNotify(update.tagName)) {
-      // 记录已提醒版本，避免反复弹窗
-      AppPreference.instance.lastSeenUpdateTag = update.tagName;
-      await AppPreference.instance.save();
-
-      if (!mounted || !overlayContext.mounted) return;
-      showDialog(
-        context: overlayContext,
-        builder: (context) => NewestUpdateView(info: update, channel: channel),
-      );
-    }
+    return newest;
   }
 
-  /// 内存不足时的统一清理入口
+  Future<void> _notifyNewestUpdate(
+    BuildContext overlayContext,
+    UpdateInfo update,
+    UpdateChannel channel,
+  ) async {
+    if (!UpdateChecker.shouldNotify(update.tagName)) return;
+    AppPreference.instance.lastSeenUpdateTag = update.tagName;
+    await AppPreference.instance.save();
+    if (!mounted || !overlayContext.mounted) return;
+    showDialog(
+      context: overlayContext,
+      builder: (context) => NewestUpdateView(info: update, channel: channel),
+    );
+  }
+
   void _onLowMemory() {
     CoverImageCache.instance.clear();
     AudioLibrary.instance.evictAllCoversExcept(
@@ -573,20 +688,7 @@ class _EntryState extends State<Entry>
             scaffoldMessengerKey: scaffoldMessengerKey,
             debugShowCheckedModeBanner: false,
             scrollBehavior: const AppScrollBehavior(),
-            builder: (context, child) => ValueListenableBuilder<bool>(
-              valueListenable: _windowResizing,
-              child: child,
-              builder: (context, resizing, child) =>
-                  ValueListenableBuilder<bool>(
-                    valueListenable: WindowRenderGate.instance.framesEnabled,
-                    child: child,
-                    builder: (context, windowFramesEnabled, child) =>
-                        TickerMode(
-                          enabled: !resizing && windowFramesEnabled,
-                          child: child ?? const SizedBox.shrink(),
-                        ),
-                  ),
-            ),
+            builder: (context, child) => _windowTickerGate(child),
             theme: fromSchemeAndFontFamily(
               fontFamily: theme.fontFamily,
               colorScheme: theme.lightScheme,
@@ -604,6 +706,22 @@ class _EntryState extends State<Entry>
           ),
         );
       },
+    );
+  }
+
+
+  Widget _windowTickerGate(Widget? child) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: _windowResizing,
+      child: child,
+      builder: (context, resizing, child) => ValueListenableBuilder<bool>(
+        valueListenable: WindowRenderGate.instance.framesEnabled,
+        child: child,
+        builder: (context, windowFramesEnabled, child) => TickerMode(
+          enabled: !resizing && windowFramesEnabled,
+          child: child ?? const SizedBox.shrink(),
+        ),
+      ),
     );
   }
 
@@ -627,182 +745,83 @@ class _EntryState extends State<Entry>
             routes: [
               GoRoute(
                 path: app_paths.AUDIOS_PAGE,
-                pageBuilder: (context, state) {
-                  Widget page = const AudiosPage();
-                  if (state.extra case final Audio audio) {
-                    page = AudiosPage(locateTo: audio);
-                  }
-                  return _slidePage(
-                    key: state.pageKey,
-                    maintainState: true,
-                    child: page,
-                  );
-                },
+                pageBuilder: (context, state) => _audiosPage(state),
                 routes: [
-                  GoRoute(
-                    path: 'detail',
-                    redirect: (context, state) =>
-                        state.extra is Audio ? null : app_paths.AUDIOS_PAGE,
-                    pageBuilder: (context, state) => _slidePage(
-                      key: state.pageKey,
-                      child: AudioDetailPage(audio: state.extra as Audio),
-                    ),
+                  _detailRoute<Audio>(
+                    fallback: app_paths.AUDIOS_PAGE,
+                    builder: (audio) => AudioDetailPage(audio: audio),
                   ),
                 ],
               ),
             ],
           ),
-          StatefulShellBranch(
+          _maintainedBranch(
+            path: app_paths.ARTISTS_PAGE,
+            child: const ArtistsPage(),
+            routes: [
+              _detailRoute<Artist>(
+                fallback: app_paths.ARTISTS_PAGE,
+                builder: (artist) => ArtistDetailPage(artist: artist),
+              ),
+            ],
+          ),
+          _maintainedBranch(
+            path: app_paths.ALBUMS_PAGE,
+            child: const AlbumsPage(),
+            routes: [
+              _detailRoute<Album>(
+                fallback: app_paths.ALBUMS_PAGE,
+                builder: (album) => AlbumDetailPage(album: album),
+              ),
+            ],
+          ),
+          _maintainedBranch(
+            path: app_paths.FOLDERS_PAGE,
+            child: const FoldersPage(),
             routes: [
               GoRoute(
-                path: app_paths.ARTISTS_PAGE,
+                path: 'detail',
+                pageBuilder: (context, state) => _folderDetailPage(state),
+              ),
+            ],
+          ),
+          _maintainedBranch(
+            path: app_paths.PLAYLISTS_PAGE,
+            child: const PlaylistsPage(),
+            routes: [
+              GoRoute(
+                path: 'detail',
+                pageBuilder: (context, state) => _playlistDetailPage(state),
+              ),
+            ],
+          ),
+          _builderBranch(
+            path: app_paths.CONCERT_PAGE,
+            child: const ConcertPage(),
+          ),
+          _builderBranch(
+            path: app_paths.STATS_PAGE,
+            child: const StatsPage(),
+          ),
+          _maintainedBranch(
+            path: app_paths.SETTINGS_PAGE,
+            child: const SettingsPage(),
+            routes: [
+              GoRoute(
+                path: 'issue',
                 pageBuilder: (context, state) => _slidePage(
                   key: state.pageKey,
-                  maintainState: true,
-                  child: const ArtistsPage(),
+                  child: const SettingsIssuePage(),
                 ),
-                routes: [
-                  GoRoute(
-                    path: 'detail',
-                    redirect: (context, state) =>
-                        state.extra is Artist ? null : app_paths.ARTISTS_PAGE,
-                    pageBuilder: (context, state) => _slidePage(
-                      key: state.pageKey,
-                      child: ArtistDetailPage(artist: state.extra as Artist),
-                    ),
-                  ),
-                ],
               ),
-            ],
-          ),
-          StatefulShellBranch(
-            routes: [
               GoRoute(
-                path: app_paths.ALBUMS_PAGE,
+                path: 'group/:id',
                 pageBuilder: (context, state) => _slidePage(
                   key: state.pageKey,
-                  maintainState: true,
-                  child: const AlbumsPage(),
+                  child: SettingsGroupPage(
+                    groupId: state.pathParameters['id']!,
+                  ),
                 ),
-                routes: [
-                  GoRoute(
-                    path: 'detail',
-                    redirect: (context, state) =>
-                        state.extra is Album ? null : app_paths.ALBUMS_PAGE,
-                    pageBuilder: (context, state) => _slidePage(
-                      key: state.pageKey,
-                      child: AlbumDetailPage(album: state.extra as Album),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          StatefulShellBranch(
-            routes: [
-              GoRoute(
-                path: app_paths.FOLDERS_PAGE,
-                pageBuilder: (context, state) => _slidePage(
-                  key: state.pageKey,
-                  maintainState: true,
-                  child: const FoldersPage(),
-                ),
-                routes: [
-                  GoRoute(
-                    path: 'detail',
-                    pageBuilder: (context, state) {
-                      final folder = state.extra as AudioFolder?;
-                      if (folder == null) {
-                        return NoTransitionPage(
-                          key: state.pageKey,
-                          child: FolderDetailPage(
-                            folder: AudioFolder([], '', 0, 0),
-                          ),
-                        );
-                      }
-                      return _slidePage(
-                        key: state.pageKey,
-                        child: FolderDetailPage(folder: folder),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ],
-          ),
-          StatefulShellBranch(
-            routes: [
-              GoRoute(
-                path: app_paths.PLAYLISTS_PAGE,
-                pageBuilder: (context, state) => _slidePage(
-                  key: state.pageKey,
-                  maintainState: true,
-                  child: const PlaylistsPage(),
-                ),
-                routes: [
-                  GoRoute(
-                    path: 'detail',
-                    pageBuilder: (context, state) {
-                      final playlist = state.extra as Playlist?;
-                      if (playlist == null) {
-                        return NoTransitionPage(
-                          key: state.pageKey,
-                          child: PlaylistDetailPage(playlist: Playlist('', [])),
-                        );
-                      }
-                      return _slidePage(
-                        key: state.pageKey,
-                        child: PlaylistDetailPage(playlist: playlist),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ],
-          ),
-          StatefulShellBranch(
-            routes: [
-              GoRoute(
-                path: app_paths.CONCERT_PAGE,
-                builder: (context, state) => const ConcertPage(),
-              ),
-            ],
-          ),
-          StatefulShellBranch(
-            routes: [
-              GoRoute(
-                path: app_paths.STATS_PAGE,
-                builder: (context, state) => const StatsPage(),
-              ),
-            ],
-          ),
-          StatefulShellBranch(
-            routes: [
-              GoRoute(
-                path: app_paths.SETTINGS_PAGE,
-                pageBuilder: (context, state) => _slidePage(
-                  key: state.pageKey,
-                  maintainState: true,
-                  child: const SettingsPage(),
-                ),
-                routes: [
-                  GoRoute(
-                    path: 'issue',
-                    pageBuilder: (context, state) => _slidePage(
-                      key: state.pageKey,
-                      child: const SettingsIssuePage(),
-                    ),
-                  ),
-                  GoRoute(
-                    path: 'group/:id',
-                    pageBuilder: (context, state) => _slidePage(
-                      key: state.pageKey,
-                      child: SettingsGroupPage(
-                        groupId: state.pathParameters['id']!,
-                      ),
-                    ),
-                  ),
-                ],
               ),
             ],
           ),

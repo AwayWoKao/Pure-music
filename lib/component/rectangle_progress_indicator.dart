@@ -272,44 +272,45 @@ class _RectangleProgressIndicatorState
     widget.onSeek?.call(fraction);
   }
 
+
+  Map<Type, GestureRecognizerFactory> _progressGestures(bool hasSeek) {
+    return {
+      LongPressGestureRecognizer:
+          GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
+            () => LongPressGestureRecognizer(duration: _longPressDuration),
+            (instance) {
+              instance
+                ..onLongPressStart = hasSeek ? _handleLongPressStart : null
+                ..onLongPressMoveUpdate = hasSeek ? _handleLongPressMove : null
+                ..onLongPressEnd = hasSeek ? _handleLongPressEnd : null
+                ..onLongPressCancel = hasSeek ? _handleLongPressCancel : null;
+            },
+          ),
+      _MouseThresholdHorizontalDragGestureRecognizer:
+          GestureRecognizerFactoryWithHandlers<
+            _MouseThresholdHorizontalDragGestureRecognizer
+          >(
+            () => _MouseThresholdHorizontalDragGestureRecognizer(
+              mouseDragThreshold: _mouseDragThreshold,
+            ),
+            (instance) {
+              instance
+                ..onStart = hasSeek ? _handleDragStart : null
+                ..onUpdate = hasSeek ? _handleDragUpdate : null
+                ..onEnd = hasSeek ? _handleDragEnd : null
+                ..onCancel = hasSeek ? _handleDragCancel : null;
+            },
+          ),
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final hasSeek = widget.onSeek != null;
     return RawGestureDetector(
       behavior: HitTestBehavior.opaque,
-      gestures: {
-        LongPressGestureRecognizer:
-            GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
-              () => LongPressGestureRecognizer(
-                duration: _longPressDuration,
-              ),
-              (instance) {
-                instance
-                  ..onLongPressStart = hasSeek ? _handleLongPressStart : null
-                  ..onLongPressMoveUpdate =
-                      hasSeek ? _handleLongPressMove : null
-                  ..onLongPressEnd = hasSeek ? _handleLongPressEnd : null
-                  ..onLongPressCancel =
-                      hasSeek ? _handleLongPressCancel : null;
-              },
-            ),
-        _MouseThresholdHorizontalDragGestureRecognizer:
-            GestureRecognizerFactoryWithHandlers<
-              _MouseThresholdHorizontalDragGestureRecognizer
-            >(
-              () => _MouseThresholdHorizontalDragGestureRecognizer(
-                mouseDragThreshold: _mouseDragThreshold,
-              ),
-              (instance) {
-                instance
-                  ..onStart = hasSeek ? _handleDragStart : null
-                  ..onUpdate = hasSeek ? _handleDragUpdate : null
-                  ..onEnd = hasSeek ? _handleDragEnd : null
-                  ..onCancel = hasSeek ? _handleDragCancel : null;
-              },
-            ),
-      },
+      gestures: _progressGestures(hasSeek),
       child: CustomPaint(
         size: widget.size,
         painter: RectangleProgressPainter(progress: progress, scheme: scheme),

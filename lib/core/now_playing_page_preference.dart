@@ -77,45 +77,127 @@ class NowPlayingPagePreference {
 
   factory NowPlayingPagePreference.fromMap(Object? value) {
     final map = value is Map ? value : const <String, dynamic>{};
+    final look = _lyricLookFromMap(map);
     final backgroundMode =
         _nowPlayingBackgroundModeFromStoredValue(map['backgroundMode']) ??
         NowPlayingBackgroundMode.meshGradient;
     return NowPlayingPagePreference(
-      _nowPlayingViewModeFromStoredValue(map['nowPlayingViewMode']) ??
+      look.viewMode,
+      look.textAlign,
+      look.fontSize,
+      look.translationFontSize,
+      look.showTranslation,
+      look.fontWeight,
+      look.enableBlur,
+      showLyricRoman: look.showRoman,
+      rubyPosition: look.rubyPosition,
+      enableLyricGlow: look.enableGlow,
+      liftStyle: look.liftStyle,
+      liftPeak: look.liftPeak,
+      liftDurationMs: lyricVerticalLiftDurationMs,
+      staggerStyle: look.staggerStyle,
+      backgroundMode: backgroundMode,
+      dynamicFlowingLight: true,
+      audioReactiveFlow: _normalizedBool(
+        map['audioReactiveFlow'],
+        defaultValue: false,
+      ),
+    );
+  }
+
+  static ({
+    NowPlayingViewMode viewMode,
+    LyricTextAlign textAlign,
+    double fontSize,
+    double translationFontSize,
+    bool showTranslation,
+    int fontWeight,
+    bool enableBlur,
+    bool showRoman,
+    RubyPosition rubyPosition,
+    bool enableGlow,
+    LyricLiftStyle liftStyle,
+    double liftPeak,
+    LyricStaggerStyle staggerStyle,
+  })
+  _lyricLookFromMap(Map map) {
+    final type = _lyricTypeFromMap(map);
+    final lift = _lyricLiftFromMap(map);
+    return (
+      viewMode: type.viewMode,
+      textAlign: type.textAlign,
+      fontSize: type.fontSize,
+      translationFontSize: type.translationFontSize,
+      showTranslation: type.showTranslation,
+      fontWeight: type.fontWeight,
+      enableBlur: type.enableBlur,
+      showRoman: type.showRoman,
+      rubyPosition: lift.rubyPosition,
+      enableGlow: lift.enableGlow,
+      liftStyle: lift.liftStyle,
+      liftPeak: lift.liftPeak,
+      staggerStyle: lift.staggerStyle,
+    );
+  }
+
+  static ({
+    NowPlayingViewMode viewMode,
+    LyricTextAlign textAlign,
+    double fontSize,
+    double translationFontSize,
+    bool showTranslation,
+    int fontWeight,
+    bool enableBlur,
+    bool showRoman,
+  })
+  _lyricTypeFromMap(Map map) {
+    return (
+      viewMode:
+          _nowPlayingViewModeFromStoredValue(map['nowPlayingViewMode']) ??
           NowPlayingViewMode.withLyric,
-      _lyricTextAlignFromStoredValue(map['lyricTextAlign']) ??
+      textAlign:
+          _lyricTextAlignFromStoredValue(map['lyricTextAlign']) ??
           LyricTextAlign.left,
-      _normalizedBoundedDouble(
+      fontSize: _normalizedBoundedDouble(
         map['lyricFontSize'],
         defaultValue: 22.0,
         min: 16.0,
         max: 48.0,
       ),
-      _normalizedBoundedDouble(
+      translationFontSize: _normalizedBoundedDouble(
         map['translationFontSize'],
         defaultValue: 18.0,
         min: 12.0,
         max: 44.0,
       ),
-      _normalizedBool(map['showLyricTranslation'], defaultValue: true),
-      _normalizedBoundedInt(
+      showTranslation: _normalizedBool(
+        map['showLyricTranslation'],
+        defaultValue: true,
+      ),
+      fontWeight: _normalizedBoundedInt(
         map['lyricFontWeight'],
         defaultValue: 400,
         min: 100,
         max: 900,
       ),
-      _normalizedBool(map['enableLyricBlur'], defaultValue: true),
-      showLyricRoman: _normalizedBool(
-        map['showLyricRoman'],
-        defaultValue: true,
-      ),
+      enableBlur: _normalizedBool(map['enableLyricBlur'], defaultValue: true),
+      showRoman: _normalizedBool(map['showLyricRoman'], defaultValue: true),
+    );
+  }
+
+  static ({
+    RubyPosition rubyPosition,
+    bool enableGlow,
+    LyricLiftStyle liftStyle,
+    double liftPeak,
+    LyricStaggerStyle staggerStyle,
+  })
+  _lyricLiftFromMap(Map map) {
+    return (
       rubyPosition:
           RubyPosition.fromString((map['rubyPosition'] as String?) ?? '') ??
           RubyPosition.below,
-      enableLyricGlow: _normalizedBool(
-        map['enableLyricGlow'],
-        defaultValue: false,
-      ),
+      enableGlow: _normalizedBool(map['enableLyricGlow'], defaultValue: false),
       liftStyle:
           LyricLiftStyle.fromString((map['liftStyle'] as String?) ?? '') ??
           LyricLiftStyle.vertical,
@@ -125,18 +207,11 @@ class NowPlayingPagePreference {
         min: 0.5,
         max: 6.0,
       ),
-      liftDurationMs: lyricVerticalLiftDurationMs,
       staggerStyle:
           LyricStaggerStyle.fromString(
             (map['staggerStyle'] as String?) ?? '',
           ) ??
           LyricStaggerStyle.smooth,
-      backgroundMode: backgroundMode,
-      dynamicFlowingLight: true,
-      audioReactiveFlow: _normalizedBool(
-        map['audioReactiveFlow'],
-        defaultValue: false,
-      ),
     );
   }
 }

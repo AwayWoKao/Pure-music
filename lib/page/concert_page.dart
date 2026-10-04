@@ -210,72 +210,116 @@ class _ConcertPageState extends State<ConcertPage> {
       return;
     }
     final generation = ++_generation;
-    if (showProgress && mounted) {
+    _markGenerationStarted(showProgress: showProgress, total: tracks.length);
+    try {
+      final result = await SmartSortService.run(
+        _sortOptions(tracks, generation, takeCount),
+      );
+      if (!mounted || generation != _generation) return;
+      await _persistGeneratedProgram(
+        tracks: tracks,
+        result: result,
+        name: name,
+        existingId: existingId,
+      );
+      _showGenerationResult(result);
+    } on SmartSortCancelledException {
+      _abortGeneration(generation);
+    } catch (error, trace) {
+      log.library.error(
+        'legacy',
+        '[smart sort] plan failed',
+        error: error,
+        stackTrace: trace,
+      );
+      _abortGeneration(generation, notify: true);
+    }
+  }
+
+  SmartSortOptions _sortOptions(
+    List<Audio> tracks,
+    int generation,
+    int? takeCount,
+  ) {
+    return SmartSortOptions(
+      tracks: tracks,
+      climaxPosition: _climaxPosition,
+      contrast: _contrast,
+      takeCount: takeCount ?? _setSize,
+      smoothness: _smoothness,
+      outroStyle: _outroStyle,
+      taste: _taste,
+      onProgress: (done, _) {
+        if (mounted && generation == _generation) {
+          setState(() => _analyzedCount = done);
+        }
+      },
+      isCancelled: () => _stopRequested || generation != _generation,
+    );
+  }
+
+  void _markGenerationStarted({
+    required bool showProgress,
+    required int total,
+  }) {
+    if (!mounted) return;
+    if (showProgress) {
       setState(() {
         _phase = _ConcertPhase.analyzing;
         _stopRequested = false;
         _analyzedCount = 0;
-        _totalCount = tracks.length;
+        _totalCount = total;
       });
-    } else if (mounted) {
-      setState(() => _replanning = true);
+      return;
     }
-    try {
-      final result = await SmartSortService.run(
-        SmartSortOptions(
-          tracks: tracks,
-          climaxPosition: _climaxPosition,
-          contrast: _contrast,
-          takeCount: takeCount ?? _setSize,
-          smoothness: _smoothness,
-          outroStyle: _outroStyle,
-          taste: _taste,
-          onProgress: (done, _) {
-            if (mounted && generation == _generation) {
-              setState(() => _analyzedCount = done);
-            }
-          },
-          isCancelled: () => _stopRequested || generation != _generation,
-        ),
-      );
-      if (!mounted || generation != _generation) return;
-      _activeProgramId =
-          existingId ?? DateTime.now().microsecondsSinceEpoch.toString();
-      final store = ConcertProgramStore.instance;
-      final existing = store.programs.where(
-        (program) => program.id == _activeProgramId,
-      );
-      await store.upsert(
-        ConcertProgram(
-          id: _activeProgramId!,
-          name: existing.isNotEmpty ? existing.first.name : name,
-          createdAt: DateTime.now(),
-          climaxPosition: _climaxPosition,
-          contrast: _contrast,
-          setSize: _setSize,
-          smoothness: _smoothness,
-          outroStyle: _outroStyle,
-          taste: _taste,
-          sourcePaths: [for (final audio in tracks) audio.path],
-          paths: [for (final audio in result.audios) audio.path],
-          idealCurve: result.idealCurve,
-          actualCurve: result.actualCurve,
-        ),
-      );
-      setState(() {
-        _programs = List.of(store.programs);
-        _result = result;
-        _replanning = false;
-        _phase = _ConcertPhase.result;
-        _highlightIndex = -1;
-      });
-    } on SmartSortCancelledException {
-      if (!mounted || generation != _generation) return;
-      setState(() => _phase = _ConcertPhase.select);
-    } catch (error, trace) {
-      log.library.error('legacy', '[smart sort] plan failed', error: error, stackTrace: trace);
-      if (!mounted || generation != _generation) return;
-      setState(() => _phase = _ConcertPhase.select);
+    setState(() => _replanning = true);
+  }
+
+  Future<void> _persistGeneratedProgram({
+    required List<Audio> tracks,
+    required SmartSortResult result,
+    required String name,
+    required String? existingId,
+  }) async {
+    _activeProgramId =
+        existingId ?? DateTime.now().microsecondsSinceEpoch.toString();
+    final store = ConcertProgramStore.instance;
+    final existing = store.programs.where(
+      (program) => program.id == _activeProgramId,
+    );
+    await store.upsert(
+      ConcertProgram(
+        id: _activeProgramId!,
+        name: existing.isNotEmpty ? existing.first.name : name,
+        createdAt: DateTime.now(),
+        climaxPosition: _climaxPosition,
+        contrast: _contrast,
+        setSize: _setSize,
+        smoothness: _smoothness,
+        outroStyle: _outroStyle,
+        taste: _taste,
+        sourcePaths: [for (final audio in tracks) audio.path],
+        paths: [for (final audio in result.audios) audio.path],
+        idealCurve: result.idealCurve,
+        actualCurve: result.actualCurve,
+      ),
+    );
+    _programs = List.of(store.programs);
+  }
+
+  void _showGenerationResult(SmartSortResult result) {
+    setState(() {
+      _result = result;
+      _replanning = false;
+      _phase = _ConcertPhase.result;
+      _highlightIndex = -1;
+    });
+  }
+
+  void _abortGeneration(int generation, {bool notify = false}) {
+    if (!mounted || generation != _generation) return;
+    setState(() => _phase = _ConcertPhase.select);
+    if (notify) {
       showTextOnSnackBar('生成编排失败', variant: ToastVariant.error);
     }
   }
@@ -293,55 +337,70 @@ class _ConcertPageState extends State<ConcertPage> {
   }
 
   /// 从历史存档恢复：参数与曲目原样带回，特征走缓存即时出结果。
-  Future<void> _restoreProgram(ConcertProgram program) async {
-    String pathKey(String path) =>
-        path.trim().replaceAll('\\', '/').toLowerCase();
+  String _pathKey(String path) =>
+      path.trim().replaceAll('\\', '/').toLowerCase();
 
-    final byPath = {
+  Map<String, Audio> _audioByPath() {
+    return {
       for (final audio in AudioLibrary.instance.audioCollection)
-        pathKey(audio.path): audio,
+        _pathKey(audio.path): audio,
     };
-    final sourcePaths = program.sourcePaths.isEmpty
-        ? [
-            for (final audio in AudioLibrary.instance.audioCollection)
-              audio.path,
-          ]
-        : program.sourcePaths;
-    final sourceTracks = [
-      for (final path in sourcePaths)
-        if (byPath[pathKey(path)] != null) byPath[pathKey(path)]!,
+  }
+
+  List<Audio> _tracksFromPaths(List<String> paths, Map<String, Audio> byPath) {
+    return [
+      for (final path in paths)
+        if (byPath[_pathKey(path)] != null) byPath[_pathKey(path)]!,
     ];
-    final orderedTracks = [
-      for (final path in program.paths)
-        if (byPath[pathKey(path)] != null) byPath[pathKey(path)]!,
-    ];
+  }
+
+  void _applyProgramKnobs(ConcertProgram program) {
     _climaxPosition = program.climaxPosition;
     _contrast = program.contrast;
     _setSize = program.setSize;
     _smoothness = program.smoothness;
     _outroStyle = program.outroStyle;
     _taste = program.taste;
-    final hasCompleteCurve =
-        program.idealCurve.length == orderedTracks.length &&
+  }
+
+  bool _hasCompleteCurve(ConcertProgram program, List<Audio> orderedTracks) {
+    return program.idealCurve.length == orderedTracks.length &&
         program.actualCurve.length == orderedTracks.length &&
         program.idealCurve.every((value) => value.isFinite) &&
         program.actualCurve.every((value) => value.isFinite);
+  }
+
+  void _showRestoredResult(ConcertProgram program, List<Audio> orderedTracks) {
+    _activeProgramId = program.id;
+    setState(() {
+      _result = SmartSortResult(
+        audios: orderedTracks,
+        idealCurve: List.of(program.idealCurve),
+        actualCurve: List.of(program.actualCurve),
+        analyzedCount: 0,
+        cachedCount: orderedTracks.length,
+      );
+      _replanning = false;
+      _phase = _ConcertPhase.result;
+      _highlightIndex = -1;
+    });
+  }
+
+  Future<void> _restoreProgram(ConcertProgram program) async {
+    final byPath = _audioByPath();
+    final sourcePaths = program.sourcePaths.isEmpty
+        ? [
+            for (final audio in AudioLibrary.instance.audioCollection)
+              audio.path,
+          ]
+        : program.sourcePaths;
+    final sourceTracks = _tracksFromPaths(sourcePaths, byPath);
+    final orderedTracks = _tracksFromPaths(program.paths, byPath);
+    _applyProgramKnobs(program);
     if (orderedTracks.isNotEmpty &&
         orderedTracks.length == program.paths.length &&
-        hasCompleteCurve) {
-      _activeProgramId = program.id;
-      setState(() {
-        _result = SmartSortResult(
-          audios: orderedTracks,
-          idealCurve: List.of(program.idealCurve),
-          actualCurve: List.of(program.actualCurve),
-          analyzedCount: 0,
-          cachedCount: orderedTracks.length,
-        );
-        _replanning = false;
-        _phase = _ConcertPhase.result;
-        _highlightIndex = -1;
-      });
+        _hasCompleteCurve(program, orderedTracks)) {
+      _showRestoredResult(program, orderedTracks);
       return;
     }
     await _runGeneration(
@@ -383,45 +442,60 @@ class _ConcertPageState extends State<ConcertPage> {
     await showDialog<void>(
       context: context,
       builder: (context) => StatefulBuilder(
-        builder: (context, dialogSetState) {
-          return AlertDialog(
-            title: const Text('情绪曲线'),
-            content: SizedBox(
-              width: 640,
-              height: 220,
-              child: result.actualCurve.length < 2
-                  ? const Center(child: Text('当前演出没有可显示的情绪曲线'))
-                  : LayoutBuilder(
-                      builder: (context, constraints) => GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTapUp: (details) {
-                          final ratio =
-                              (details.localPosition.dx / constraints.maxWidth)
-                                  .clamp(0.0, 1.0);
-                          highlightIndex = (ratio * (result.audios.length - 1))
-                              .round();
-                          dialogSetState(() {});
-                          _locateFromChart(
-                            details.localPosition,
-                            constraints.biggest,
-                          );
-                        },
-                        child: _CurveChart(
-                          idealCurve: result.idealCurve,
-                          actualCurve: result.actualCurve,
-                          highlightIndex: highlightIndex,
-                        ),
-                      ),
-                    ),
+        builder: (context, dialogSetState) => AlertDialog(
+          title: const Text('情绪曲线'),
+          content: SizedBox(
+            width: 640,
+            height: 220,
+            child: _emotionCurveBody(result, highlightIndex, (local, size) {
+              final ratio = (local.dx / size.width).clamp(0.0, 1.0);
+              highlightIndex = (ratio * (result.audios.length - 1)).round();
+              dialogSetState(() {});
+              _locateFromChart(local, size);
+            }),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('完成'),
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('完成'),
-              ),
-            ],
-          );
-        },
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _emotionCurveBody(
+    SmartSortResult result,
+    int highlightIndex,
+    void Function(Offset local, Size size) onTap,
+  ) {
+    if (result.actualCurve.length < 2) {
+      return const Center(child: Text('当前演出没有可显示的情绪曲线'));
+    }
+    return _tappableCurve(
+      idealCurve: result.idealCurve,
+      actualCurve: result.actualCurve,
+      highlightIndex: highlightIndex,
+      onTap: onTap,
+    );
+  }
+
+  Widget _tappableCurve({
+    required List<double> idealCurve,
+    required List<double> actualCurve,
+    required int highlightIndex,
+    required void Function(Offset local, Size size) onTap,
+  }) {
+    return LayoutBuilder(
+      builder: (context, constraints) => GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapUp: (details) => onTap(details.localPosition, constraints.biggest),
+        child: _CurveChart(
+          idealCurve: idealCurve,
+          actualCurve: actualCurve,
+          highlightIndex: highlightIndex,
+        ),
       ),
     );
   }
@@ -494,7 +568,23 @@ class _ConcertPageState extends State<ConcertPage> {
 
   @override
   Widget build(BuildContext context) {
-    final actions = switch (_phase) {
+    return PageScaffold(
+      title: '演出模式',
+      subtitle: _subtitle,
+      actions: _phaseActions(),
+      body: ListenableBuilder(
+        listenable: AppSettings.listMotionNotifier,
+        builder: (context, _) => switch (_phase) {
+          _ConcertPhase.select => _buildSelectBody(context),
+          _ConcertPhase.analyzing => _buildAnalyzingBody(context),
+          _ConcertPhase.result => _buildResultBody(context),
+        },
+      ),
+    );
+  }
+
+  List<Widget> _phaseActions() {
+    return switch (_phase) {
       _ConcertPhase.select => [
         OutlinedButton.icon(
           onPressed: _showSettingsDialog,
@@ -532,19 +622,6 @@ class _ConcertPageState extends State<ConcertPage> {
         ),
       ],
     };
-    return PageScaffold(
-      title: '演出模式',
-      subtitle: _subtitle,
-      actions: actions,
-      body: ListenableBuilder(
-        listenable: AppSettings.listMotionNotifier,
-        builder: (context, _) => switch (_phase) {
-          _ConcertPhase.select => _buildSelectBody(context),
-          _ConcertPhase.analyzing => _buildAnalyzingBody(context),
-          _ConcertPhase.result => _buildResultBody(context),
-        },
-      ),
-    );
   }
 
   Widget _buildSelectBody(BuildContext context) {
@@ -568,33 +645,36 @@ class _ConcertPageState extends State<ConcertPage> {
             for (final kind in _SourceKind.values) _sourcePill(context, kind),
           ],
         ),
-        if (_hasSelection)
-          Padding(
-            padding: const EdgeInsets.only(top: Spacing.sm),
-            child: Row(
-              children: [
-                Text(
-                  '已选 ${_collectSelectedAudios().length} 首乐曲',
-                  style: TextStyle(
-                    fontSize: AppType.caption,
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(width: Spacing.md),
-                TextButton(
-                  onPressed: _clearSelection,
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    minimumSize: const Size(0, 32),
-                  ),
-                  child: const Text('清除'),
-                ),
-              ],
-            ),
-          ),
+        if (_hasSelection) _selectionHint(scheme),
         const SizedBox(height: Spacing.md),
         Expanded(child: _buildSourceList()),
       ],
+    );
+  }
+
+  Widget _selectionHint(ColorScheme scheme) {
+    return Padding(
+      padding: const EdgeInsets.only(top: Spacing.sm),
+      child: Row(
+        children: [
+          Text(
+            '已选 ${_collectSelectedAudios().length} 首乐曲',
+            style: TextStyle(
+              fontSize: AppType.caption,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(width: Spacing.md),
+          TextButton(
+            onPressed: _clearSelection,
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              minimumSize: const Size(0, 32),
+            ),
+            child: const Text('清除'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -617,76 +697,87 @@ class _ConcertPageState extends State<ConcertPage> {
         scrollDirection: Axis.horizontal,
         itemCount: _programs.length,
         separatorBuilder: (_, _) => const SizedBox(width: Spacing.sm),
-        itemBuilder: (context, index) {
-          final program = _programs[index];
-          final created = program.createdAt;
-          return SizedBox(
-            width: 220,
-            child: InkWell(
-              borderRadius: AppRadius.mdCircular,
-              hoverColor: schemeHover(context),
-              onTap: () => _restoreProgram(program),
-              child: Container(
-                padding: const EdgeInsets.all(Spacing.md),
-                decoration: BoxDecoration(
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
-                  borderRadius: AppRadius.mdCircular,
-                  border: Border.all(color: Colors.transparent),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            program.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: AppType.body,
-                              fontWeight: AppType.weightMedium,
-                              color: Theme.of(context).colorScheme.onSurface,
-                            ),
-                          ),
-                        ),
-                        SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: IconButton(
-                            padding: EdgeInsets.zero,
-                            iconSize: 16,
-                            tooltip: '删除',
-                            onPressed: () => _deleteProgram(program.id),
-                            icon: Icon(
-                              Symbols.close,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const Spacer(),
-                    Text(
-                      '${program.paths.length} 首 · '
-                      '${created.month}/${created.day} '
-                      '${created.hour.toString().padLeft(2, '0')}:'
-                      '${created.minute.toString().padLeft(2, '0')}',
-                      style: TextStyle(
-                        fontSize: AppType.microlabel,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+        itemBuilder: (context, index) => _recentProgramCard(_programs[index]),
+      ),
+    );
+  }
+
+  Widget _recentProgramCard(ConcertProgram program) {
+    return SizedBox(
+      width: 220,
+      child: InkWell(
+        borderRadius: AppRadius.mdCircular,
+        hoverColor: schemeHover(context),
+        onTap: () => _restoreProgram(program),
+        child: Container(
+          padding: const EdgeInsets.all(Spacing.md),
+          decoration: _recentProgramDecoration(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _recentProgramTitleRow(program),
+              const Spacer(),
+              _recentProgramMeta(program),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  BoxDecoration _recentProgramDecoration() {
+    return BoxDecoration(
+      color: Theme.of(
+        context,
+      ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+      borderRadius: AppRadius.mdCircular,
+      border: Border.all(color: Colors.transparent),
+    );
+  }
+
+  Widget _recentProgramTitleRow(ConcertProgram program) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            program.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: AppType.body,
+              fontWeight: AppType.weightMedium,
+              color: Theme.of(context).colorScheme.onSurface,
             ),
-          );
-        },
+          ),
+        ),
+        SizedBox(
+          width: 24,
+          height: 24,
+          child: IconButton(
+            padding: EdgeInsets.zero,
+            iconSize: 16,
+            tooltip: '删除',
+            onPressed: () => _deleteProgram(program.id),
+            icon: Icon(
+              Symbols.close,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _recentProgramMeta(ConcertProgram program) {
+    final created = program.createdAt;
+    return Text(
+      '${program.paths.length} 首 · '
+      '${created.month}/${created.day} '
+      '${created.hour.toString().padLeft(2, '0')}:'
+      '${created.minute.toString().padLeft(2, '0')}',
+      style: TextStyle(
+        fontSize: AppType.microlabel,
+        color: Theme.of(context).colorScheme.onSurfaceVariant,
       ),
     );
   }
@@ -744,44 +835,50 @@ class _ConcertPageState extends State<ConcertPage> {
           Text(kind.label),
           if (badgeCount > 0) ...[
             const SizedBox(width: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-              decoration: BoxDecoration(
-                color: isSelected
-                    ? scheme.primary
-                    : scheme.onSurfaceVariant.withValues(alpha: 0.28),
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Text(
-                '$badgeCount',
-                style: TextStyle(
-                  fontSize: AppType.microlabel,
-                  height: 1.4,
-                  color: isSelected ? scheme.onPrimary : scheme.onSurface,
-                ),
-              ),
-            ),
+            _sourceCountBadge(scheme, isSelected, badgeCount),
           ],
         ],
       ),
-      style: ButtonStyle(
-        foregroundColor: WidgetStatePropertyAll(
-          isSelected ? scheme.onSecondaryContainer : scheme.onSurfaceVariant,
+      style: _sourcePillStyle(scheme, isSelected),
+    );
+  }
+
+  Widget _sourceCountBadge(ColorScheme scheme, bool isSelected, int count) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: isSelected
+            ? scheme.primary
+            : scheme.onSurfaceVariant.withValues(alpha: 0.28),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        '$count',
+        style: TextStyle(
+          fontSize: AppType.microlabel,
+          height: 1.4,
+          color: isSelected ? scheme.onPrimary : scheme.onSurface,
         ),
-        backgroundColor: WidgetStatePropertyAll(
-          isSelected
-              ? scheme.secondaryContainer
-              : scheme.surfaceContainerHighest,
-        ),
-        side: WidgetStatePropertyAll(
-          BorderSide(color: isSelected ? scheme.primary : scheme.outline),
-        ),
-        shape: WidgetStatePropertyAll(
-          RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
-        ),
-        padding: const WidgetStatePropertyAll(
-          EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        ),
+      ),
+    );
+  }
+
+  ButtonStyle _sourcePillStyle(ColorScheme scheme, bool isSelected) {
+    return ButtonStyle(
+      foregroundColor: WidgetStatePropertyAll(
+        isSelected ? scheme.onSecondaryContainer : scheme.onSurfaceVariant,
+      ),
+      backgroundColor: WidgetStatePropertyAll(
+        isSelected ? scheme.secondaryContainer : scheme.surfaceContainerHighest,
+      ),
+      side: WidgetStatePropertyAll(
+        BorderSide(color: isSelected ? scheme.primary : scheme.outline),
+      ),
+      shape: WidgetStatePropertyAll(
+        RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
+      ),
+      padding: const WidgetStatePropertyAll(
+        EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       ),
     );
   }
@@ -789,58 +886,62 @@ class _ConcertPageState extends State<ConcertPage> {
   ({List<_SourceEntry> entries, Set<String> selected}) _currentSourceEntries() {
     switch (_sourceKind) {
       case _SourceKind.folders:
-        return (
-          entries: [
-            for (final folder in AudioLibrary.instance.folders)
-              _SourceEntry(
-                key: folder.path,
-                title: folder.displayName,
-                count: folder.audios.length,
-                icon: Symbols.folder,
-              ),
-          ],
-          selected: selectedFolders,
-        );
+        return (entries: _folderSourceEntries(), selected: selectedFolders);
       case _SourceKind.artists:
-        return (
-          entries: [
-            for (final artist in AudioLibrary.instance.artistCollection.values)
-              _SourceEntry(
-                key: artist.name,
-                title: artist.name,
-                count: artist.works.length,
-                icon: Symbols.artist,
-              ),
-          ]..sort((a, b) => a.title.compareTo(b.title)),
-          selected: selectedArtists,
-        );
+        return (entries: _artistSourceEntries(), selected: selectedArtists);
       case _SourceKind.albums:
-        return (
-          entries: [
-            for (final album in AudioLibrary.instance.albumCollection.values)
-              _SourceEntry(
-                key: album.name,
-                title: album.name,
-                count: album.works.length,
-                icon: Symbols.album,
-              ),
-          ]..sort((a, b) => a.title.compareTo(b.title)),
-          selected: selectedAlbums,
-        );
+        return (entries: _albumSourceEntries(), selected: selectedAlbums);
       case _SourceKind.playlists:
-        return (
-          entries: [
-            for (final playlist in playlists)
-              _SourceEntry(
-                key: playlist.name,
-                title: playlist.name,
-                count: playlist.paths.length,
-                icon: Symbols.list,
-              ),
-          ],
-          selected: selectedPlaylists,
-        );
+        return (entries: _playlistSourceEntries(), selected: selectedPlaylists);
     }
+  }
+
+  List<_SourceEntry> _folderSourceEntries() {
+    return [
+      for (final folder in AudioLibrary.instance.folders)
+        _SourceEntry(
+          key: folder.path,
+          title: folder.displayName,
+          count: folder.audios.length,
+          icon: Symbols.folder,
+        ),
+    ];
+  }
+
+  List<_SourceEntry> _artistSourceEntries() {
+    return [
+      for (final artist in AudioLibrary.instance.artistCollection.values)
+        _SourceEntry(
+          key: artist.name,
+          title: artist.name,
+          count: artist.works.length,
+          icon: Symbols.artist,
+        ),
+    ]..sort((a, b) => a.title.compareTo(b.title));
+  }
+
+  List<_SourceEntry> _albumSourceEntries() {
+    return [
+      for (final album in AudioLibrary.instance.albumCollection.values)
+        _SourceEntry(
+          key: album.name,
+          title: album.name,
+          count: album.works.length,
+          icon: Symbols.album,
+        ),
+    ]..sort((a, b) => a.title.compareTo(b.title));
+  }
+
+  List<_SourceEntry> _playlistSourceEntries() {
+    return [
+      for (final playlist in playlists)
+        _SourceEntry(
+          key: playlist.name,
+          title: playlist.name,
+          count: playlist.paths.length,
+          icon: Symbols.list,
+        ),
+    ];
   }
 
   Widget _buildSourceList() {
@@ -910,43 +1011,48 @@ class _ConcertPageState extends State<ConcertPage> {
                   : Theme.of(context).colorScheme.onSurfaceVariant,
             ),
             const SizedBox(width: 16.0),
-            Expanded(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    entry.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: AppType.subtitle,
-                      fontWeight: AppType.weightMedium,
-                      color: Theme.of(context).colorScheme.onSurface,
-                    ),
-                  ),
-                  Text(
-                    '${entry.count} 首',
-                    style: TextStyle(
-                      fontSize: AppType.caption,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Icon(
-              isSelected ? Symbols.check_circle : Symbols.circle,
-              size: 22,
-              color: isSelected
-                  ? Theme.of(context).colorScheme.primary
-                  : Theme.of(
-                      context,
-                    ).colorScheme.onSurfaceVariant.withValues(alpha: 0.45),
-            ),
+            Expanded(child: _sourceEntryTexts(entry)),
+            _sourceCheckIcon(context, isSelected),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _sourceCheckIcon(BuildContext context, bool isSelected) {
+    final scheme = Theme.of(context).colorScheme;
+    return Icon(
+      isSelected ? Symbols.check_circle : Symbols.circle,
+      size: 22,
+      color: isSelected
+          ? scheme.primary
+          : scheme.onSurfaceVariant.withValues(alpha: 0.45),
+    );
+  }
+
+  Widget _sourceEntryTexts(_SourceEntry entry) {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          entry.title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: AppType.subtitle,
+            fontWeight: AppType.weightMedium,
+            color: Theme.of(context).colorScheme.onSurface,
+          ),
+        ),
+        Text(
+          '${entry.count} 首',
+          style: TextStyle(
+            fontSize: AppType.caption,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ],
     );
   }
 
@@ -970,6 +1076,26 @@ class _ConcertPageState extends State<ConcertPage> {
       : value < 0.67
       ? '均衡'
       : '顺滑优先';
+
+  List<Widget> _styleChips(
+    ColorScheme scheme,
+    List<(String, int)> options,
+    int current,
+    ValueChanged<int> onSelected,
+  ) {
+    return [
+      for (final (name, value) in options)
+        _sizeChip(
+          scheme,
+          value,
+          null,
+          label: name,
+          isSelectedOverride: current == value,
+          useOverride: true,
+          onSelected: () => onSelected(value),
+        ),
+    ];
+  }
 
   Widget _buildStyleChipsRow(
     ColorScheme scheme, {
@@ -996,23 +1122,86 @@ class _ConcertPageState extends State<ConcertPage> {
             child: Wrap(
               spacing: Spacing.sm,
               runSpacing: Spacing.xs,
-              children: [
-                for (final (name, value) in options)
-                  _sizeChip(
-                    scheme,
-                    value,
-                    null,
-                    label: name,
-                    isSelectedOverride: current == value,
-                    useOverride: true,
-                    onSelected: () => onSelected(value),
-                  ),
-              ],
+              children: _styleChips(scheme, options, current, onSelected),
             ),
           ),
         ],
       ),
     );
+  }
+
+  void _bindKnob(void Function() apply, StateSetter? dialogSetState) {
+    setState(apply);
+    dialogSetState?.call(() {});
+  }
+
+  List<Widget> _advancedSliderRows({
+    VoidCallback? onCommit,
+    StateSetter? dialogSetState,
+  }) {
+    return [
+      _SliderRow(
+        label: '压轴时机',
+        detail: _climaxLabel(_climaxPosition),
+        value: _climaxPosition,
+        min: 0.55,
+        max: 0.95,
+        onChanged: (value) =>
+            _bindKnob(() => _climaxPosition = value, dialogSetState),
+        onChangedEnd: onCommit == null ? null : (_) => onCommit(),
+      ),
+      _SliderRow(
+        label: '情绪起伏',
+        detail: _contrastLabel(_contrast),
+        value: _contrast,
+        min: 0,
+        max: 1,
+        onChanged: (value) =>
+            _bindKnob(() => _contrast = value, dialogSetState),
+        onChangedEnd: onCommit == null ? null : (_) => onCommit(),
+      ),
+      _SliderRow(
+        label: '顺滑度',
+        detail: _smoothnessLabel(_smoothness),
+        value: _smoothness,
+        min: 0,
+        max: 1,
+        onChanged: (value) =>
+            _bindKnob(() => _smoothness = value, dialogSetState),
+        onChangedEnd: onCommit == null ? null : (_) => onCommit(),
+      ),
+    ];
+  }
+
+  List<Widget> _advancedStyleChips({
+    required ColorScheme scheme,
+    VoidCallback? onCommit,
+    StateSetter? dialogSetState,
+  }) {
+    return [
+      _buildStyleChipsRow(
+        scheme,
+        label: '收尾风格',
+        options: const [('温暖', 0), ('渐弱', 1), ('燃尽', 2)],
+        current: _outroStyle,
+        onSelected: (value) {
+          setState(() => _outroStyle = value);
+          dialogSetState?.call(() {});
+          onCommit?.call();
+        },
+      ),
+      _buildStyleChipsRow(
+        scheme,
+        label: '抽取口味',
+        options: const [('全部', 0), ('换口味', 1), ('常听的', 2)],
+        current: _taste,
+        onSelected: (value) {
+          setState(() => _taste = value);
+          dialogSetState?.call(() {});
+          onCommit?.call();
+        },
+      ),
+    ];
   }
 
   Widget _buildAdvancedCard(
@@ -1031,72 +1220,34 @@ class _ConcertPageState extends State<ConcertPage> {
       ),
       child: Column(
         children: [
-          _SliderRow(
-            label: '压轴时机',
-            detail: _climaxLabel(_climaxPosition),
-            value: _climaxPosition,
-            min: 0.55,
-            max: 0.95,
-            onChanged: (value) {
-              setState(() => _climaxPosition = value);
-              dialogSetState?.call(() {});
-            },
-            onChangedEnd: onCommit == null ? null : (_) => onCommit(),
-          ),
-          _SliderRow(
-            label: '情绪起伏',
-            detail: _contrastLabel(_contrast),
-            value: _contrast,
-            min: 0,
-            max: 1,
-            onChanged: (value) {
-              setState(() => _contrast = value);
-              dialogSetState?.call(() {});
-            },
-            onChangedEnd: onCommit == null ? null : (_) => onCommit(),
-          ),
-          _SliderRow(
-            label: '顺滑度',
-            detail: _smoothnessLabel(_smoothness),
-            value: _smoothness,
-            min: 0,
-            max: 1,
-            onChanged: (value) {
-              setState(() => _smoothness = value);
-              dialogSetState?.call(() {});
-            },
-            onChangedEnd: onCommit == null ? null : (_) => onCommit(),
+          ..._advancedSliderRows(
+            onCommit: onCommit,
+            dialogSetState: dialogSetState,
           ),
           _buildSetSizeRow(
             scheme,
             onCommitted: onCommit,
             dialogSetState: dialogSetState,
           ),
-          _buildStyleChipsRow(
-            scheme,
-            label: '收尾风格',
-            options: const [('温暖', 0), ('渐弱', 1), ('燃尽', 2)],
-            current: _outroStyle,
-            onSelected: (value) {
-              setState(() => _outroStyle = value);
-              dialogSetState?.call(() {});
-              onCommit?.call();
-            },
-          ),
-          _buildStyleChipsRow(
-            scheme,
-            label: '抽取口味',
-            options: const [('全部', 0), ('换口味', 1), ('常听的', 2)],
-            current: _taste,
-            onSelected: (value) {
-              setState(() => _taste = value);
-              dialogSetState?.call(() {});
-              onCommit?.call();
-            },
+          ..._advancedStyleChips(
+            scheme: scheme,
+            onCommit: onCommit,
+            dialogSetState: dialogSetState,
           ),
         ],
       ),
     );
+  }
+
+  List<Widget> _setSizeChips(
+    ColorScheme scheme,
+    VoidCallback? onCommitted,
+    StateSetter? dialogSetState,
+  ) {
+    return [
+      for (final option in const [0, 15, 30, 60])
+        _sizeChip(scheme, option, onCommitted, dialogSetState: dialogSetState),
+    ];
   }
 
   Widget _buildSetSizeRow(
@@ -1122,15 +1273,7 @@ class _ConcertPageState extends State<ConcertPage> {
             child: Wrap(
               spacing: Spacing.sm,
               runSpacing: Spacing.xs,
-              children: [
-                for (final option in const [0, 15, 30, 60])
-                  _sizeChip(
-                    scheme,
-                    option,
-                    onCommitted,
-                    dialogSetState: dialogSetState,
-                  ),
-              ],
+              children: _setSizeChips(scheme, onCommitted, dialogSetState),
             ),
           ),
         ],
@@ -1166,28 +1309,32 @@ class _ConcertPageState extends State<ConcertPage> {
         duration: MotionDuration.base,
         curve: MotionCurve.standard,
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? scheme.secondaryContainer
-              : scheme.surfaceContainerHighest.withValues(alpha: 0.5),
-          borderRadius: AppRadius.smCircular,
-          border: Border.all(
-            color: isSelected ? scheme.primary : scheme.outlineVariant,
-          ),
-        ),
+        decoration: _sizeChipDecoration(scheme, isSelected),
         child: Text(
           effectiveLabel,
-          style: TextStyle(
-            fontSize: AppType.caption,
-            fontWeight: isSelected
-                ? AppType.weightSemibold
-                : AppType.weightRegular,
-            color: isSelected
-                ? scheme.onSecondaryContainer
-                : scheme.onSurfaceVariant,
-          ),
+          style: _sizeChipTextStyle(scheme, isSelected),
         ),
       ),
+    );
+  }
+
+  BoxDecoration _sizeChipDecoration(ColorScheme scheme, bool isSelected) {
+    return BoxDecoration(
+      color: isSelected
+          ? scheme.secondaryContainer
+          : scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+      borderRadius: AppRadius.smCircular,
+      border: Border.all(
+        color: isSelected ? scheme.primary : scheme.outlineVariant,
+      ),
+    );
+  }
+
+  TextStyle _sizeChipTextStyle(ColorScheme scheme, bool isSelected) {
+    return TextStyle(
+      fontSize: AppType.caption,
+      fontWeight: isSelected ? AppType.weightSemibold : AppType.weightRegular,
+      color: isSelected ? scheme.onSecondaryContainer : scheme.onSurfaceVariant,
     );
   }
 
@@ -1268,132 +1415,12 @@ class _ConcertPageState extends State<ConcertPage> {
     if (result == null) return const SizedBox.shrink();
     final scheme = Theme.of(context).colorScheme;
     final sections = _computeSections(result.audios.length);
-    // 行布局：负值表示幕头（编码为 -(幕下标+1)），正值表示乐曲下标。
-    final layout = <int>[];
-    for (var sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
-      final section = sections[sectionIndex];
-      layout.add(-(sectionIndex + 1));
-      for (var song = section.start; song < section.end; song++) {
-        layout.add(song);
-      }
-    }
-    if (layout.isEmpty) {
-      for (var song = 0; song < result.audios.length; song++) {
-        layout.add(song);
-      }
-    }
+    final layout = _resultLayout(sections, result.audios.length);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        InkWell(
-          borderRadius: AppRadius.mdCircular,
-          hoverColor: schemeHover(context),
-          onTap: () => setState(() => _adjusterOpen = !_adjusterOpen),
-          child: Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: Spacing.lg,
-              vertical: Spacing.sm + 2,
-            ),
-            decoration: BoxDecoration(
-              color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
-              borderRadius: AppRadius.mdCircular,
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.tune, size: 18, color: scheme.onSurfaceVariant),
-                const SizedBox(width: Spacing.sm),
-                Text(
-                  '调节',
-                  style: TextStyle(
-                    fontSize: AppType.body,
-                    fontWeight: AppType.weightMedium,
-                    color: scheme.onSurface,
-                  ),
-                ),
-                const Spacer(),
-                if (_replanning)
-                  SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: scheme.primary,
-                    ),
-                  )
-                else
-                  AnimatedRotation(
-                    duration: MotionDuration.base,
-                    curve: MotionCurve.standard,
-                    turns: _adjusterOpen ? 0.5 : 0.0,
-                    child: Icon(
-                      Symbols.keyboard_arrow_down,
-                      size: 20,
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
-        AnimatedSize(
-          duration: MotionDuration.base,
-          curve: MotionCurve.standard,
-          alignment: Alignment.topCenter,
-          child: _adjusterOpen
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const SizedBox(height: Spacing.sm),
-                    Stack(
-                      children: [
-                        Container(
-                          height: 180,
-                          decoration: BoxDecoration(
-                            color: scheme.surfaceContainerHighest.withValues(
-                              alpha: 0.35,
-                            ),
-                            borderRadius: AppRadius.mdCircular,
-                            border: Border.all(color: scheme.outlineVariant),
-                          ),
-                          padding: const EdgeInsets.all(Spacing.md),
-                          child: LayoutBuilder(
-                            builder: (context, constraints) => GestureDetector(
-                              behavior: HitTestBehavior.opaque,
-                              onTapUp: (details) => _locateFromChart(
-                                details.localPosition,
-                                constraints.biggest,
-                              ),
-                              child: _CurveChart(
-                                idealCurve: result.idealCurve,
-                                actualCurve: result.actualCurve,
-                                highlightIndex: _highlightIndex,
-                              ),
-                            ),
-                          ),
-                        ),
-                        Positioned(
-                          top: Spacing.sm,
-                          right: Spacing.md,
-                          child: Row(
-                            children: [
-                              _LegendDot(
-                                color: scheme.outline,
-                                dashed: true,
-                                label: '目标',
-                              ),
-                              const SizedBox(width: Spacing.md),
-                              _LegendDot(color: scheme.primary, label: '实际'),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: Spacing.sm),
-                    _buildAdvancedCard(scheme, onCommit: _replanQuietly),
-                  ],
-                )
-              : const SizedBox.shrink(),
-        ),
+        _adjusterHeader(scheme),
+        _adjusterPanel(scheme, result),
         const SizedBox(height: Spacing.xs),
         Expanded(
           child: Material(
@@ -1405,7 +1432,129 @@ class _ConcertPageState extends State<ConcertPage> {
     );
   }
 
-  /// 节目单列表。行高不统一（乐曲/幕头/尾注），堆叠变换按累计行高逐行应用。
+  List<int> _resultLayout(List<_ProgramSection> sections, int songCount) {
+    final layout = <int>[];
+    for (var sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
+      final section = sections[sectionIndex];
+      layout.add(-(sectionIndex + 1));
+      for (var song = section.start; song < section.end; song++) {
+        layout.add(song);
+      }
+    }
+    if (layout.isEmpty) {
+      for (var song = 0; song < songCount; song++) {
+        layout.add(song);
+      }
+    }
+    return layout;
+  }
+
+  Widget _adjusterHeader(ColorScheme scheme) {
+    return InkWell(
+      borderRadius: AppRadius.mdCircular,
+      hoverColor: schemeHover(context),
+      onTap: () => setState(() => _adjusterOpen = !_adjusterOpen),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: Spacing.lg,
+          vertical: Spacing.sm + 2,
+        ),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
+          borderRadius: AppRadius.mdCircular,
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.tune, size: 18, color: scheme.onSurfaceVariant),
+            const SizedBox(width: Spacing.sm),
+            Text(
+              '调节',
+              style: TextStyle(
+                fontSize: AppType.body,
+                fontWeight: AppType.weightMedium,
+                color: scheme.onSurface,
+              ),
+            ),
+            const Spacer(),
+            _adjusterTrailing(scheme),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _adjusterTrailing(ColorScheme scheme) {
+    if (_replanning) {
+      return SizedBox(
+        width: 14,
+        height: 14,
+        child: CircularProgressIndicator(strokeWidth: 2, color: scheme.primary),
+      );
+    }
+    return AnimatedRotation(
+      duration: MotionDuration.base,
+      curve: MotionCurve.standard,
+      turns: _adjusterOpen ? 0.5 : 0.0,
+      child: Icon(
+        Symbols.keyboard_arrow_down,
+        size: 20,
+        color: scheme.onSurfaceVariant,
+      ),
+    );
+  }
+
+  Widget _adjusterPanel(ColorScheme scheme, SmartSortResult result) {
+    return AnimatedSize(
+      duration: MotionDuration.base,
+      curve: MotionCurve.standard,
+      alignment: Alignment.topCenter,
+      child: _adjusterOpen
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: Spacing.sm),
+                _curveCard(scheme, result),
+                const SizedBox(height: Spacing.sm),
+                _buildAdvancedCard(scheme, onCommit: _replanQuietly),
+              ],
+            )
+          : const SizedBox.shrink(),
+    );
+  }
+
+  Widget _curveCard(ColorScheme scheme, SmartSortResult result) {
+    return Stack(
+      children: [
+        Container(
+          height: 180,
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
+            borderRadius: AppRadius.mdCircular,
+            border: Border.all(color: scheme.outlineVariant),
+          ),
+          padding: const EdgeInsets.all(Spacing.md),
+          child: _tappableCurve(
+            idealCurve: result.idealCurve,
+            actualCurve: result.actualCurve,
+            highlightIndex: _highlightIndex,
+            onTap: _locateFromChart,
+          ),
+        ),
+        Positioned(
+          top: Spacing.sm,
+          right: Spacing.md,
+          child: Row(
+            children: [
+              _LegendDot(color: scheme.outline, dashed: true, label: '目标'),
+              const SizedBox(width: Spacing.md),
+              _LegendDot(color: scheme.primary, label: '实际'),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildProgramList(
     SmartSortResult result,
     List<_ProgramSection> sections,
@@ -1424,77 +1573,103 @@ class _ConcertPageState extends State<ConcertPage> {
     for (final extent in extents) {
       tops.add(tops.last + extent);
     }
-    Widget rowFor(int index) {
-      if (index == layout.length) {
-        return SizedBox(
-          height: _footerRowExtent,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(
-              Spacing.lg,
-              Spacing.lg,
-              Spacing.lg,
-              Spacing.sm,
-            ),
-            child: Text(
-              '仅影响本次播放队列，你的歌单不会被改动。',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: AppType.microlabel,
-                letterSpacing: 0.2,
-                color: scheme.onSurfaceVariant.withValues(alpha: 0.7),
-              ),
-            ),
-          ),
-        );
-      }
-      final value = layout[index];
-      if (value < 0) {
-        final section = sections[-value - 1];
-        return SizedBox(
-          height: _programHeaderExtent,
-          child: _ProgramHeader(name: section.name, count: section.count),
-        );
-      }
-      return AudioTile(
-        audioIndex: value,
-        playlist: result.audios,
-        focus: value == _highlightIndex,
-        leading: _OrderBadge(order: value + 1),
-      );
-    }
-
     final listView = ListView.builder(
       controller: _resultListController,
       physics: stackedEnabled ? const SmoothScrollPhysics() : null,
       itemCount: layout.length + 1,
       // 底部预留 mini 播放器悬浮高度与收尾小字的空间。
       padding: const EdgeInsets.only(bottom: Spacing.bottomNav),
-      itemBuilder: (context, index) {
-        final child = rowFor(index);
-        if (!stackedEnabled) return child;
-        return AnimatedBuilder(
-          animation: _resultListController,
-          child: child,
-          builder: (context, child) {
-            final positions = _resultListController.positions;
-            if (positions.isEmpty) return child!;
-            final position = positions.first;
-            final viewportHeight = position.viewportDimension;
-            final extent = extents[index];
-            if (viewportHeight < extent * 2) return child!;
-            return StackedItemTransform(
-              itemTop: tops[index] - position.pixels,
-              itemExtent: extent,
-              viewportHeight: viewportHeight,
-              child: child!,
-            );
-          },
-        );
-      },
+      itemBuilder: (context, index) => _programListItem(
+        result: result,
+        sections: sections,
+        layout: layout,
+        scheme: scheme,
+        index: index,
+        stackedEnabled: stackedEnabled,
+        extents: extents,
+        tops: tops,
+      ),
     );
     // 与 StackedListView 一致：作用域内跳过入场动画，避免与堆叠变换叠加。
     if (!stackedEnabled) return listView;
     return StackedEffectScope(child: listView);
+  }
+
+  Widget _programListRow(
+    SmartSortResult result,
+    List<_ProgramSection> sections,
+    List<int> layout,
+    ColorScheme scheme,
+    int index,
+  ) {
+    if (index == layout.length) {
+      return SizedBox(
+        height: _footerRowExtent,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            Spacing.lg,
+            Spacing.lg,
+            Spacing.lg,
+            Spacing.sm,
+          ),
+          child: Text(
+            '仅影响本次播放队列，你的歌单不会被改动。',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: AppType.microlabel,
+              letterSpacing: 0.2,
+              color: scheme.onSurfaceVariant.withValues(alpha: 0.7),
+            ),
+          ),
+        ),
+      );
+    }
+    final value = layout[index];
+    if (value < 0) {
+      final section = sections[-value - 1];
+      return SizedBox(
+        height: _programHeaderExtent,
+        child: _ProgramHeader(name: section.name, count: section.count),
+      );
+    }
+    return AudioTile(
+      audioIndex: value,
+      playlist: result.audios,
+      focus: value == _highlightIndex,
+      leading: _OrderBadge(order: value + 1),
+    );
+  }
+
+  Widget _programListItem({
+    required SmartSortResult result,
+    required List<_ProgramSection> sections,
+    required List<int> layout,
+    required ColorScheme scheme,
+    required int index,
+    required bool stackedEnabled,
+    required List<double> extents,
+    required List<double> tops,
+  }) {
+    final child = _programListRow(result, sections, layout, scheme, index);
+    if (!stackedEnabled) return child;
+    return AnimatedBuilder(
+      animation: _resultListController,
+      child: child,
+      builder: (context, child) {
+        final positions = _resultListController.positions;
+        if (positions.isEmpty) return child!;
+        final position = positions.first;
+        final viewportHeight = position.viewportDimension;
+        final extent = extents[index];
+        if (viewportHeight < extent * 2) return child!;
+        return StackedItemTransform(
+          itemTop: tops[index] - position.pixels,
+          itemExtent: extent,
+          viewportHeight: viewportHeight,
+          child: child!,
+        );
+      },
+    );
   }
 }
 
@@ -1749,66 +1924,122 @@ class _CurveChartPainter extends CustomPainter {
       minValue -= 1;
     }
     const headroom = 8.0;
-    final drawableHeight = size.height - headroom * 2;
-    final verticalSpan = maxValue - minValue;
-    Offset pointAt(int index, List<double> curve) {
-      final count = curve.length;
-      final x = count <= 1 ? size.width / 2 : size.width * index / (count - 1);
-      final normalized = (curve[index] - minValue) / verticalSpan;
-      return Offset(x, size.height - headroom - normalized * drawableHeight);
-    }
+    _paintIdeal(canvas, size, minValue, maxValue, headroom);
+    _paintActual(canvas, size, minValue, maxValue, headroom);
+    _paintHighlight(canvas, size, minValue, maxValue, headroom);
+  }
 
-    Path polyline(List<double> curve) {
-      final path = Path()..moveTo(pointAt(0, curve).dx, pointAt(0, curve).dy);
-      for (var index = 1; index < curve.length; index++) {
-        path.lineTo(pointAt(index, curve).dx, pointAt(index, curve).dy);
+  Offset _pointAt(
+    int index,
+    List<double> curve,
+    Size size,
+    double minValue,
+    double maxValue,
+    double headroom,
+  ) {
+    final count = curve.length;
+    final x = count <= 1 ? size.width / 2 : size.width * index / (count - 1);
+    final normalized = (curve[index] - minValue) / (maxValue - minValue);
+    return Offset(
+      x,
+      size.height - headroom - normalized * (size.height - headroom * 2),
+    );
+  }
+
+  Path _polyline(
+    List<double> curve,
+    Size size,
+    double minValue,
+    double maxValue,
+    double headroom,
+  ) {
+    final path = Path()
+      ..moveTo(
+        _pointAt(0, curve, size, minValue, maxValue, headroom).dx,
+        _pointAt(0, curve, size, minValue, maxValue, headroom).dy,
+      );
+    for (var index = 1; index < curve.length; index++) {
+      final point = _pointAt(index, curve, size, minValue, maxValue, headroom);
+      path.lineTo(point.dx, point.dy);
+    }
+    return path;
+  }
+
+  void _paintIdeal(
+    Canvas canvas,
+    Size size,
+    double minValue,
+    double maxValue,
+    double headroom,
+  ) {
+    if (idealCurve.length < 2) return;
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.6
+      ..color = idealColor.withValues(alpha: 0.85);
+    final path = _polyline(idealCurve, size, minValue, maxValue, headroom);
+    for (final metric in path.computeMetrics()) {
+      var distance = 0.0;
+      while (distance < metric.length) {
+        final end = math.min(distance + _dashLength, metric.length);
+        canvas.drawPath(metric.extractPath(distance, end), paint);
+        distance += _dashLength + _dashGap;
       }
-      return path;
     }
+  }
 
-    if (idealCurve.length >= 2) {
-      final idealPaint = Paint()
+  void _paintActual(
+    Canvas canvas,
+    Size size,
+    double minValue,
+    double maxValue,
+    double headroom,
+  ) {
+    if (actualCurve.length < 2) return;
+    canvas.drawPath(
+      _polyline(actualCurve, size, minValue, maxValue, headroom),
+      Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.6
-        ..color = idealColor.withValues(alpha: 0.85);
-      final path = polyline(idealCurve);
-      for (final metric in path.computeMetrics()) {
-        var distance = 0.0;
-        while (distance < metric.length) {
-          final end = math.min(distance + _dashLength, metric.length);
-          canvas.drawPath(metric.extractPath(distance, end), idealPaint);
-          distance += _dashLength + _dashGap;
-        }
-      }
-    }
-    if (actualCurve.length >= 2) {
-      canvas.drawPath(
-        polyline(actualCurve),
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2.4
-          ..color = actualColor
-          ..strokeCap = StrokeCap.round,
+        ..strokeWidth = 2.4
+        ..color = actualColor
+        ..strokeCap = StrokeCap.round,
+    );
+    final dotPaint = Paint()..color = actualColor;
+    for (var index = 0; index < actualCurve.length; index++) {
+      canvas.drawCircle(
+        _pointAt(index, actualCurve, size, minValue, maxValue, headroom),
+        3,
+        dotPaint,
       );
-      final dotPaint = Paint()..color = actualColor;
-      for (var index = 0; index < actualCurve.length; index++) {
-        canvas.drawCircle(pointAt(index, actualCurve), 3, dotPaint);
-      }
     }
-    // 高亮点与竖直参考线：图表点击定位、列表联动时出现。
-    if (highlightIndex >= 0 && highlightIndex < actualCurve.length) {
-      final point = pointAt(highlightIndex, actualCurve);
-      canvas.drawLine(
-        Offset(point.dx, headroom),
-        Offset(point.dx, size.height - headroom),
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1
-          ..color = highlightColor.withValues(alpha: 0.45),
-      );
-      canvas.drawCircle(point, 5.5, Paint()..color = highlightColor);
-      canvas.drawCircle(point, 3, Paint()..color = Colors.white);
-    }
+  }
+
+  void _paintHighlight(
+    Canvas canvas,
+    Size size,
+    double minValue,
+    double maxValue,
+    double headroom,
+  ) {
+    if (highlightIndex < 0 || highlightIndex >= actualCurve.length) return;
+    final point = _pointAt(
+      highlightIndex,
+      actualCurve,
+      size,
+      minValue,
+      maxValue,
+      headroom,
+    );
+    canvas.drawLine(
+      Offset(point.dx, headroom),
+      Offset(point.dx, size.height - headroom),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1
+        ..color = highlightColor.withValues(alpha: 0.45),
+    );
+    canvas.drawCircle(point, 5.5, Paint()..color = highlightColor);
+    canvas.drawCircle(point, 3, Paint()..color = Colors.white);
   }
 
   @override

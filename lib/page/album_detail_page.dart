@@ -32,8 +32,83 @@ int _compareWithinDisc(
   return disc != 0 ? disc : compare(first, second);
 }
 
+void _sortWithinDisc(
+  List<Audio> list,
+  SortOrder order,
+  int Function(Audio first, Audio second) compare,
+) {
+  switch (order) {
+    case SortOrder.ascending:
+      list.sort((a, b) => _compareWithinDisc(a, b, compare));
+    case SortOrder.decending:
+      list.sort((a, b) => _compareWithinDisc(b, a, compare));
+  }
+}
+
+List<SortMethodDesc<Audio>> _albumSortMethods() {
+  return [
+    _albumTextSort(Symbols.title, '标题', (audio) => audio.title),
+    _albumTextSort(Symbols.artist, '艺术家', (audio) => audio.artist),
+    SortMethodDesc(
+      icon: Symbols.art_track,
+      name: '音轨',
+      method: (list, order) => _sortWithinDisc(
+        list,
+        order,
+        (first, second) => first.track.compareTo(second.track),
+      ),
+    ),
+    SortMethodDesc(
+      icon: Symbols.add,
+      name: '创建时间',
+      method: (list, order) => _sortWithinDisc(
+        list,
+        order,
+        (first, second) => first.created.compareTo(second.created),
+      ),
+    ),
+    SortMethodDesc(
+      icon: Symbols.edit,
+      name: '修改时间',
+      method: (list, order) => _sortWithinDisc(
+        list,
+        order,
+        (first, second) => first.modified.compareTo(second.modified),
+      ),
+    ),
+  ];
+}
+
+SortMethodDesc<Audio> _albumTextSort(
+  IconData icon,
+  String name,
+  String Function(Audio audio) valueOf,
+) {
+  return SortMethodDesc(
+    icon: icon,
+    name: name,
+    alphabetValueOf: valueOf,
+    method: (list, order) => _sortWithinDisc(
+      list,
+      order,
+      (first, second) => valueOf(first).naturalCompareTo(valueOf(second)),
+    ),
+  );
+}
+
 class AlbumDetailPage extends StatelessWidget {
   const AlbumDetailPage({super.key, required this.album});
+
+  final Album album;
+
+  @override
+  Widget build(BuildContext context) {
+    return _AlbumDetailScaffold(album: album);
+  }
+}
+
+class _AlbumDetailScaffold extends StatelessWidget {
+  const _AlbumDetailScaffold({required this.album});
 
   final Album album;
 
@@ -47,9 +122,7 @@ class AlbumDetailPage extends StatelessWidget {
         .toSet();
     final showDiscSections =
         discNumbers.length > 1 || discNumbers.any((disc) => disc > 1);
-
     final canSortSongs = hasEnoughItemsToSort(secondaryContent.length);
-
     return UniDetailPage<Album, Audio, Artist>(
       pref: AppPreference.instance.albumDetailPagePref,
       primaryContent: album,
@@ -58,27 +131,10 @@ class AlbumDetailPage extends StatelessWidget {
       title: album.name,
       subtitle: '${album.works.length} 首作品',
       secondaryContent: secondaryContent,
-      secondaryContentBuilder:
-          (context, audio, i, multiSelectController, view) {
-            final includeDisc = showDiscSections && view == ContentView.table;
-            return AudioTile(
-              leading: Text(_trackNumber(audio, includeDisc: includeDisc)),
-              leadingWidth: includeDisc
-                  ? AudioTile.discLeadingWidth
-                  : AudioTile.defaultLeadingWidth,
-              audioIndex: i,
-              playlist: secondaryContent,
-              multiSelectController: multiSelectController,
-            );
-          },
+      secondaryContentBuilder: (context, audio, i, ctl, view) =>
+          _songTile(audio, i, secondaryContent, ctl, view, showDiscSections),
       secondaryContentSectionBuilder: showDiscSections
-          ? (context, audio, i) {
-              final disc = _discNumber(audio);
-              if (i > 0 && _discNumber(secondaryContent[i - 1]) == disc) {
-                return null;
-              }
-              return _DiscSectionHeader(disc: disc);
-            }
+          ? (context, audio, i) => _discSection(audio, i, secondaryContent)
           : null,
       tertiaryContentTitle: '艺术家',
       tertiaryContent: album.artistsMap.values.toList(),
@@ -95,155 +151,52 @@ class AlbumDetailPage extends StatelessWidget {
       tertiaryTabIcon: Symbols.artist,
       bodyOverride: secondaryContent.isEmpty ? const _EmptyAlbumBody() : null,
       multiSelectController: multiSelectController,
-      multiSelectViewActions: [
-        AddAllToPlaylist(multiSelectController: multiSelectController),
-        MultiSelectSelectOrClearAll(
-          multiSelectController: multiSelectController,
-          contentList: secondaryContent,
-        ),
-        MultiSelectExit(multiSelectController: multiSelectController),
-      ],
-      sortMethods: [
-        SortMethodDesc(
-          icon: Symbols.title,
-          name: '标题',
-          alphabetValueOf: (audio) => audio.title,
-          method: (list, order) {
-            switch (order) {
-              case SortOrder.ascending:
-                list.sort(
-                  (a, b) => _compareWithinDisc(
-                    a,
-                    b,
-                    (first, second) =>
-                        first.title.naturalCompareTo(second.title),
-                  ),
-                );
-                break;
-              case SortOrder.decending:
-                list.sort(
-                  (a, b) => _compareWithinDisc(
-                    b,
-                    a,
-                    (first, second) =>
-                        first.title.naturalCompareTo(second.title),
-                  ),
-                );
-                break;
-            }
-          },
-        ),
-        SortMethodDesc(
-          icon: Symbols.artist,
-          name: '艺术家',
-          alphabetValueOf: (audio) => audio.artist,
-          method: (list, order) {
-            switch (order) {
-              case SortOrder.ascending:
-                list.sort(
-                  (a, b) => _compareWithinDisc(
-                    a,
-                    b,
-                    (first, second) =>
-                        first.artist.naturalCompareTo(second.artist),
-                  ),
-                );
-                break;
-              case SortOrder.decending:
-                list.sort(
-                  (a, b) => _compareWithinDisc(
-                    b,
-                    a,
-                    (first, second) =>
-                        first.artist.naturalCompareTo(second.artist),
-                  ),
-                );
-                break;
-            }
-          },
-        ),
-        SortMethodDesc(
-          icon: Symbols.art_track,
-          name: '音轨',
-          method: (list, order) {
-            switch (order) {
-              case SortOrder.ascending:
-                list.sort(
-                  (a, b) => _compareWithinDisc(
-                    a,
-                    b,
-                    (first, second) => first.track.compareTo(second.track),
-                  ),
-                );
-                break;
-              case SortOrder.decending:
-                list.sort(
-                  (a, b) => _compareWithinDisc(
-                    b,
-                    a,
-                    (first, second) => first.track.compareTo(second.track),
-                  ),
-                );
-                break;
-            }
-          },
-        ),
-        SortMethodDesc(
-          icon: Symbols.add,
-          name: '创建时间',
-          method: (list, order) {
-            switch (order) {
-              case SortOrder.ascending:
-                list.sort(
-                  (a, b) => _compareWithinDisc(
-                    a,
-                    b,
-                    (first, second) => first.created.compareTo(second.created),
-                  ),
-                );
-                break;
-              case SortOrder.decending:
-                list.sort(
-                  (a, b) => _compareWithinDisc(
-                    b,
-                    a,
-                    (first, second) => first.created.compareTo(second.created),
-                  ),
-                );
-                break;
-            }
-          },
-        ),
-        SortMethodDesc(
-          icon: Symbols.edit,
-          name: '修改时间',
-          method: (list, order) {
-            switch (order) {
-              case SortOrder.ascending:
-                list.sort(
-                  (a, b) => _compareWithinDisc(
-                    a,
-                    b,
-                    (first, second) =>
-                        first.modified.compareTo(second.modified),
-                  ),
-                );
-                break;
-              case SortOrder.decending:
-                list.sort(
-                  (a, b) => _compareWithinDisc(
-                    b,
-                    a,
-                    (first, second) =>
-                        first.modified.compareTo(second.modified),
-                  ),
-                );
-                break;
-            }
-          },
-        ),
-      ],
+      multiSelectViewActions: _multiSelectActions(
+        multiSelectController,
+        secondaryContent,
+      ),
+      sortMethods: _albumSortMethods(),
     );
+  }
+
+  List<Widget> _multiSelectActions(
+    MultiSelectController<Audio> multiSelectController,
+    List<Audio> secondaryContent,
+  ) {
+    return [
+      AddAllToPlaylist(multiSelectController: multiSelectController),
+      MultiSelectSelectOrClearAll(
+        multiSelectController: multiSelectController,
+        contentList: secondaryContent,
+      ),
+      MultiSelectExit(multiSelectController: multiSelectController),
+    ];
+  }
+
+  Widget _songTile(
+    Audio audio,
+    int i,
+    List<Audio> playlist,
+    MultiSelectController<Audio>? multiSelectController,
+    ContentView view,
+    bool showDiscSections,
+  ) {
+    final includeDisc = showDiscSections && view == ContentView.table;
+    return AudioTile(
+      leading: Text(_trackNumber(audio, includeDisc: includeDisc)),
+      leadingWidth: includeDisc
+          ? AudioTile.discLeadingWidth
+          : AudioTile.defaultLeadingWidth,
+      audioIndex: i,
+      playlist: playlist,
+      multiSelectController: multiSelectController,
+    );
+  }
+
+  Widget? _discSection(Audio audio, int i, List<Audio> playlist) {
+    final disc = _discNumber(audio);
+    if (i > 0 && _discNumber(playlist[i - 1]) == disc) return null;
+    return _DiscSectionHeader(disc: disc);
   }
 }
 

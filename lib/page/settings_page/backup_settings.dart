@@ -135,61 +135,80 @@ class _BackupSettingsPanelState extends State<BackupSettingsPanel> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (final category in BackupCategory.values) ...[
-          SettingsTile(
-            description: category.label,
-            subtitle: category.description,
-            action: Checkbox(
-              value: _selected.contains(category),
-              onChanged: _busy
-                  ? null
-                  : (checked) => setState(() {
-                      if (checked == true) {
-                        _selected.add(category);
-                      } else {
-                        _selected.remove(category);
-                      }
-                    }),
-            ),
-          ),
-          const SizedBox(height: 16.0),
-        ],
+        ..._categoryTiles(),
         const SizedBox(height: 8.0),
-        Row(
-          children: [
-            Expanded(
-              child: FilledButton.icon(
-                onPressed: _busy || _selected.isEmpty ? null : _export,
-                icon: const Icon(Symbols.save, size: 18),
-                label: const Text('导出备份'),
-              ),
-            ),
-            const SizedBox(width: 12.0),
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: _busy ? null : _import,
-                icon: const Icon(Symbols.backup, size: 18),
-                label: const Text('导入备份'),
-              ),
-            ),
-          ],
-        ),
+        _actionButtons(),
         const SizedBox(height: 12.0),
-        if (_selected.contains(BackupCategory.lastfm)) ...[
-          Text(
-            '账号备份包含登录凭证，请只保存到可信位置。',
-            style: TextStyle(color: scheme.error, fontSize: AppType.caption),
+        ..._hints(scheme),
+      ],
+    );
+  }
+
+
+  void _toggleCategory(BackupCategory category, bool? checked) {
+    setState(() {
+      if (checked == true) {
+        _selected.add(category);
+      } else {
+        _selected.remove(category);
+      }
+    });
+  }
+
+  List<Widget> _categoryTiles() {
+    return [
+      for (final category in BackupCategory.values) ...[
+        SettingsTile(
+          description: category.label,
+          subtitle: category.description,
+          action: Checkbox(
+            value: _selected.contains(category),
+            onChanged: _busy ? null : (checked) => _toggleCategory(category, checked),
           ),
-          const SizedBox(height: 8.0),
-        ],
-        Text(
-          '备份打包为 zip，包含所选类别的数据文件；自定义字体会一并打包，缓存与日志不包含在内。',
-          style: TextStyle(
-            color: scheme.onSurfaceVariant,
-            fontSize: AppType.caption,
+        ),
+        const SizedBox(height: 16.0),
+      ],
+    ];
+  }
+
+  Widget _actionButtons() {
+    return Row(
+      children: [
+        Expanded(
+          child: FilledButton.icon(
+            onPressed: _busy || _selected.isEmpty ? null : _export,
+            icon: const Icon(Symbols.save, size: 18),
+            label: const Text('导出备份'),
+          ),
+        ),
+        const SizedBox(width: 12.0),
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: _busy ? null : _import,
+            icon: const Icon(Symbols.backup, size: 18),
+            label: const Text('导入备份'),
           ),
         ),
       ],
     );
+  }
+
+  List<Widget> _hints(ColorScheme scheme) {
+    return [
+      if (_selected.contains(BackupCategory.lastfm)) ...[
+        Text(
+          '账号备份包含登录凭证，请只保存到可信位置。',
+          style: TextStyle(color: scheme.error, fontSize: AppType.caption),
+        ),
+        const SizedBox(height: 8.0),
+      ],
+      Text(
+        '备份打包为 zip，包含所选类别的数据文件；自定义字体会一并打包，缓存与日志不包含在内。',
+        style: TextStyle(
+          color: scheme.onSurfaceVariant,
+          fontSize: AppType.caption,
+        ),
+      ),
+    ];
   }
 }

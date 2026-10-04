@@ -41,6 +41,15 @@ class SearchCategoryButton extends StatelessWidget {
   final VoidCallback? onPressed;
   final int? count;
 
+
+  TextStyle _countStyle(ColorScheme scheme) {
+    return TextStyle(
+      color: selected ? scheme.onSecondaryContainer : scheme.onSurfaceVariant,
+      fontSize: AppType.caption,
+      fontWeight: AppType.weightMedium,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -53,16 +62,7 @@ class SearchCategoryButton extends StatelessWidget {
           Text(label),
           if (count != null) ...[
             const SizedBox(width: 6),
-            Text(
-              '$count',
-              style: TextStyle(
-                color: selected
-                    ? scheme.onSecondaryContainer
-                    : scheme.onSurfaceVariant,
-                fontSize: AppType.caption,
-                fontWeight: AppType.weightMedium,
-              ),
-            ),
+            Text('$count', style: _countStyle(scheme)),
           ],
         ],
       ),

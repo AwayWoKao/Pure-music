@@ -11,6 +11,101 @@ import 'package:pure_music/page/page_scaffold.dart';
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
+void _sortAudiosByOrder(
+  List<Audio> list,
+  SortOrder order,
+  int Function(Audio a, Audio b) compare,
+) {
+  switch (order) {
+    case SortOrder.ascending:
+      list.sort(compare);
+    case SortOrder.decending:
+      list.sort((a, b) => compare(b, a));
+  }
+}
+
+SortMethodDesc<Audio> _naturalAudioSort({
+  required IconData icon,
+  required String name,
+  required String Function(Audio) keyOf,
+  bool reuseEqualKeys = false,
+}) {
+  return SortMethodDesc(
+    icon: icon,
+    name: name,
+    alphabetValueOf: keyOf,
+    method: (list, order) {
+      sortNaturallyBy(
+        list,
+        keyOf,
+        descending: order == SortOrder.decending,
+        reuseEqualKeys: reuseEqualKeys,
+      );
+    },
+    backgroundMethod: (list, order, control) => sortPageNaturallyInBackground(
+      list,
+      keyOf,
+      descending: order == SortOrder.decending,
+      reuseEqualKeys: reuseEqualKeys,
+      control: control,
+    ),
+  );
+}
+
+SortMethodDesc<Audio> _timeAudioSort({
+  required IconData icon,
+  required String name,
+  required int Function(Audio) valueOf,
+}) {
+  return SortMethodDesc(
+    icon: icon,
+    name: name,
+    method: (list, order) => _sortAudiosByOrder(
+      list,
+      order,
+      (a, b) => valueOf(a).compareTo(valueOf(b)),
+    ),
+    backgroundMethod: (list, order, control) => sortPageByIntegerInBackground(
+      list,
+      valueOf,
+      descending: order == SortOrder.decending,
+      control: control,
+    ),
+  );
+}
+
+List<SortMethodDesc<Audio>> _audiosSortMethods() {
+  return [
+    _naturalAudioSort(
+      icon: Symbols.title,
+      name: '标题',
+      keyOf: (audio) => audio.title,
+    ),
+    _naturalAudioSort(
+      icon: Symbols.artist,
+      name: '艺术家',
+      keyOf: (audio) => audio.artist,
+      reuseEqualKeys: true,
+    ),
+    _naturalAudioSort(
+      icon: Symbols.album,
+      name: '专辑',
+      keyOf: (audio) => audio.album,
+      reuseEqualKeys: true,
+    ),
+    _timeAudioSort(
+      icon: Symbols.add,
+      name: '创建时间',
+      valueOf: (audio) => audio.created,
+    ),
+    _timeAudioSort(
+      icon: Symbols.edit,
+      name: '修改时间',
+      valueOf: (audio) => audio.modified,
+    ),
+  ];
+}
+
 class AudiosPage extends StatefulWidget {
   final Audio? locateTo;
   const AudiosPage({super.key, this.locateTo});
@@ -81,140 +176,7 @@ class _AudiosPageState extends State<AudiosPage> {
             ),
             MultiSelectExit(multiSelectController: _multiSelectController),
           ],
-          sortMethods: [
-            SortMethodDesc(
-              icon: Symbols.title,
-              name: '标题',
-              alphabetValueOf: (audio) => audio.title,
-              method: (list, order) {
-                switch (order) {
-                  case SortOrder.ascending:
-                    sortNaturallyBy(list, (audio) => audio.title);
-                    break;
-                  case SortOrder.decending:
-                    sortNaturallyBy(
-                      list,
-                      (audio) => audio.title,
-                      descending: true,
-                    );
-                    break;
-                }
-              },
-              backgroundMethod: (list, order, control) =>
-                  sortPageNaturallyInBackground(
-                    list,
-                    (audio) => audio.title,
-                    descending: order == SortOrder.decending,
-                    control: control,
-                  ),
-            ),
-            SortMethodDesc(
-              icon: Symbols.artist,
-              name: '艺术家',
-              alphabetValueOf: (audio) => audio.artist,
-              method: (list, order) {
-                switch (order) {
-                  case SortOrder.ascending:
-                    sortNaturallyBy(
-                      list,
-                      (audio) => audio.artist,
-                      reuseEqualKeys: true,
-                    );
-                    break;
-                  case SortOrder.decending:
-                    sortNaturallyBy(
-                      list,
-                      (audio) => audio.artist,
-                      descending: true,
-                      reuseEqualKeys: true,
-                    );
-                    break;
-                }
-              },
-              backgroundMethod: (list, order, control) =>
-                  sortPageNaturallyInBackground(
-                    list,
-                    (audio) => audio.artist,
-                    descending: order == SortOrder.decending,
-                    reuseEqualKeys: true,
-                    control: control,
-                  ),
-            ),
-            SortMethodDesc(
-              icon: Symbols.album,
-              name: '专辑',
-              alphabetValueOf: (audio) => audio.album,
-              method: (list, order) {
-                switch (order) {
-                  case SortOrder.ascending:
-                    sortNaturallyBy(
-                      list,
-                      (audio) => audio.album,
-                      reuseEqualKeys: true,
-                    );
-                    break;
-                  case SortOrder.decending:
-                    sortNaturallyBy(
-                      list,
-                      (audio) => audio.album,
-                      descending: true,
-                      reuseEqualKeys: true,
-                    );
-                    break;
-                }
-              },
-              backgroundMethod: (list, order, control) =>
-                  sortPageNaturallyInBackground(
-                    list,
-                    (audio) => audio.album,
-                    descending: order == SortOrder.decending,
-                    reuseEqualKeys: true,
-                    control: control,
-                  ),
-            ),
-            SortMethodDesc(
-              icon: Symbols.add,
-              name: '创建时间',
-              method: (list, order) {
-                switch (order) {
-                  case SortOrder.ascending:
-                    list.sort((a, b) => a.created.compareTo(b.created));
-                    break;
-                  case SortOrder.decending:
-                    list.sort((a, b) => b.created.compareTo(a.created));
-                    break;
-                }
-              },
-              backgroundMethod: (list, order, control) =>
-                  sortPageByIntegerInBackground(
-                    list,
-                    (audio) => audio.created,
-                    descending: order == SortOrder.decending,
-                    control: control,
-                  ),
-            ),
-            SortMethodDesc(
-              icon: Symbols.edit,
-              name: '修改时间',
-              method: (list, order) {
-                switch (order) {
-                  case SortOrder.ascending:
-                    list.sort((a, b) => a.modified.compareTo(b.modified));
-                    break;
-                  case SortOrder.decending:
-                    list.sort((a, b) => b.modified.compareTo(a.modified));
-                    break;
-                }
-              },
-              backgroundMethod: (list, order, control) =>
-                  sortPageByIntegerInBackground(
-                    list,
-                    (audio) => audio.modified,
-                    descending: order == SortOrder.decending,
-                    control: control,
-                  ),
-            ),
-          ],
+          sortMethods: _audiosSortMethods(),
         );
       },
     );

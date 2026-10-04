@@ -30,48 +30,54 @@ class SettingsGroupEntry extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           child: Row(
             children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: scheme.secondaryContainer.withValues(alpha: 0.5),
-                  borderRadius: AppRadius.smCircular,
-                ),
-                child: Icon(icon, size: 20, color: scheme.onSurfaceVariant),
-              ),
+              _leading(scheme),
               const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        color: scheme.onSurface,
-                        fontSize: AppType.subtitle,
-                        fontWeight: AppType.weightSemibold,
-                      ),
-                    ),
-                    if (subtitle.isNotEmpty) ...[
-                      const SizedBox(height: 3),
-                      Text(
-                        subtitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: scheme.onSurfaceVariant,
-                          fontSize: AppType.caption,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
+              Expanded(child: _titles(scheme)),
               Icon(Symbols.chevron_right, size: 20, color: scheme.outline),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _leading(ColorScheme scheme) {
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        color: scheme.secondaryContainer.withValues(alpha: 0.5),
+        borderRadius: AppRadius.smCircular,
+      ),
+      child: Icon(icon, size: 20, color: scheme.onSurfaceVariant),
+    );
+  }
+
+  Widget _titles(ColorScheme scheme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: TextStyle(
+            color: scheme.onSurface,
+            fontSize: AppType.subtitle,
+            fontWeight: AppType.weightSemibold,
+          ),
+        ),
+        if (subtitle.isNotEmpty) ...[
+          const SizedBox(height: 3),
+          Text(
+            subtitle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: scheme.onSurfaceVariant,
+              fontSize: AppType.caption,
+            ),
+          ),
+        ],
+      ],
     );
   }
 }

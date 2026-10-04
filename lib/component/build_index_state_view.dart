@@ -49,7 +49,12 @@ class _BuildIndexStateViewState extends State<BuildIndexStateView> {
     try {
       await widget.whenIndexBuilt();
     } catch (error, stackTrace) {
-      log.app.error('legacy', '曲库索引完成后的加载失败', error: error, stackTrace: stackTrace);
+      log.app.error(
+        'legacy',
+        '曲库索引完成后的加载失败',
+        error: error,
+        stackTrace: stackTrace,
+      );
       if (mounted) {
         setState(() => _errorMessage = '曲库加载失败，请查看日志');
       }
@@ -78,73 +83,87 @@ class _BuildIndexStateViewState extends State<BuildIndexStateView> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-
     return StreamBuilder(
       stream: _buildIndexStream,
-      builder: (context, snapshot) {
-        final errorMessage = _errorMessage;
-        if (errorMessage != null) {
-          return _buildError(scheme, errorMessage);
-        }
-        if (snapshot.hasError) {
-          return _buildError(scheme, '曲库索引构建失败，请查看日志');
-        }
-        if (snapshot.hasData) {
-          log.app.info('legacy', '[build index] ${snapshot.data!.progress}: ${snapshot.data!.message}',);
-        }
-        if (!_done && snapshot.connectionState == ConnectionState.done) {
-          _done = true;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) unawaited(_completeBuild());
-          });
-        }
-        final progress = snapshot.data?.progress;
-        final message = snapshot.data?.message ?? '正在准备曲库索引…';
+      builder: (context, snapshot) => _buildSnapshot(scheme, snapshot),
+    );
+  }
 
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.center,
+  Widget _buildSnapshot(
+    ColorScheme scheme,
+    AsyncSnapshot<IndexActionState> snapshot,
+  ) {
+    final errorMessage = _errorMessage;
+    if (errorMessage != null) {
+      return _buildError(scheme, errorMessage);
+    }
+    if (snapshot.hasError) {
+      return _buildError(scheme, '曲库索引构建失败，请查看日志');
+    }
+    if (snapshot.hasData) {
+      log.app.info(
+        'legacy',
+        '[build index] ${snapshot.data!.progress}: ${snapshot.data!.message}',
+      );
+    }
+    if (!_done && snapshot.connectionState == ConnectionState.done) {
+      _done = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_completeBuild());
+      });
+    }
+    return _progressBody(
+      scheme,
+      snapshot.data?.progress,
+      snapshot.data?.message ?? '正在准备曲库索引…',
+    );
+  }
+
+
+  Widget _percentBadge(ColorScheme scheme, double progress) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: AppRadius.mdCircular,
+      ),
+      child: Text(
+        '${(progress.clamp(0.0, 1.0) * 100).round()}%',
+        style: TextStyle(
+          color: scheme.onSurfaceVariant,
+          fontSize: AppType.caption,
+        ),
+      ),
+    );
+  }
+
+  Widget _progressBody(ColorScheme scheme, double? progress, String message) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        LinearProgressIndicator(
+          value: progress,
+          borderRadius: AppRadius.xsCircular,
+        ),
+        const SizedBox(height: 8.0),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            LinearProgressIndicator(
-              value: progress,
-              borderRadius: AppRadius.xsCircular,
+            Flexible(
+              child: Text(
+                message,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: scheme.onSurface),
+              ),
             ),
-            const SizedBox(height: 8.0),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Flexible(
-                  child: Text(
-                    message,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: scheme.onSurface),
-                  ),
-                ),
-                if (progress != null) ...[
-                  const SizedBox(width: 8.0),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8.0,
-                      vertical: 4.0,
-                    ),
-                    decoration: BoxDecoration(
-                      color: scheme.surfaceContainerHighest,
-                      borderRadius: AppRadius.mdCircular,
-                    ),
-                    child: Text(
-                      '${(progress.clamp(0.0, 1.0) * 100).round()}%',
-                      style: TextStyle(
-                        color: scheme.onSurfaceVariant,
-                        fontSize: AppType.caption,
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
+            if (progress != null) ...[
+              const SizedBox(width: 8.0),
+              _percentBadge(scheme, progress),
+            ],
           ],
-        );
-      },
+        ),
+      ],
     );
   }
 }

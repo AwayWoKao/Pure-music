@@ -22,16 +22,6 @@ extension StringHMMSS on Duration {
     final seconds = totalSeconds % 60;
     return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
-
-  /// LRC/增强 LRC 时间标签格式 [mm:ss.xx] 或 <mm:ss.xx>
-  String toStringLrc({String open = '[', String close = ']'}) {
-    final totalMs = inMilliseconds < 0 ? 0 : inMilliseconds;
-    final m = totalMs ~/ 60000;
-    final s = (totalMs % 60000) / 1000.0;
-    final mm = m.toString().padLeft(2, '0');
-    final ss = s.toStringAsFixed(2).padLeft(5, '0');
-    return '$open$mm:$ss$close';
-  }
 }
 
 const int _pinyinCacheMaxSize = 2000;
@@ -272,9 +262,6 @@ void showTextOnSnackBar(
   _toastEntry?.remove();
   _toastTimer?.cancel();
 
-  final scheme = Theme.of(context).colorScheme;
-  final txtColor = scheme.onInverseSurface;
-  final textTheme = Theme.of(context).textTheme;
   final IconData effectiveIcon;
   switch (variant) {
     case ToastVariant.success:
@@ -287,64 +274,10 @@ void showTextOnSnackBar(
 
   final visible = ValueNotifier(false);
   final entry = OverlayEntry(
-    builder: (context) => Positioned.fill(
-      child: IgnorePointer(
-        child: SafeArea(
-          minimum: const EdgeInsets.all(16.0),
-          child: Padding(
-            padding: const EdgeInsets.only(bottom: Spacing.bottomNav),
-            child: Align(
-              alignment: Alignment.bottomCenter,
-              child: ValueListenableBuilder(
-                valueListenable: visible,
-                builder: (context, v, child) => AnimatedOpacity(
-                  duration: const Duration(milliseconds: 140),
-                  curve: Curves.fastOutSlowIn,
-                  opacity: v ? 1.0 : 0.0,
-                  child: AnimatedScale(
-                    duration: const Duration(milliseconds: 140),
-                    curve: Curves.fastOutSlowIn,
-                    scale: v ? 1.0 : 0.96,
-                    child: child,
-                  ),
-                ),
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: scheme.inverseSurface,
-                    borderRadius: const BorderRadius.all(Radius.circular(4)),
-                    boxShadow: [
-                      BoxShadow(
-                        color: scheme.shadow.withAlpha(40),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: Spacing.md,
-                      vertical: Spacing.sm,
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(effectiveIcon, size: 16, color: txtColor),
-                        const SizedBox(width: Spacing.sm),
-                        Text(
-                          text,
-                          style: textTheme.labelLarge?.copyWith(
-                            color: txtColor,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
+    builder: (context) => _SnackToastBubble(
+      text: text,
+      icon: effectiveIcon,
+      visible: visible,
     ),
   );
 
@@ -389,71 +322,10 @@ void showHotkeyToast({required String text, IconData? icon}) {
     previousEntry!.remove();
   }
 
-  final scheme = Theme.of(context).colorScheme;
-  final textTheme = Theme.of(context).textTheme;
   final visible = ValueNotifier(false);
   final entry = OverlayEntry(
-    builder: (context) => Positioned.fill(
-      child: IgnorePointer(
-        child: SafeArea(
-          minimum: const EdgeInsets.all(16.0),
-          child: Padding(
-            padding: const EdgeInsets.only(bottom: Spacing.bottomNav),
-            child: Align(
-              alignment: Alignment.bottomCenter,
-              child: ValueListenableBuilder(
-                valueListenable: visible,
-                builder: (context, v, child) => AnimatedOpacity(
-                  duration: const Duration(milliseconds: 140),
-                  curve: Curves.fastOutSlowIn,
-                  opacity: v ? 1.0 : 0.0,
-                  child: AnimatedScale(
-                    duration: const Duration(milliseconds: 140),
-                    curve: Curves.fastOutSlowIn,
-                    scale: v ? 1.0 : 0.96,
-                    child: child,
-                  ),
-                ),
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: scheme.inverseSurface,
-                    borderRadius: const BorderRadius.all(Radius.circular(4)),
-                    boxShadow: [
-                      BoxShadow(
-                        color: scheme.shadow.withAlpha(40),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: Spacing.md,
-                      vertical: Spacing.sm,
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (icon != null) ...[
-                          Icon(icon, size: 16, color: scheme.onInverseSurface),
-                          const SizedBox(width: Spacing.sm),
-                        ],
-                        Text(
-                          text,
-                          style: textTheme.labelLarge?.copyWith(
-                            color: scheme.onInverseSurface,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    ),
+    builder: (context) =>
+        _HotkeyToastBubble(text: text, icon: icon, visible: visible),
   );
 
   _hotkeyToastEntry = entry;
@@ -488,87 +360,15 @@ bool showLyricWritePrompt({
 
   hideLyricWritePrompt();
 
-  final scheme = Theme.of(context).colorScheme;
-  final textTheme = Theme.of(context).textTheme;
-
   final visible = ValueNotifier(false);
   OverlayEntry? entry;
   entry = OverlayEntry(
-    builder: (context) => Positioned.fill(
-      child: SafeArea(
-        minimum: const EdgeInsets.all(16.0),
-        child: Padding(
-          padding: const EdgeInsets.only(bottom: Spacing.bottomNav),
-          child: Align(
-            alignment: Alignment.bottomCenter,
-            child: ValueListenableBuilder(
-              valueListenable: visible,
-              builder: (context, v, child) => AnimatedOpacity(
-                duration: const Duration(milliseconds: 140),
-                curve: Curves.fastOutSlowIn,
-                opacity: v ? 1.0 : 0.0,
-                child: AnimatedScale(
-                  duration: const Duration(milliseconds: 140),
-                  curve: Curves.fastOutSlowIn,
-                  scale: v ? 1.0 : 0.96,
-                  child: child,
-                ),
-              ),
-              child: GestureDetector(
-                onTap: () {
-                  hideLyricWritePrompt();
-                  onWrite();
-                },
-                child: Material(
-                  type: MaterialType.transparency,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: Spacing.md,
-                      vertical: Spacing.sm,
-                    ),
-                    decoration: BoxDecoration(
-                      color: scheme.inverseSurface,
-                      borderRadius: const BorderRadius.all(Radius.circular(4)),
-                      boxShadow: [
-                        BoxShadow(
-                          color: scheme.shadow.withAlpha(40),
-                          blurRadius: 8,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.lyrics_outlined,
-                          size: 16,
-                          color: scheme.onInverseSurface,
-                        ),
-                        const SizedBox(width: Spacing.sm),
-                        Text(
-                          '写入标签？',
-                          style: textTheme.labelLarge?.copyWith(
-                            color: scheme.onInverseSurface,
-                          ),
-                        ),
-                        const SizedBox(width: Spacing.sm),
-                        Text(
-                          '写入',
-                          style: textTheme.labelLarge?.copyWith(
-                            color: scheme.onInverseSurface,
-                            fontWeight: AppType.weightBold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
+    builder: (context) => _LyricWritePromptBubble(
+      visible: visible,
+      onWrite: () {
+        hideLyricWritePrompt();
+        onWrite();
+      },
     ),
   );
 
@@ -597,4 +397,258 @@ void hideLyricWritePrompt() {
   _lyricWriteTimer = null;
   _lyricWriteEntry?.remove();
   _lyricWriteEntry = null;
+}
+
+
+
+class _LyricWritePromptBubble extends StatelessWidget {
+  const _LyricWritePromptBubble({
+    required this.visible,
+    required this.onWrite,
+  });
+
+  final ValueNotifier<bool> visible;
+  final VoidCallback onWrite;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return Positioned.fill(
+      child: SafeArea(
+        minimum: const EdgeInsets.all(16.0),
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: Spacing.bottomNav),
+          child: Align(
+            alignment: Alignment.bottomCenter,
+            child: ValueListenableBuilder(
+              valueListenable: visible,
+              builder: (context, v, child) => AnimatedOpacity(
+                duration: const Duration(milliseconds: 140),
+                curve: Curves.fastOutSlowIn,
+                opacity: v ? 1.0 : 0.0,
+                child: AnimatedScale(
+                  duration: const Duration(milliseconds: 140),
+                  curve: Curves.fastOutSlowIn,
+                  scale: v ? 1.0 : 0.96,
+                  child: child,
+                ),
+              ),
+              child: GestureDetector(
+                onTap: onWrite,
+                child: _card(scheme, textTheme),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _card(ColorScheme scheme, TextTheme textTheme) {
+    return Material(
+      type: MaterialType.transparency,
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: Spacing.md,
+          vertical: Spacing.sm,
+        ),
+        decoration: BoxDecoration(
+          color: scheme.inverseSurface,
+          borderRadius: const BorderRadius.all(Radius.circular(4)),
+          boxShadow: [
+            BoxShadow(
+              color: scheme.shadow.withAlpha(40),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.lyrics_outlined,
+              size: 16,
+              color: scheme.onInverseSurface,
+            ),
+            const SizedBox(width: Spacing.sm),
+            Text(
+              '写入标签？',
+              style: textTheme.labelLarge?.copyWith(
+                color: scheme.onInverseSurface,
+              ),
+            ),
+            const SizedBox(width: Spacing.sm),
+            Text(
+              '写入',
+              style: textTheme.labelLarge?.copyWith(
+                color: scheme.onInverseSurface,
+                fontWeight: AppType.weightBold,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
+Widget _toastAppear(bool visible, Widget? child) {
+  return AnimatedOpacity(
+    duration: const Duration(milliseconds: 140),
+    curve: Curves.fastOutSlowIn,
+    opacity: visible ? 1.0 : 0.0,
+    child: AnimatedScale(
+      duration: const Duration(milliseconds: 140),
+      curve: Curves.fastOutSlowIn,
+      scale: visible ? 1.0 : 0.96,
+      child: child,
+    ),
+  );
+}
+
+class _SnackToastBubble extends StatelessWidget {
+  const _SnackToastBubble({
+    required this.text,
+    required this.icon,
+    required this.visible,
+  });
+
+  final String text;
+  final IconData icon;
+  final ValueNotifier<bool> visible;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final txtColor = scheme.onInverseSurface;
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: SafeArea(
+          minimum: const EdgeInsets.all(16.0),
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: Spacing.bottomNav),
+            child: Align(
+              alignment: Alignment.bottomCenter,
+              child: ValueListenableBuilder(
+                valueListenable: visible,
+                builder: (context, v, child) => _toastAppear(v, child),
+                child: _card(scheme, textTheme, txtColor),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _card(ColorScheme scheme, TextTheme textTheme, Color txtColor) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.inverseSurface,
+        borderRadius: const BorderRadius.all(Radius.circular(4)),
+        boxShadow: [
+          BoxShadow(
+            color: scheme.shadow.withAlpha(40),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: Spacing.md,
+          vertical: Spacing.sm,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: txtColor),
+            const SizedBox(width: Spacing.sm),
+            Text(
+              text,
+              style: textTheme.labelLarge?.copyWith(color: txtColor),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
+class _HotkeyToastBubble extends StatelessWidget {
+  const _HotkeyToastBubble({
+    required this.text,
+    required this.visible,
+    this.icon,
+  });
+
+  final String text;
+  final IconData? icon;
+  final ValueNotifier<bool> visible;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: SafeArea(
+          minimum: const EdgeInsets.all(16.0),
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: Spacing.bottomNav),
+            child: Align(
+              alignment: Alignment.bottomCenter,
+              child: ValueListenableBuilder(
+                valueListenable: visible,
+                builder: (context, v, child) => _toastAppear(v, child),
+                child: _toastBody(scheme, textTheme),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _toastBody(ColorScheme scheme, TextTheme textTheme) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.inverseSurface,
+        borderRadius: const BorderRadius.all(Radius.circular(4)),
+        boxShadow: [
+          BoxShadow(
+            color: scheme.shadow.withAlpha(40),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: Spacing.md,
+          vertical: Spacing.sm,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 16, color: scheme.onInverseSurface),
+              const SizedBox(width: Spacing.sm),
+            ],
+            Text(
+              text,
+              style: textTheme.labelLarge?.copyWith(
+                color: scheme.onInverseSurface,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

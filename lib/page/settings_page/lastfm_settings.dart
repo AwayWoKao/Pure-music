@@ -104,6 +104,39 @@ class _LastFmSettingsPanelState extends State<LastFmSettingsPanel> {
     final settings = AppSettings.instance;
     final credentials = _service.credentials;
     final pendingCount = _service.pendingScrobbles.length;
+    final canAuthorize =
+        _apiKeyController.text.trim().isNotEmpty &&
+        _secretController.text.trim().isNotEmpty;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ..._enableTile(settings),
+        const SizedBox(height: 16.0),
+        ..._statusTile(credentials, pendingCount),
+        const SizedBox(height: 16.0),
+        ..._credentialFields(),
+        const SizedBox(height: 16.0),
+        ..._setupTiles(canAuthorize, credentials),
+        if (credentials.isAuthorized)
+          ..._connectedTiles(settings, pendingCount),
+      ],
+    );
+  }
+
+  List<Widget> _enableTile(AppSettings settings) {
+    return [
+      SettingsTile(
+        description: 'Last.fm',
+        subtitle: '播放达到一半或 4 分钟后提交记录',
+        action: Switch(
+          value: settings.lastFmEnabled,
+          onChanged: _busy ? null : _setEnabled,
+        ),
+      ),
+    ];
+  }
+
+  List<Widget> _statusTile(dynamic credentials, int pendingCount) {
     final status = !_loaded
         ? '读取中'
         : credentials.isAuthorized
@@ -111,129 +144,123 @@ class _LastFmSettingsPanelState extends State<LastFmSettingsPanel> {
         : credentials.pendingToken.isNotEmpty
         ? '已打开授权页，完成后点完成授权'
         : '未连接';
+    return [
+      SettingsTile(
+        description: '连接状态',
+        subtitle: status,
+        action: const SizedBox.shrink(),
+      ),
+    ];
+  }
 
-    final canAuthorize =
-        _apiKeyController.text.trim().isNotEmpty &&
-        _secretController.text.trim().isNotEmpty;
+  List<Widget> _credentialFields() {
+    return [
+      _LastFmTextField(
+        label: 'API Key',
+        controller: _apiKeyController,
+        enabled: !_busy && _loaded,
+        obscure: false,
+        onChanged: (_) => setState(() {}),
+        onFocusChange: (focused) {
+          if (!focused) unawaited(_commitCredentials());
+        },
+      ),
+      const SizedBox(height: 16.0),
+      _LastFmTextField(
+        label: 'Shared Secret',
+        controller: _secretController,
+        enabled: !_busy && _loaded,
+        obscure: true,
+        onChanged: (_) => setState(() {}),
+        onFocusChange: (focused) {
+          if (!focused) unawaited(_commitCredentials());
+        },
+      ),
+    ];
+  }
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SettingsTile(
-          description: 'Last.fm',
-          subtitle: '播放达到一半或 4 分钟后提交记录',
-          action: Switch(
-            value: settings.lastFmEnabled,
-            onChanged: _busy ? null : _setEnabled,
-          ),
-        ),
-        const SizedBox(height: 16.0),
-        SettingsTile(
-          description: '连接状态',
-          subtitle: status,
-          action: const SizedBox.shrink(),
-        ),
-        const SizedBox(height: 16.0),
-        _LastFmTextField(
-          label: 'API Key',
-          controller: _apiKeyController,
-          enabled: !_busy && _loaded,
-          obscure: false,
-          onChanged: (_) => setState(() {}),
-          onFocusChange: (focused) {
-            if (!focused) unawaited(_commitCredentials());
-          },
-        ),
-        const SizedBox(height: 16.0),
-        _LastFmTextField(
-          label: 'Shared Secret',
-          controller: _secretController,
-          enabled: !_busy && _loaded,
-          obscure: true,
-          onChanged: (_) => setState(() {}),
-          onFocusChange: (focused) {
-            if (!focused) unawaited(_commitCredentials());
-          },
-        ),
-        const SizedBox(height: 16.0),
-        SettingsTile(
-          description: '申请 API Key',
-          subtitle: '在 Last.fm 创建应用后填到上面',
-          action: OutlinedButton(
-            onPressed: _busy
-                ? null
-                : () async {
-                    final opened = await rust_utils.launchInBrowser(
-                      uri: 'https://www.last.fm/api/account/create',
-                    );
-                    if (!opened) {
-                      showTextOnSnackBar(
-                        '打开页面失败',
-                        variant: ToastVariant.error,
-                      );
-                    }
-                  },
-            child: const Text('打开'),
-          ),
-        ),
-        const SizedBox(height: 16.0),
-        SettingsTile(
-          description: '打开授权页',
-          subtitle: '用自己的 API Key 在浏览器里授权',
-          action: FilledButton(
-            onPressed: _busy || !canAuthorize
-                ? null
-                : () => _run(() async {
-                    await _commitCredentials();
-                    await _service.beginAuthorization();
-                  }),
-            child: const Text('授权'),
-          ),
-        ),
-        if (credentials.pendingToken.isNotEmpty) ...[
-          const SizedBox(height: 16.0),
-          SettingsTile(
-            description: '完成授权',
-            subtitle: '浏览器同意后再点',
-            action: FilledButton(
-              onPressed: _busy
-                  ? null
-                  : () => _run(() async {
-                      await _commitCredentials();
-                      AppSettings.instance.lastFmEnabled = true;
-                      await AppSettings.instance.saveSettings();
-                      await _service.completeAuthorization();
-                    }),
-              child: const Text('完成'),
-            ),
-          ),
-        ],
-        if (credentials.isAuthorized) ...[
-          const SizedBox(height: 16.0),
-          SettingsTile(
-            description: '重试提交队列',
-            subtitle: pendingCount == 0 ? '没有待提交记录' : '待提交 $pendingCount 条',
-            action: OutlinedButton(
-              onPressed: _busy || pendingCount == 0 || !settings.lastFmEnabled
-                  ? null
-                  : () => _run(_service.flushPendingScrobbles),
-              child: const Text('重试'),
-            ),
-          ),
-          const SizedBox(height: 16.0),
-          SettingsTile(
-            description: '断开连接',
-            subtitle: '清除授权，保留 API Key',
-            action: OutlinedButton(
-              onPressed: _busy
-                  ? null
-                  : () => _run(_service.clearAuthorization),
-              child: const Text('断开'),
-            ),
-          ),
-        ],
-      ],
+
+  Future<void> _openCreateApiKey() async {
+    final opened = await rust_utils.launchInBrowser(
+      uri: 'https://www.last.fm/api/account/create',
     );
+    if (!opened) {
+      showTextOnSnackBar('打开页面失败', variant: ToastVariant.error);
+    }
+  }
+
+  List<Widget> _setupTiles(bool canAuthorize, dynamic credentials) {
+    return [
+      SettingsTile(
+        description: '申请 API Key',
+        subtitle: '在 Last.fm 创建应用后填到上面',
+        action: OutlinedButton(
+          onPressed: _busy ? null : _openCreateApiKey,
+          child: const Text('打开'),
+        ),
+      ),
+      const SizedBox(height: 16.0),
+      SettingsTile(
+        description: '打开授权页',
+        subtitle: '用自己的 API Key 在浏览器里授权',
+        action: FilledButton(
+          onPressed: _busy || !canAuthorize
+              ? null
+              : () => _run(() async {
+                  await _commitCredentials();
+                  await _service.beginAuthorization();
+                }),
+          child: const Text('授权'),
+        ),
+      ),
+      if (credentials.pendingToken.isNotEmpty) ..._pendingTile(),
+    ];
+  }
+
+  List<Widget> _pendingTile() {
+    return [
+      const SizedBox(height: 16.0),
+      SettingsTile(
+        description: '完成授权',
+        subtitle: '授权页同意后再点',
+        action: FilledButton(
+          onPressed: _busy
+              ? null
+              : () => _run(() async {
+                  await _commitCredentials();
+                  AppSettings.instance.lastFmEnabled = true;
+                  await AppSettings.instance.saveSettings();
+                  await _service.completeAuthorization();
+                }),
+          child: const Text('完成'),
+        ),
+      ),
+    ];
+  }
+
+  List<Widget> _connectedTiles(AppSettings settings, int pendingCount) {
+    return [
+      const SizedBox(height: 16.0),
+      SettingsTile(
+        description: '重试提交队列',
+        subtitle: pendingCount == 0 ? '没有待提交记录' : '待提交 $pendingCount 条',
+        action: OutlinedButton(
+          onPressed: _busy || pendingCount == 0 || !settings.lastFmEnabled
+              ? null
+              : () => _run(_service.flushPendingScrobbles),
+          child: const Text('重试'),
+        ),
+      ),
+      const SizedBox(height: 16.0),
+      SettingsTile(
+        description: '断开连接',
+        subtitle: '清除授权，保留 API Key',
+        action: OutlinedButton(
+          onPressed: _busy ? null : () => _run(_service.clearAuthorization),
+          child: const Text('断开'),
+        ),
+      ),
+    ];
   }
 }
 

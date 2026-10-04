@@ -58,75 +58,74 @@ class _MiniNowPlayingState extends State<MiniNowPlaying> {
     final animateTrackChanges =
         GoRouterState.of(context).uri.path != app_paths.NOW_PLAYING_PAGE;
     return ResponsiveBuilder(
-      builder: (context, screenType) {
-        return Align(
-          alignment: Alignment.bottomCenter,
-          child: Padding(
-            padding: EdgeInsets.fromLTRB(
-              8.0,
-              0,
-              8.0,
-              screenType == ScreenType.small ? 8.0 : 32.0,
-            ),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 600.0),
-              child: AnimatedScale(
-                scale: _dragActive ? 1.04 : 1.0,
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOutCubic,
-                child: SizedBox(
-                  height: 64.0,
-                  width: double.infinity,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      borderRadius: AppRadius.smCircular,
-                      boxShadow: kElevationToShadow[4],
-                    ),
-                    child: ClipRRect(
-                      borderRadius: AppRadius.smCircular,
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          return RectangleProgressIndicator(
-                            size: Size(
-                              constraints.maxWidth,
-                              constraints.maxHeight,
-                            ),
-                            onSeek: (fraction) {
-                              final playbackService =
-                                  PlayService.instance.playbackService;
-                              final length = playbackService.length;
-                              if (length <= 0 ||
-                                  playbackService.nowPlaying == null) {
-                                return;
-                              }
-                              playbackService.seek(fraction * length);
-                            },
-                            onDragActiveChanged: (active) {
-                              if (mounted && _dragActive != active) {
-                                setState(() => _dragActive = active);
-                              }
-                            },
-                            onDragPreview: (fraction) {
-                              if (!mounted) return;
-                              if (_dragPreviewFraction == fraction) return;
-                              setState(() => _dragPreviewFraction = fraction);
-                            },
-                            child: _NowPlayingForeground(
-                              dragPreviewFraction: _dragPreviewFraction,
-                              animateTrackChanges: animateTrackChanges,
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ),
+      builder: (context, screenType) => Align(
+        alignment: Alignment.bottomCenter,
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            8.0,
+            0,
+            8.0,
+            screenType == ScreenType.small ? 8.0 : 32.0,
+          ),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 600.0),
+            child: _scaledProgressBar(animateTrackChanges),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _scaledProgressBar(bool animateTrackChanges) {
+    return AnimatedScale(
+      scale: _dragActive ? 1.04 : 1.0,
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+      child: SizedBox(
+        height: 64.0,
+        width: double.infinity,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: AppRadius.smCircular,
+            boxShadow: kElevationToShadow[4],
+          ),
+          child: ClipRRect(
+            borderRadius: AppRadius.smCircular,
+            child: LayoutBuilder(
+              builder: (context, constraints) => RectangleProgressIndicator(
+                size: Size(constraints.maxWidth, constraints.maxHeight),
+                onSeek: _onSeek,
+                onDragActiveChanged: _onDragActiveChanged,
+                onDragPreview: _onDragPreview,
+                child: _NowPlayingForeground(
+                  dragPreviewFraction: _dragPreviewFraction,
+                  animateTrackChanges: animateTrackChanges,
                 ),
               ),
             ),
           ),
-        );
-      },
+        ),
+      ),
     );
+  }
+
+  void _onSeek(double fraction) {
+    final playbackService = PlayService.instance.playbackService;
+    final length = playbackService.length;
+    if (length <= 0 || playbackService.nowPlaying == null) return;
+    playbackService.seek(fraction * length);
+  }
+
+  void _onDragActiveChanged(bool active) {
+    if (mounted && _dragActive != active) {
+      setState(() => _dragActive = active);
+    }
+  }
+
+  void _onDragPreview(double? fraction) {
+    if (!mounted) return;
+    if (_dragPreviewFraction == fraction) return;
+    setState(() => _dragPreviewFraction = fraction);
   }
 }
 
@@ -203,23 +202,8 @@ class _NowPlayingForegroundState extends State<_NowPlayingForeground> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-
     return IconButtonTheme(
-      data: IconButtonThemeData(
-        style: ButtonStyle(
-          backgroundColor: const WidgetStatePropertyAll(Colors.transparent),
-          overlayColor: WidgetStateProperty.resolveWith((states) {
-            if (states.contains(WidgetState.pressed)) {
-              return scheme.onSecondaryContainer.withValues(alpha: Alpha.hover);
-            }
-            if (states.contains(WidgetState.hovered) ||
-                states.contains(WidgetState.focused)) {
-              return scheme.onSecondaryContainer.withValues(alpha: 0.02);
-            }
-            return Colors.transparent;
-          }),
-        ),
-      ),
+      data: IconButtonThemeData(style: _iconButtonStyle(scheme)),
       child: AnimatedContainer(
         duration: MotionDuration.fast,
         curve: MotionCurve.standard,
@@ -233,194 +217,213 @@ class _NowPlayingForegroundState extends State<_NowPlayingForeground> {
           type: MaterialType.transparency,
           borderRadius: AppRadius.smCircular,
           child: InkWell(
-            onHover: (v) {
-              _controlsHideTimer?.cancel();
-              setState(() => _hovered = v);
-              if (v) {
-                _setControlsVisible(true);
-              } else {
-                _scheduleHideControls();
-              }
-            },
-            onTap: () {
-              context.push(app_paths.NOW_PLAYING_PAGE);
-            },
+            onHover: _onHover,
+            onTap: () => context.push(app_paths.NOW_PLAYING_PAGE),
             borderRadius: AppRadius.smCircular,
             splashFactory: NoSplash.splashFactory,
             highlightColor: Colors.transparent,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8.0),
-              child: ListenableBuilder(
-                listenable:
-                    PlayService.instance.playbackService.nowPlayingNotifier,
-                builder: (context, _) {
-                  final playbackService = PlayService.instance.playbackService;
-                  final nowPlaying = playbackService.nowPlaying;
-                  final heroEnabled =
-                      !playbackService.nowPlayingChangedRecently;
-                  final placeholder = Icon(
-                    Symbols.queue_music,
-                    size: 48.0,
-                    color: scheme.onSecondaryContainer,
-                  );
-
-                  return LayoutBuilder(
-                    builder: (context, constraints) {
-                      final dense = constraints.maxWidth <= 520;
-                      final hideControls = !_controlsVisible;
-                      final reduceMotion = MediaQuery.disableAnimationsOf(
-                        context,
-                      );
-                      final hasNowPlaying = nowPlaying != null;
-                      Widget secondaryMotion(Widget child) {
-                        return IgnorePointer(
-                          ignoring: hideControls,
-                          child: ExcludeSemantics(
-                            excluding: hideControls,
-                            child: AnimatedSlide(
-                              duration: reduceMotion
-                                  ? Duration.zero
-                                  : MotionDuration.fast,
-                              curve: MotionCurve.standard,
-                              offset: hideControls
-                                  ? const Offset(0.02, 0.0)
-                                  : Offset.zero,
-                              child: AnimatedOpacity(
-                                duration: reduceMotion
-                                    ? Duration.zero
-                                    : MotionDuration.fast,
-                                curve: MotionCurve.standard,
-                                opacity: hideControls ? 0.0 : 1.0,
-                                child: child,
-                              ),
-                            ),
-                          ),
-                        );
-                      }
-
-                      final controls = Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (!dense)
-                            IconButton(
-                              tooltip: hasNowPlaying ? '上一曲' : '暂无正在播放',
-                              onPressed: hasNowPlaying
-                                  ? playbackService.lastAudio
-                                  : null,
-                              icon: const Icon(
-                                Symbols.skip_previous,
-                                fill: 1.0,
-                                weight: 400.0,
-                              ),
-                              color: scheme.onSecondaryContainer,
-                            ),
-                          _MiniPlayPauseButton(
-                            dense: dense,
-                            onSecondaryContainer: scheme.onSecondaryContainer,
-                            enabled: hasNowPlaying,
-                          ),
-                          if (!dense)
-                            IconButton(
-                              tooltip: hasNowPlaying ? '下一曲' : '暂无正在播放',
-                              onPressed: hasNowPlaying
-                                  ? playbackService.nextAudio
-                                  : null,
-                              icon: const Icon(
-                                Symbols.skip_next,
-                                fill: 1.0,
-                                weight: 400.0,
-                              ),
-                              color: scheme.onSecondaryContainer,
-                            ),
-                          if (!dense) const SizedBox(width: 8.0),
-                          if (!dense)
-                            _MiniTimeText(
-                              color: scheme.onSecondaryContainer,
-                              dragPreviewFraction: widget.dragPreviewFraction,
-                            ),
-                        ],
-                      );
-                      final trackContent = Row(
-                        key: ValueKey(nowPlaying?.path),
-                        children: [
-                          nowPlaying != null
-                              ? Builder(
-                                  builder: (context) {
-                                    final cover = ClipRRect(
-                                      borderRadius: AppRadius.smCircular,
-                                      child: SizedBox(
-                                        width: 48.0,
-                                        height: 48.0,
-                                        child: _MiniCoverWidget(
-                                          audio: nowPlaying,
-                                        ),
-                                      ),
-                                    );
-                                    if (!heroEnabled) return cover;
-                                    return Hero(
-                                      tag: nowPlaying.path,
-                                      child: cover,
-                                    );
-                                  },
-                                )
-                              : SizedBox(
-                                  width: 48.0,
-                                  height: 48.0,
-                                  child: Center(child: placeholder),
-                                ),
-                          const SizedBox(width: 8.0),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(
-                                  nowPlaying != null
-                                      ? nowPlaying.title
-                                      : 'Pure Music',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: scheme.onSecondaryContainer,
-                                  ),
-                                ),
-                                Text(
-                                  nowPlaying != null
-                                      ? '${nowPlaying.artist} - ${nowPlaying.album}'
-                                      : '享受音乐',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: scheme.onSecondaryContainer,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      );
-                      return Row(
-                        children: [
-                          Expanded(
-                            child: _MiniTrackSwitcher(
-                              direction: _slideDirection,
-                              enabled:
-                                  widget.animateTrackChanges && !reduceMotion,
-                              child: trackContent,
-                            ),
-                          ),
-                          const SizedBox(width: 8.0),
-                          secondaryMotion(controls),
-                        ],
-                      );
-                    },
-                  );
-                },
-              ),
+              child: _playingListen(context, scheme),
             ),
           ),
         ),
       ),
+    );
+  }
+
+
+  Widget _playingListen(BuildContext context, ColorScheme scheme) {
+    return ListenableBuilder(
+      listenable: PlayService.instance.playbackService.nowPlayingNotifier,
+      builder: (context, _) => _playingRow(context, scheme),
+    );
+  }
+
+  ButtonStyle _iconButtonStyle(ColorScheme scheme) {
+    return ButtonStyle(
+      backgroundColor: const WidgetStatePropertyAll(Colors.transparent),
+      overlayColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.pressed)) {
+          return scheme.onSecondaryContainer.withValues(alpha: Alpha.hover);
+        }
+        if (states.contains(WidgetState.hovered) ||
+            states.contains(WidgetState.focused)) {
+          return scheme.onSecondaryContainer.withValues(alpha: 0.02);
+        }
+        return Colors.transparent;
+      }),
+    );
+  }
+
+  void _onHover(bool v) {
+    _controlsHideTimer?.cancel();
+    setState(() => _hovered = v);
+    if (v) {
+      _setControlsVisible(true);
+    } else {
+      _scheduleHideControls();
+    }
+  }
+
+  Widget _playingRow(BuildContext context, ColorScheme scheme) {
+    final playbackService = PlayService.instance.playbackService;
+    final nowPlaying = playbackService.nowPlaying;
+    final heroEnabled = !playbackService.nowPlayingChangedRecently;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final dense =
+            SidebarMotionScope.layoutWidthOf(context, constraints.maxWidth) <=
+            520;
+        final hideControls = !_controlsVisible;
+        final reduceMotion = MediaQuery.disableAnimationsOf(context);
+        return Row(
+          children: [
+            Expanded(
+              child: _MiniTrackSwitcher(
+                direction: _slideDirection,
+                enabled: widget.animateTrackChanges && !reduceMotion,
+                child: _trackContent(scheme, nowPlaying, heroEnabled),
+              ),
+            ),
+            const SizedBox(width: 8.0),
+            _secondaryMotion(
+              hideControls: hideControls,
+              reduceMotion: reduceMotion,
+              child: _controls(
+                scheme,
+                playbackService,
+                nowPlaying != null,
+                dense,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _secondaryMotion({
+    required bool hideControls,
+    required bool reduceMotion,
+    required Widget child,
+  }) {
+    return IgnorePointer(
+      ignoring: hideControls,
+      child: ExcludeSemantics(
+        excluding: hideControls,
+        child: AnimatedSlide(
+          duration: reduceMotion ? Duration.zero : MotionDuration.fast,
+          curve: MotionCurve.standard,
+          offset: hideControls ? const Offset(0.02, 0.0) : Offset.zero,
+          child: AnimatedOpacity(
+            duration: reduceMotion ? Duration.zero : MotionDuration.fast,
+            curve: MotionCurve.standard,
+            opacity: hideControls ? 0.0 : 1.0,
+            child: child,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _controls(
+    ColorScheme scheme,
+    PlaybackService playbackService,
+    bool hasNowPlaying,
+    bool dense,
+  ) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (!dense)
+          IconButton(
+            tooltip: hasNowPlaying ? '上一曲' : '暂无正在播放',
+            onPressed: hasNowPlaying ? playbackService.lastAudio : null,
+            icon: const Icon(Symbols.skip_previous, fill: 1.0, weight: 400.0),
+            color: scheme.onSecondaryContainer,
+          ),
+        _MiniPlayPauseButton(
+          dense: dense,
+          onSecondaryContainer: scheme.onSecondaryContainer,
+          enabled: hasNowPlaying,
+        ),
+        if (!dense)
+          IconButton(
+            tooltip: hasNowPlaying ? '下一曲' : '暂无正在播放',
+            onPressed: hasNowPlaying ? playbackService.nextAudio : null,
+            icon: const Icon(Symbols.skip_next, fill: 1.0, weight: 400.0),
+            color: scheme.onSecondaryContainer,
+          ),
+        if (!dense) const SizedBox(width: 8.0),
+        if (!dense)
+          _MiniTimeText(
+            color: scheme.onSecondaryContainer,
+            dragPreviewFraction: widget.dragPreviewFraction,
+          ),
+      ],
+    );
+  }
+
+  Widget _trackContent(
+    ColorScheme scheme,
+    Audio? nowPlaying,
+    bool heroEnabled,
+  ) {
+    final placeholder = Icon(
+      Symbols.queue_music,
+      size: 48.0,
+      color: scheme.onSecondaryContainer,
+    );
+    return Row(
+      key: ValueKey(nowPlaying?.path),
+      children: [
+        nowPlaying != null
+            ? _cover(nowPlaying, heroEnabled)
+            : SizedBox(
+                width: 48.0,
+                height: 48.0,
+                child: Center(child: placeholder),
+              ),
+        const SizedBox(width: 8.0),
+        Expanded(child: _titles(scheme, nowPlaying)),
+      ],
+    );
+  }
+
+  Widget _cover(Audio nowPlaying, bool heroEnabled) {
+    final cover = ClipRRect(
+      borderRadius: AppRadius.smCircular,
+      child: SizedBox(
+        width: 48.0,
+        height: 48.0,
+        child: _MiniCoverWidget(audio: nowPlaying),
+      ),
+    );
+    if (!heroEnabled) return cover;
+    return Hero(tag: nowPlaying.path, child: cover);
+  }
+
+  Widget _titles(ColorScheme scheme, Audio? nowPlaying) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Text(
+          nowPlaying != null ? nowPlaying.title : 'Pure Music',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(color: scheme.onSecondaryContainer),
+        ),
+        Text(
+          nowPlaying != null
+              ? '${nowPlaying.artist} - ${nowPlaying.album}'
+              : '享受音乐',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(color: scheme.onSecondaryContainer),
+        ),
+      ],
     );
   }
 

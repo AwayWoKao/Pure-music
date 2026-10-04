@@ -57,20 +57,7 @@ class _TitleBar_Small extends StatelessWidget {
             const _OpenDrawerBtn(),
             const SizedBox(width: 8.0),
             const NavBackBtn(),
-            Expanded(
-              child: DragToMoveArea(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                  child: Text(
-                    'Pure Music',
-                    style: TextStyle(
-                      color: scheme.onSurface,
-                      fontSize: AppType.subtitle,
-                    ),
-                  ),
-                ),
-              ),
-            ),
+            Expanded(child: _smallTitle(scheme)),
             IconButton(
               tooltip: '搜索',
               onPressed: () => SearchDialog.show(context),
@@ -87,6 +74,23 @@ class _TitleBar_Small extends StatelessWidget {
       ),
     );
   }
+
+  Widget _smallTitle(ColorScheme scheme) {
+    return DragToMoveArea(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8.0),
+        child: Text(
+          'Pure Music',
+          style: TextStyle(
+            color: scheme.onSurface,
+            fontSize: AppType.subtitle,
+          ),
+        ),
+      ),
+    );
+  }
+
+
 }
 
 class _TitleBar_Medium extends StatelessWidget {
@@ -103,30 +107,7 @@ class _TitleBar_Medium extends StatelessWidget {
       child: Row(
         children: [
           const SizedBox(width: 80, child: Center(child: NavBackBtn())),
-          Expanded(
-            child: DragToMoveArea(
-              child: Row(
-                children: [
-                  Text(
-                    'Pure Music',
-                    style: TextStyle(
-                      color: scheme.onSurface,
-                      fontSize: AppType.subtitle,
-                    ),
-                  ),
-                  const Expanded(
-                    child: Padding(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 16.0,
-                        vertical: 8.0,
-                      ),
-                      child: HorizontalLyricView(),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+          Expanded(child: _mediumBrand(scheme)),
           IconButton(
             tooltip: '搜索',
             onPressed: () => SearchDialog.show(context),
@@ -143,6 +124,27 @@ class _TitleBar_Medium extends StatelessWidget {
       ),
     );
   }
+
+  Widget _mediumBrand(ColorScheme scheme) {
+    return DragToMoveArea(
+      child: Row(
+        children: [
+          Text(
+            'Pure Music',
+            style: TextStyle(
+              color: scheme.onSurface,
+              fontSize: AppType.subtitle,
+            ),
+          ),
+          const _TitleLyricSlot(
+            padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+          ),
+        ],
+      ),
+    );
+  }
+
+
 }
 
 class _TitleBar_Large extends StatelessWidget {
@@ -153,7 +155,6 @@ class _TitleBar_Large extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-
     return FrostedChrome(
       enabled: frosted,
       child: Padding(
@@ -162,49 +163,73 @@ class _TitleBar_Large extends StatelessWidget {
           children: [
             const NavBackBtn(),
             const SizedBox(width: 8.0),
-            Expanded(
-              child: DragToMoveArea(
-                child: Row(
-                  children: [
-                    SizedBox(
-                      width: 200,
-                      child: Row(
-                        children: [
-                          Image.asset('app_icon.ico', width: 24, height: 24),
-                          const SizedBox(width: 8.0),
-                          Text(
-                            'Pure Music',
-                            style: TextStyle(
-                              color: scheme.onSurface,
-                              fontSize: AppType.subtitle,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const Expanded(
-                      child: Padding(
-                        padding: EdgeInsets.fromLTRB(16, 8.0, 16.0, 8.0),
-                        child: HorizontalLyricView(compact: true),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            IconButton(
-              tooltip: '搜索',
-              onPressed: () => SearchDialog.show(context),
-              style: ButtonStyle(
-                shape: WidgetStatePropertyAll(
-                  RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
-                ),
-              ),
-              icon: const Icon(Symbols.search),
-            ),
+            Expanded(child: _dragArea(scheme)),
+            _searchButton(context),
             const WindowControlls(),
           ],
         ),
+      ),
+    );
+  }
+
+
+  Widget _largeBrand(ColorScheme scheme) {
+    return Row(
+      children: [
+        Image.asset('app_icon.ico', width: 24, height: 24),
+        const SizedBox(width: 8.0),
+        Text(
+          'Pure Music',
+          style: TextStyle(
+            color: scheme.onSurface,
+            fontSize: AppType.subtitle,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _dragArea(ColorScheme scheme) {
+    return DragToMoveArea(
+      child: Row(
+        children: [
+          SizedBox(width: 200, child: _largeBrand(scheme)),
+          const _TitleLyricSlot(
+            compact: true,
+            padding: EdgeInsets.fromLTRB(16, 8.0, 16.0, 8.0),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _searchButton(BuildContext context) {
+    return IconButton(
+      tooltip: '搜索',
+      onPressed: () => SearchDialog.show(context),
+      style: ButtonStyle(
+        shape: WidgetStatePropertyAll(
+          RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
+        ),
+      ),
+      icon: const Icon(Symbols.search),
+    );
+  }
+}
+
+
+class _TitleLyricSlot extends StatelessWidget {
+  const _TitleLyricSlot({this.compact = false, required this.padding});
+
+  final bool compact;
+  final EdgeInsets padding;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Padding(
+        padding: padding,
+        child: HorizontalLyricView(compact: compact),
       ),
     );
   }
@@ -333,74 +358,62 @@ class _WindowControllsState extends State<WindowControlls> with WindowListener {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        IconButton(
+        _windowButton(
           tooltip: '最小化',
           onPressed: windowManager.minimize,
           icon: const Icon(Symbols.remove),
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 46, minHeight: 40),
-          style: ButtonStyle(
-            backgroundColor: WidgetStateProperty.resolveWith((states) {
-              if (states.contains(WidgetState.pressed)) {
-                return scheme.onSurface.withValues(alpha: 0.15);
-              }
-              if (states.contains(WidgetState.hovered)) {
-                return scheme.onSurface.withValues(alpha: 0.10);
-              }
-              return Colors.transparent;
-            }),
-            shape: WidgetStateProperty.all(
-              RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
-            ),
-          ),
+          hover: scheme.onSurface,
         ),
         const SizedBox(width: 12.0),
-        IconButton(
+        _windowButton(
           tooltip: _isMaximized ? '还原' : '最大化',
           onPressed: _isProcessing ? null : _toggleMaximized,
           icon: Icon(
             _isMaximized ? Symbols.fullscreen_exit : Symbols.fullscreen,
           ),
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 46, minHeight: 40),
-          style: ButtonStyle(
-            backgroundColor: WidgetStateProperty.resolveWith((states) {
-              if (states.contains(WidgetState.pressed)) {
-                return scheme.onSurface.withValues(alpha: 0.15);
-              }
-              if (states.contains(WidgetState.hovered)) {
-                return scheme.onSurface.withValues(alpha: 0.10);
-              }
-              return Colors.transparent;
-            }),
-            shape: WidgetStateProperty.all(
-              RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
-            ),
-          ),
+          hover: scheme.onSurface,
         ),
         const SizedBox(width: 12.0),
-        IconButton(
+        _windowButton(
           tooltip: '关闭',
           onPressed: WindowLifecycleService.instance.requestClose,
           icon: const Icon(Symbols.close),
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 46, minHeight: 40),
-          style: ButtonStyle(
-            backgroundColor: WidgetStateProperty.resolveWith((states) {
-              if (states.contains(WidgetState.pressed)) {
-                return scheme.error.withValues(alpha: 0.30);
-              }
-              if (states.contains(WidgetState.hovered)) {
-                return scheme.error.withValues(alpha: 0.20);
-              }
-              return Colors.transparent;
-            }),
-            shape: WidgetStateProperty.all(
-              RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
-            ),
-          ),
+          hover: scheme.error,
+          pressedAlpha: 0.30,
+          hoverAlpha: 0.20,
         ),
       ],
+    );
+  }
+
+  Widget _windowButton({
+    required String tooltip,
+    required VoidCallback? onPressed,
+    required Widget icon,
+    required Color hover,
+    double pressedAlpha = 0.15,
+    double hoverAlpha = 0.10,
+  }) {
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: onPressed,
+      icon: icon,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 46, minHeight: 40),
+      style: ButtonStyle(
+        backgroundColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.pressed)) {
+            return hover.withValues(alpha: pressedAlpha);
+          }
+          if (states.contains(WidgetState.hovered)) {
+            return hover.withValues(alpha: hoverAlpha);
+          }
+          return Colors.transparent;
+        }),
+        shape: WidgetStateProperty.all(
+          RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
+        ),
+      ),
     );
   }
 }

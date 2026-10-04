@@ -194,24 +194,6 @@ class _SettingsIssuePageState extends State<SettingsIssuePage> {
     return kept;
   }
 
-  String _fitTimeline(List<LogRecord> records, int budget) {
-    final warnings = records
-        .where((record) => record.level.index >= LogLevel.warn.index)
-        .toList()
-      ..sort((a, b) => a.time.compareTo(b.time));
-    final infos = records
-        .where((record) => record.level == LogLevel.info)
-        .toList()
-      ..sort((a, b) => a.time.compareTo(b.time));
-    var rendered = renderIssueLog([...warnings, ...infos]);
-    while (rendered.length > budget && infos.isNotEmpty) {
-      infos.removeAt(0);
-      rendered = renderIssueLog([...warnings, ...infos]);
-    }
-    if (rendered.length > budget) return truncateIssueTail(rendered, budget);
-    return rendered;
-  }
-
   (String, String?) _splitApplicationLog(String content) {
     const crashMarker = '\nCRASH_LOG_PATH=';
     final crashIndex = content.indexOf(crashMarker);
@@ -224,28 +206,39 @@ class _SettingsIssuePageState extends State<SettingsIssuePage> {
 
   Future<String> _buildLogSnapshotFull() async {
     final parts = <String>[];
-    parts.add('== APP ==');
-    parts.add(_buildAppInfo());
-    parts.add('');
-    parts.add('== ENV ==');
-    parts.add(_buildEnvironmentInfo());
-    parts.add('');
-    parts.add('== PREF ==');
-    parts.add(_buildPreferenceSnapshot());
-    parts.add('');
-    parts.add('== SETTINGS ==');
-    parts.add(_buildSettingsSnapshot());
-    parts.add('');
-    parts.add('== NOW_PLAYING ==');
-    parts.add(_buildNowPlayingSnapshot());
-    parts.add('');
+    parts.addAll(_snapshotPreamble());
     var budget = _maxSnapshotChars - parts.join('\n').length;
     if (budget < 0) budget = 0;
     final echoReserve = budget > _echoReserveChars + 2048
         ? _echoReserveChars
         : 0;
     var usable = budget - echoReserve;
+    usable = await _appendApplicationLog(parts, usable);
+    await _appendEchoLog(parts, echoReserve + (usable > 0 ? usable : 0));
+    return parts.join('\n');
+  }
 
+  List<String> _snapshotPreamble() {
+    return [
+      '== APP ==',
+      _buildAppInfo(),
+      '',
+      '== ENV ==',
+      _buildEnvironmentInfo(),
+      '',
+      '== PREF ==',
+      _buildPreferenceSnapshot(),
+      '',
+      '== SETTINGS ==',
+      _buildSettingsSnapshot(),
+      '',
+      '== NOW_PLAYING ==',
+      _buildNowPlayingSnapshot(),
+      '',
+    ];
+  }
+
+  Future<int> _appendApplicationLog(List<String> parts, int usable) async {
     final applicationLog = await applicationLogOutput.readForExport();
     String? crashBody;
     final merged = <LogRecord>[];
@@ -257,8 +250,7 @@ class _SettingsIssuePageState extends State<SettingsIssuePage> {
     }
     merged.addAll(_dedupeRecords(LogMemory.instance.records, seen));
     parts.add('== APPLICATION_LOG ==');
-    var piece = renderIssueLog(merged);
-    if (piece.length > usable) piece = _fitTimeline(merged, usable);
+    var piece = fitIssueLogToBudget(merged, usable);
     usable -= piece.length;
     parts.add(piece);
     parts.add('');
@@ -270,24 +262,24 @@ class _SettingsIssuePageState extends State<SettingsIssuePage> {
       parts.add(piece);
       parts.add('');
     }
+    return usable;
+  }
 
-    final echoBudget = echoReserve + (usable > 0 ? usable : 0);
-    if (echoBudget > 0) {
-      parts.add('== AUDIO_ECHO_LOG ==');
-      final echoLog = await AudioEchoLogRecorder.instance.readLatestLog();
-      final header =
-          'AUDIO_ECHO_LOG_PATH='
-          '${AudioEchoLogRecorder.instance.latestLogPath ?? '-'}';
-      piece = redactDiagnosticData(
-        echoLog == null ? header : '$header\n$echoLog',
-      );
-      if (piece.length > echoBudget) {
-        piece = truncateIssueTail(piece, echoBudget);
-      }
-      parts.add(piece);
-      parts.add('');
+  Future<void> _appendEchoLog(List<String> parts, int echoBudget) async {
+    if (echoBudget <= 0) return;
+    parts.add('== AUDIO_ECHO_LOG ==');
+    final echoLog = await AudioEchoLogRecorder.instance.readLatestLog();
+    final header =
+        'AUDIO_ECHO_LOG_PATH='
+        '${AudioEchoLogRecorder.instance.latestLogPath ?? '-'}';
+    var piece = redactDiagnosticData(
+      echoLog == null ? header : '$header\n$echoLog',
+    );
+    if (piece.length > echoBudget) {
+      piece = truncateIssueTail(piece, echoBudget);
     }
-    return parts.join('\n');
+    parts.add(piece);
+    parts.add('');
   }
 
   void _ensureFieldsPrepared() {
@@ -303,6 +295,7 @@ class _SettingsIssuePageState extends State<SettingsIssuePage> {
       return;
     }
     setState(() => _isPreparingLog = true);
+    await Future<void>.delayed(Duration.zero);
     try {
       _ensureFieldsPrepared();
       final snapshot = await _buildLogSnapshotFull();
@@ -383,36 +376,6 @@ class _SettingsIssuePageState extends State<SettingsIssuePage> {
   }
 
   Widget _buildTitleRow() {
-    Widget titleField() {
-      return Focus(
-        onFocusChange: HotkeysHelper.onFocusChanges,
-        child: TextField(
-          controller: titleEditingController,
-          autofocus: true,
-          decoration: const InputDecoration(
-            hintText: '标题',
-            border: OutlineInputBorder(),
-          ),
-        ),
-      );
-    }
-
-    Widget submitButton({bool stretch = false}) {
-      final button = ValueListenableBuilder<TextEditingValue>(
-        valueListenable: titleEditingController,
-        builder: (context, value, _) {
-          final canSubmit =
-              enableIssueReporting && value.text.trim().isNotEmpty;
-          return FilledButton.icon(
-            onPressed: canSubmit ? _openIssueLink : null,
-            icon: const Icon(Symbols.open_in_new),
-            label: const Text('提交问题'),
-          );
-        },
-      );
-      return stretch ? SizedBox(width: double.infinity, child: button) : button;
-    }
-
     return LayoutBuilder(
       builder: (context, constraints) {
         final compact =
@@ -421,22 +384,50 @@ class _SettingsIssuePageState extends State<SettingsIssuePage> {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              titleField(),
+              _titleField(),
               const SizedBox(height: 8.0),
-              submitButton(stretch: true),
+              _submitButton(stretch: true),
             ],
           );
         }
-
         return Row(
           children: [
-            Expanded(child: titleField()),
+            Expanded(child: _titleField()),
             const SizedBox(width: 8.0),
-            submitButton(),
+            _submitButton(),
           ],
         );
       },
     );
+  }
+
+  Widget _titleField() {
+    return Focus(
+      onFocusChange: HotkeysHelper.onFocusChanges,
+      child: TextField(
+        controller: titleEditingController,
+        autofocus: true,
+        decoration: const InputDecoration(
+          hintText: '标题',
+          border: OutlineInputBorder(),
+        ),
+      ),
+    );
+  }
+
+  Widget _submitButton({bool stretch = false}) {
+    final button = ValueListenableBuilder<TextEditingValue>(
+      valueListenable: titleEditingController,
+      builder: (context, value, _) {
+        final canSubmit = enableIssueReporting && value.text.trim().isNotEmpty;
+        return FilledButton.icon(
+          onPressed: canSubmit ? _openIssueLink : null,
+          icon: const Icon(Symbols.open_in_new),
+          label: const Text('提交问题'),
+        );
+      },
+    );
+    return stretch ? SizedBox(width: double.infinity, child: button) : button;
   }
 
   Widget _buildDescriptionField() {
@@ -473,64 +464,6 @@ class _SettingsIssuePageState extends State<SettingsIssuePage> {
   }
 
   Widget _buildLogHeader(ColorScheme scheme) {
-    Widget titleView() {
-      return Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(
-            icon: Icon(
-              _logExpanded ? Symbols.expand_less : Symbols.expand_more,
-            ),
-            onPressed: () => setState(() => _logExpanded = !_logExpanded),
-            visualDensity: VisualDensity.compact,
-          ),
-          Text(
-            '日志（可选）',
-            style: TextStyle(color: scheme.onSurface.withAlpha(191)),
-          ),
-        ],
-      );
-    }
-
-    Widget actionsView() {
-      return ValueListenableBuilder<TextEditingValue>(
-        valueListenable: logEditingController,
-        builder: (context, value, _) {
-          return Wrap(
-            spacing: 4.0,
-            runSpacing: 4.0,
-            alignment: WrapAlignment.end,
-            children: [
-              TextButton.icon(
-                onPressed: !enableIssueReporting || _isPreparingLog
-                    ? null
-                    : _fillAndCopyLogSnapshot,
-                icon: _isPreparingLog
-                    ? const SizedBox(
-                        width: 18.0,
-                        height: 18.0,
-                        child: CircularProgressIndicator(strokeWidth: 2.0),
-                      )
-                    : const Icon(Symbols.content_copy, size: 18.0),
-                label: Text(_isPreparingLog ? '获取中' : '获取日志'),
-              ),
-              TextButton.icon(
-                onPressed:
-                    !canClearTextValue(
-                      text: value.text,
-                      isBusy: _isPreparingLog,
-                    )
-                    ? null
-                    : () => logEditingController.clear(),
-                icon: const Icon(Symbols.clear, size: 18.0),
-                label: const Text('清空'),
-              ),
-            ],
-          );
-        },
-      );
-    }
-
     return LayoutBuilder(
       builder: (context, constraints) {
         final compact =
@@ -539,13 +472,79 @@ class _SettingsIssuePageState extends State<SettingsIssuePage> {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              titleView(),
-              Align(alignment: Alignment.centerRight, child: actionsView()),
+              _logHeaderTitle(scheme),
+              Align(
+                alignment: Alignment.centerRight,
+                child: _logHeaderActions(),
+              ),
             ],
           );
         }
+        return Row(
+          children: [
+            _logHeaderTitle(scheme),
+            const Spacer(),
+            _logHeaderActions(),
+          ],
+        );
+      },
+    );
+  }
 
-        return Row(children: [titleView(), const Spacer(), actionsView()]);
+  Widget _logHeaderTitle(ColorScheme scheme) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          icon: Icon(_logExpanded ? Symbols.expand_less : Symbols.expand_more),
+          onPressed: () => setState(() => _logExpanded = !_logExpanded),
+          visualDensity: VisualDensity.compact,
+        ),
+        Text(
+          '日志（可选）',
+          style: TextStyle(color: scheme.onSurface.withAlpha(191)),
+        ),
+      ],
+    );
+  }
+
+  Widget _copyLogIcon() {
+    if (!_isPreparingLog) {
+      return const Icon(Symbols.content_copy, size: 18.0);
+    }
+    return const SizedBox(
+      width: 18.0,
+      height: 18.0,
+      child: CircularProgressIndicator(strokeWidth: 2.0),
+    );
+  }
+
+  Widget _logHeaderActions() {
+    return ValueListenableBuilder<TextEditingValue>(
+      valueListenable: logEditingController,
+      builder: (context, value, _) {
+        return Wrap(
+          spacing: 4.0,
+          runSpacing: 4.0,
+          alignment: WrapAlignment.end,
+          children: [
+            TextButton.icon(
+              onPressed: !enableIssueReporting || _isPreparingLog
+                  ? null
+                  : _fillAndCopyLogSnapshot,
+              icon: _copyLogIcon(),
+              label: Text(_isPreparingLog ? '获取中' : '获取日志'),
+            ),
+            TextButton.icon(
+              onPressed:
+                  !canClearTextValue(text: value.text, isBusy: _isPreparingLog)
+                  ? null
+                  : () => logEditingController.clear(),
+              icon: const Icon(Symbols.clear, size: 18.0),
+              label: const Text('清空'),
+            ),
+          ],
+        );
       },
     );
   }

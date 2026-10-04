@@ -12,6 +12,46 @@ import 'package:pure_music/page/uni_page_components.dart';
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
+List<SortMethodDesc<Artist>> _artistsSortMethods() {
+  return [
+    SortMethodDesc(
+      icon: Symbols.title,
+      name: '名称',
+      alphabetValueOf: (item) => item.name,
+      method: (list, order) {
+        sortNaturallyBy(
+          list,
+          (item) => item.name,
+          descending: order == SortOrder.decending,
+        );
+      },
+      backgroundMethod: (list, order, control) => sortPageNaturallyInBackground(
+        list,
+        (item) => item.name,
+        descending: order == SortOrder.decending,
+        control: control,
+      ),
+    ),
+    SortMethodDesc(
+      icon: Symbols.music_note,
+      name: '作品数量',
+      method: (list, order) {
+        final descending = order == SortOrder.decending;
+        list.sort((a, b) {
+          final cmp = a.works.length.compareTo(b.works.length);
+          return descending ? -cmp : cmp;
+        });
+      },
+      backgroundMethod: (list, order, control) => sortPageByIntegerInBackground(
+        list,
+        (item) => item.works.length,
+        descending: order == SortOrder.decending,
+        control: control,
+      ),
+    ),
+  ];
+}
+
 class ArtistsPage extends StatefulWidget {
   const ArtistsPage({super.key});
 
@@ -47,7 +87,12 @@ class _ArtistsPageState extends State<ArtistsPage> {
           });
         },
         onError: (Object error, StackTrace trace) {
-          log.library.error('legacy', '艺术家页面后台准备失败', error: error, stackTrace: trace);
+          log.library.error(
+            'legacy',
+            '艺术家页面后台准备失败',
+            error: error,
+            stackTrace: trace,
+          );
           if (!mounted || !identical(_preparation, future)) return;
           setState(() {
             _preparation = null;
@@ -126,78 +171,30 @@ class _ArtistsPageState extends State<ArtistsPage> {
           enableSortOrder: canSortItems,
           enableContentViewSwitch: false,
           multiSelectController: _multiSelectController,
-          multiSelectViewActions: [
-            MultiSelectPlaySelectedAudios(
-              multiSelectController: _multiSelectController,
-              toAudios: (selected) =>
-                  selected.expand((artist) => artist.works).toList(),
-            ),
-            AddSelectedAudiosToPlaylist(
-              multiSelectController: _multiSelectController,
-              toAudios: (selected) =>
-                  selected.expand((artist) => artist.works).toList(),
-            ),
-            MultiSelectSelectOrClearAll(
-              multiSelectController: _multiSelectController,
-              contentList: contentList,
-            ),
-            MultiSelectExit(multiSelectController: _multiSelectController),
-          ],
-          sortMethods: [
-            SortMethodDesc(
-              icon: Symbols.title,
-              name: '名称',
-              alphabetValueOf: (artist) => artist.name,
-              method: (list, order) {
-                switch (order) {
-                  case SortOrder.ascending:
-                    sortNaturallyBy(list, (artist) => artist.name);
-                    break;
-                  case SortOrder.decending:
-                    sortNaturallyBy(
-                      list,
-                      (artist) => artist.name,
-                      descending: true,
-                    );
-                    break;
-                }
-              },
-              backgroundMethod: (list, order, control) =>
-                  sortPageNaturallyInBackground(
-                    list,
-                    (artist) => artist.name,
-                    descending: order == SortOrder.decending,
-                    control: control,
-                  ),
-            ),
-            SortMethodDesc(
-              icon: Symbols.music_note,
-              name: '作品数量',
-              method: (list, order) {
-                switch (order) {
-                  case SortOrder.ascending:
-                    list.sort(
-                      (a, b) => a.works.length.compareTo(b.works.length),
-                    );
-                    break;
-                  case SortOrder.decending:
-                    list.sort(
-                      (a, b) => b.works.length.compareTo(a.works.length),
-                    );
-                    break;
-                }
-              },
-              backgroundMethod: (list, order, control) =>
-                  sortPageByIntegerInBackground(
-                    list,
-                    (artist) => artist.works.length,
-                    descending: order == SortOrder.decending,
-                    control: control,
-                  ),
-            ),
-          ],
+          multiSelectViewActions: _artistsMultiSelectActions(contentList),
+          sortMethods: _artistsSortMethods(),
         );
       },
     );
+  }
+
+  List<Widget> _artistsMultiSelectActions(List<Artist> contentList) {
+    return [
+      MultiSelectPlaySelectedAudios(
+        multiSelectController: _multiSelectController,
+        toAudios: (selected) =>
+            selected.expand((artist) => artist.works).toList(),
+      ),
+      AddSelectedAudiosToPlaylist(
+        multiSelectController: _multiSelectController,
+        toAudios: (selected) =>
+            selected.expand((artist) => artist.works).toList(),
+      ),
+      MultiSelectSelectOrClearAll(
+        multiSelectController: _multiSelectController,
+        contentList: contentList,
+      ),
+      MultiSelectExit(multiSelectController: _multiSelectController),
+    ];
   }
 }

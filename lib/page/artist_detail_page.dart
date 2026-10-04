@@ -60,68 +60,71 @@ class ArtistDetailPage extends StatelessWidget {
         ),
         MultiSelectExit(multiSelectController: multiSelectController),
       ],
-      sortMethods: [
-        SortMethodDesc(
-          icon: Symbols.title,
-          name: '标题',
-          alphabetValueOf: (audio) => audio.title,
-          method: (list, order) {
-            switch (order) {
-              case SortOrder.ascending:
-                list.sort((a, b) => a.title.naturalCompareTo(b.title));
-                break;
-              case SortOrder.decending:
-                list.sort((a, b) => b.title.naturalCompareTo(a.title));
-                break;
-            }
-          },
-        ),
-        SortMethodDesc(
-          icon: Symbols.album,
-          name: '专辑',
-          alphabetValueOf: (audio) => audio.album,
-          method: (list, order) {
-            switch (order) {
-              case SortOrder.ascending:
-                list.sort((a, b) => a.album.naturalCompareTo(b.album));
-                break;
-              case SortOrder.decending:
-                list.sort((a, b) => b.album.naturalCompareTo(a.album));
-                break;
-            }
-          },
-        ),
-        SortMethodDesc(
-          icon: Symbols.add,
-          name: '创建时间',
-          method: (list, order) {
-            switch (order) {
-              case SortOrder.ascending:
-                list.sort((a, b) => a.created.compareTo(b.created));
-                break;
-              case SortOrder.decending:
-                list.sort((a, b) => b.created.compareTo(a.created));
-                break;
-            }
-          },
-        ),
-        SortMethodDesc(
-          icon: Symbols.edit,
-          name: '修改时间',
-          method: (list, order) {
-            switch (order) {
-              case SortOrder.ascending:
-                list.sort((a, b) => a.modified.compareTo(b.modified));
-                break;
-              case SortOrder.decending:
-                list.sort((a, b) => b.modified.compareTo(a.modified));
-                break;
-            }
-          },
-        ),
-      ],
+      sortMethods: _artistSortMethods(),
     );
   }
+}
+
+SortMethodDesc<Audio> _artistStringSort({
+  required IconData icon,
+  required String name,
+  required String Function(Audio) keyOf,
+}) {
+  return SortMethodDesc(
+    icon: icon,
+    name: name,
+    alphabetValueOf: keyOf,
+    method: (list, order) {
+      list.sort((a, b) {
+        final left = order == SortOrder.ascending ? a : b;
+        final right = order == SortOrder.ascending ? b : a;
+        return keyOf(left).naturalCompareTo(keyOf(right));
+      });
+    },
+  );
+}
+
+SortMethodDesc<Audio> _artistIntSort({
+  required IconData icon,
+  required String name,
+  required int Function(Audio) valueOf,
+}) {
+  return SortMethodDesc(
+    icon: icon,
+    name: name,
+    method: (list, order) {
+      list.sort((a, b) {
+        final left = order == SortOrder.ascending ? a : b;
+        final right = order == SortOrder.ascending ? b : a;
+        return valueOf(left).compareTo(valueOf(right));
+      });
+    },
+  );
+}
+
+List<SortMethodDesc<Audio>> _artistSortMethods() {
+  return [
+    _artistStringSort(
+      icon: Symbols.title,
+      name: '标题',
+      keyOf: (audio) => audio.title,
+    ),
+    _artistStringSort(
+      icon: Symbols.album,
+      name: '专辑',
+      keyOf: (audio) => audio.album,
+    ),
+    _artistIntSort(
+      icon: Symbols.add,
+      name: '创建时间',
+      valueOf: (audio) => audio.created,
+    ),
+    _artistIntSort(
+      icon: Symbols.edit,
+      name: '修改时间',
+      valueOf: (audio) => audio.modified,
+    ),
+  ];
 }
 
 class _EmptyArtistBody extends StatelessWidget {

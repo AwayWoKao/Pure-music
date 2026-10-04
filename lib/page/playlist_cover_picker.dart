@@ -58,12 +58,7 @@ class _CoverPickerDialogState extends State<_CoverPickerDialog> {
           IconButton(
             tooltip: '选择本地图片',
             onPressed: _isPickingCustomImage ? null : _pickCustomImage,
-            icon: _isPickingCustomImage
-                ? const SizedBox.square(
-                    dimension: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Symbols.add_photo_alternate),
+            icon: _customImageIcon(),
           ),
           IconButton(
             tooltip: '重置为默认',
@@ -76,6 +71,17 @@ class _CoverPickerDialogState extends State<_CoverPickerDialog> {
         ],
       ),
       child: _CoverSearchBody(playlist: widget.playlist),
+    );
+  }
+
+
+  Widget _customImageIcon() {
+    if (!_isPickingCustomImage) {
+      return const Icon(Symbols.add_photo_alternate);
+    }
+    return const SizedBox.square(
+      dimension: 20,
+      child: CircularProgressIndicator(strokeWidth: 2),
     );
   }
 
@@ -253,107 +259,128 @@ class _CoverSearchBodyState extends State<_CoverSearchBody> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        TextField(
-          controller: _searchController,
-          focusNode: _searchFocusNode,
-          autofocus: true,
-          decoration: InputDecoration(
-            prefixIcon: const Icon(Symbols.search),
-            hintText: '搜索音乐、艺术家或专辑',
-            suffixIcon: ValueListenableBuilder<TextEditingValue>(
-              valueListenable: _searchController,
-              builder: (context, value, _) {
-                if (!canShowSearchClearAction(value.text)) {
-                  return const SizedBox.shrink();
-                }
-                return IconButton(
-                  tooltip: '清除',
-                  onPressed: _clearSearch,
-                  icon: const Icon(Symbols.close),
-                );
-              },
-            ),
-          ),
-          onChanged: _onSearchChanged,
-        ),
-        ValueListenableBuilder<bool>(
-          valueListenable: _isSearching,
-          builder: (context, searching, _) => AnimatedSwitcher(
-            duration: MotionDuration.xFast,
-            child: searching
-                ? const Padding(
-                    padding: EdgeInsets.only(top: 8),
-                    child: LinearProgressIndicator(minHeight: 2),
-                  )
-                : const SizedBox(height: 12),
-          ),
-        ),
-        ValueListenableBuilder<_CoverSearchResult>(
-          valueListenable: _result,
-          builder: (context, result, _) {
-            final hasCurrentQuery =
-                result.query.isNotEmpty &&
-                result.query ==
-                    _normalizeCoverSearchText(_searchController.text);
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: List.generate(_tabs.length, (index) {
-                  final selected = _currentTab == index;
-                  final count = switch (index) {
-                    0 => result.audios.length,
-                    1 => result.artists.length,
-                    _ => result.albums.length,
-                  };
-                  return SearchCategoryButton(
-                    label: _tabs[index].$1,
-                    icon: _tabs[index].$2,
-                    selected: selected,
-                    count: selected && hasCurrentQuery ? count : null,
-                    onPressed: selected
-                        ? null
-                        : () => setState(() => _currentTab = index),
-                  );
-                }),
-              ),
+        _searchField(),
+        _searchProgress(),
+        _categoryTabs(),
+        Expanded(child: _resultPane()),
+      ],
+    );
+  }
+
+  Widget _searchField() {
+    return TextField(
+      controller: _searchController,
+      focusNode: _searchFocusNode,
+      autofocus: true,
+      decoration: InputDecoration(
+        prefixIcon: const Icon(Symbols.search),
+        hintText: '搜索音乐、艺术家或专辑',
+        suffixIcon: ValueListenableBuilder<TextEditingValue>(
+          valueListenable: _searchController,
+          builder: (context, value, _) {
+            if (!canShowSearchClearAction(value.text)) {
+              return const SizedBox.shrink();
+            }
+            return IconButton(
+              tooltip: '清除',
+              onPressed: _clearSearch,
+              icon: const Icon(Symbols.close),
             );
           },
         ),
-        Expanded(
-          child: ValueListenableBuilder<_CoverSearchResult>(
-            valueListenable: _result,
-            builder: (context, result, _) {
-              if (result.query.isEmpty) {
-                return const QuietEmptyState(
-                  icon: Symbols.image_search,
-                  title: '搜索音乐、艺术家或专辑',
-                  message: '从媒体库中选择一张歌单封面。',
-                  maxWidth: 380,
-                );
-              }
-              if (result.isEmpty) {
-                return const QuietEmptyState(
-                  icon: Symbols.search_off,
-                  title: '没有找到匹配结果',
-                  message: '换个音乐、艺术家或专辑名称再试。',
-                  maxWidth: 380,
-                );
-              }
-              return DirectionalTabView(
-                key: ValueKey('cover_search_$_searchVersion'),
-                index: _currentTab,
-                children: [
-                  _buildMusicList(result.audios),
-                  _buildArtistList(result.artists),
-                  _buildAlbumList(result.albums),
-                ],
-              );
-            },
+      ),
+      onChanged: _onSearchChanged,
+    );
+  }
+
+  Widget _searchProgress() {
+    return ValueListenableBuilder<bool>(
+      valueListenable: _isSearching,
+      builder: (context, searching, _) => AnimatedSwitcher(
+        duration: MotionDuration.xFast,
+        child: searching
+            ? const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: LinearProgressIndicator(minHeight: 2),
+              )
+            : const SizedBox(height: 12),
+      ),
+    );
+  }
+
+
+  Widget _coverTab(
+    _CoverSearchResult result,
+    bool hasCurrentQuery,
+    int index,
+  ) {
+    final selected = _currentTab == index;
+    final count = switch (index) {
+      0 => result.audios.length,
+      1 => result.artists.length,
+      _ => result.albums.length,
+    };
+    return SearchCategoryButton(
+      label: _tabs[index].$1,
+      icon: _tabs[index].$2,
+      selected: selected,
+      count: selected && hasCurrentQuery ? count : null,
+      onPressed: selected ? null : () => setState(() => _currentTab = index),
+    );
+  }
+
+  Widget _categoryTabs() {
+    return ValueListenableBuilder<_CoverSearchResult>(
+      valueListenable: _result,
+      builder: (context, result, _) {
+        final hasCurrentQuery =
+            result.query.isNotEmpty &&
+            result.query == _normalizeCoverSearchText(_searchController.text);
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (var index = 0; index < _tabs.length; index++)
+                _coverTab(result, hasCurrentQuery, index),
+            ],
           ),
-        ),
-      ],
+        );
+      },
+    );
+  }
+
+  Widget _resultPane() {
+    return ValueListenableBuilder<_CoverSearchResult>(
+      valueListenable: _result,
+      builder: (context, result, _) {
+        if (result.query.isEmpty) {
+          return const QuietEmptyState(
+            icon: Symbols.image_search,
+            title: '搜索音乐、艺术家或专辑',
+            message: '从媒体库中选择一张歌单封面。',
+            maxWidth: 380,
+          );
+        }
+        if (result.isEmpty) {
+          return const QuietEmptyState(
+            icon: Symbols.search_off,
+            title: '没有找到匹配结果',
+            message: '换个音乐、艺术家或专辑名称再试。',
+            maxWidth: 380,
+          );
+        }
+        return DirectionalTabView(
+          key: ValueKey('cover_search_$_searchVersion'),
+          index: _currentTab,
+          children: [
+            _buildMusicList(result.audios),
+            _buildArtistList(result.artists),
+            _buildAlbumList(result.albums),
+          ],
+        );
+      },
     );
   }
 
@@ -502,55 +529,60 @@ class _CoverResultTile extends StatelessWidget {
                 children: [
                   cover,
                   const SizedBox(width: 12),
-                  Expanded(
-                    child: subtitle == null
-                        ? Text(
-                            title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(color: titleColor),
-                          )
-                        : Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: titleColor,
-                                  fontSize: AppType.subtitle,
-                                  fontWeight: AppType.weightMedium,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                subtitle!,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: scheme.onSurfaceVariant,
-                                ),
-                              ),
-                            ],
-                          ),
-                  ),
-                  if (selected)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 8),
-                      child: Icon(
-                        Symbols.check,
-                        size: 18,
-                        color: scheme.onSecondaryContainer,
-                      ),
-                    ),
+                  Expanded(child: _texts(scheme, titleColor)),
+                  if (selected) _selectedCheck(scheme),
                 ],
               ),
             ),
           ),
         ),
       ),
+    );
+  }
+
+
+  Widget _selectedCheck(ColorScheme scheme) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 8),
+      child: Icon(
+        Symbols.check,
+        size: 18,
+        color: scheme.onSecondaryContainer,
+      ),
+    );
+  }
+
+  Widget _texts(ColorScheme scheme, Color titleColor) {
+    if (subtitle == null) {
+      return Text(
+        title,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(color: titleColor),
+      );
+    }
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: titleColor,
+            fontSize: AppType.subtitle,
+            fontWeight: AppType.weightMedium,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          subtitle!,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(color: scheme.onSurfaceVariant),
+        ),
+      ],
     );
   }
 }

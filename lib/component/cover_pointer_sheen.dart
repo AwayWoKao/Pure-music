@@ -112,30 +112,36 @@ class _CoverPointerSheenState extends State<CoverPointerSheen>
         clipBehavior: Clip.none,
         children: [
           widget.child,
-          Positioned.fill(
-            child: IgnorePointer(
-              child: RepaintBoundary(
-                child: AnimatedBuilder(
-                  animation: _paintListenable,
-                  builder: (context, _) {
-                    final opacity = _opacity.value;
-                    if (opacity <= 0.01) return const SizedBox.shrink();
-                    return CustomPaint(
-                      painter: CoverPointerSheenPainter(
-                        center: _position.value,
-                        opacity: opacity,
-                        color: sheenColor,
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ),
-          ),
+          _sheenLayer(sheenColor),
         ],
       ),
     );
   }
+
+  Widget _sheenLayer(Color sheenColor) {
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: RepaintBoundary(
+          child: AnimatedBuilder(
+            animation: _paintListenable,
+            builder: (context, _) {
+              final opacity = _opacity.value;
+              if (opacity <= 0.01) return const SizedBox.shrink();
+              return CustomPaint(
+                painter: CoverPointerSheenPainter(
+                  center: _position.value,
+                  opacity: opacity,
+                  color: sheenColor,
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+
 }
 
 class CoverPointerSheenPainter extends CustomPainter {

@@ -52,10 +52,10 @@ class _NowPlayingSmallViewSwitchState extends State<NowPlayingSmallViewSwitch> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final useMonet = AppSettings.instance.useMaterialYouForControls;
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
-    final iconColor = useMonet ? scheme.primary : scheme.onSurface;
-
+    final iconColor = AppSettings.instance.useMaterialYouForControls
+        ? scheme.primary
+        : scheme.onSurface;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4.0),
       child: SizedBox(
@@ -72,12 +72,7 @@ class _NowPlayingSmallViewSwitchState extends State<NowPlayingSmallViewSwitch> {
             child: AnimatedContainer(
               duration: reduceMotion ? Duration.zero : MotionDuration.fast,
               curve: MotionCurve.standard,
-              decoration: BoxDecoration(
-                color: _hovered && widget.enabled && widget.revealed
-                    ? scheme.onSecondaryContainer.withValues(alpha: 0.06)
-                    : Colors.transparent,
-                borderRadius: AppRadius.mdCircular,
-              ),
+              decoration: _hoverDecoration(scheme),
               child: InkWell(
                 borderRadius: AppRadius.mdCircular,
                 hoverColor: scheme.onSecondaryContainer.withValues(alpha: 0.02),
@@ -86,41 +81,50 @@ class _NowPlayingSmallViewSwitchState extends State<NowPlayingSmallViewSwitch> {
                 ),
                 splashColor: Colors.transparent,
                 onTap: widget.enabled ? widget.onTap : null,
-                onHover: (hasEntered) {
-                  final hovered = hasEntered && widget.enabled;
-                  if (_hovered == hovered) return;
-                  setState(() => _hovered = hovered);
-                },
+                onHover: _onHover,
                 child: Center(
                   child: _maybeTooltip(
-                    child: widget.busy
-                        ? SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: iconColor,
-                            ),
-                          )
-                        : AnimatedScale(
-                            duration: reduceMotion
-                                ? Duration.zero
-                                : MotionDuration.fast,
-                            curve: MotionCurve.standard,
-                            scale: _hovered && widget.enabled ? 1.04 : 1.0,
-                            child: Icon(
-                              widget.icon,
-                              color: widget.enabled
-                                  ? iconColor
-                                  : iconColor.withValues(alpha: 0.38),
-                            ),
-                          ),
+                    child: _switchChild(reduceMotion, iconColor),
                   ),
                 ),
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  BoxDecoration _hoverDecoration(ColorScheme scheme) {
+    return BoxDecoration(
+      color: _hovered && widget.enabled && widget.revealed
+          ? scheme.onSecondaryContainer.withValues(alpha: 0.06)
+          : Colors.transparent,
+      borderRadius: AppRadius.mdCircular,
+    );
+  }
+
+  void _onHover(bool hasEntered) {
+    final hovered = hasEntered && widget.enabled;
+    if (_hovered == hovered) return;
+    setState(() => _hovered = hovered);
+  }
+
+  Widget _switchChild(bool reduceMotion, Color iconColor) {
+    if (widget.busy) {
+      return SizedBox(
+        width: 18,
+        height: 18,
+        child: CircularProgressIndicator(strokeWidth: 2, color: iconColor),
+      );
+    }
+    return AnimatedScale(
+      duration: reduceMotion ? Duration.zero : MotionDuration.fast,
+      curve: MotionCurve.standard,
+      scale: _hovered && widget.enabled ? 1.04 : 1.0,
+      child: Icon(
+        widget.icon,
+        color: widget.enabled ? iconColor : iconColor.withValues(alpha: 0.38),
       ),
     );
   }

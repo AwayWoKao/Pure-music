@@ -422,149 +422,216 @@ class _UniDetailPageState<P, S, T> extends State<UniDetailPage<P, S, T>> {
     final currentTabIndex = hasTertiaryContent ? _currentTabIndex : 0;
     return ListenableBuilder(
       listenable: AppSettings.backgroundNotifier,
-      builder: (context, _) {
-        final useAppBackground =
-            AppSettings.instance.appBackgroundImagePath != null ||
-            AppSettings.instance.appWindowTransparent;
-        return ColoredBox(
-          color: useAppBackground
-              ? Colors.transparent
-              : scheme.surfaceContainer,
-          child: Stack(
+      builder: (context, _) => _buildResultScaffold(
+        multiSelectController: multiSelectController,
+        actions: actions,
+        scheme: scheme,
+        hasTertiaryContent: hasTertiaryContent,
+        currentTabIndex: currentTabIndex,
+      ),
+    );
+  }
+
+  Widget _buildResultScaffold({
+    required MultiSelectController<S>? multiSelectController,
+    required List<Widget> actions,
+    required ColorScheme scheme,
+    required bool hasTertiaryContent,
+    required int currentTabIndex,
+  }) {
+    final useAppBackground =
+        AppSettings.instance.appBackgroundImagePath != null ||
+        AppSettings.instance.appWindowTransparent;
+    return ColoredBox(
+      color: useAppBackground ? Colors.transparent : scheme.surfaceContainer,
+      child: Stack(
+        children: [
+          if (!useAppBackground)
+            Positioned.fill(
+              child: DetailCoverAtmosphere(pic: widget.primaryPic),
+            ),
+          Column(
             children: [
-              if (!useAppBackground)
-                Positioned.fill(
-                  child: DetailCoverAtmosphere(pic: widget.primaryPic),
+              _buildResultHeader(actions, multiSelectController),
+              Expanded(
+                child: _buildResultBody(
+                  multiSelectController: multiSelectController,
+                  scheme: scheme,
+                  hasTertiaryContent: hasTertiaryContent,
+                  currentTabIndex: currentTabIndex,
                 ),
-              Column(
-                children: [
-                  ListenableBuilder(
-                    listenable: AppSettings.listMotionNotifier,
-                    builder: (context, _) {
-                      Widget buildHeader(double collapseProgress) =>
-                          _UniDetailPageHeader(
-                            pic: widget.primaryPic,
-                            picShape: widget.picShape,
-                            title: widget.title,
-                            subtitle: widget.subtitle,
-                            actions: actions,
-                            multiSelectController: multiSelectController,
-                            multiSelectViewActions:
-                                widget.multiSelectViewActions,
-                            onPicTap: widget.onPrimaryPicTap,
-                            picBusy: widget.primaryPicBusy,
-                            searchController: widget.enableSearch
-                                ? _searchController
-                                : null,
-                            searchQuery: widget.searchQuery,
-                            onSearchChanged: widget.onSearchChanged,
-                            collapseProgress: collapseProgress,
-                          );
-                      if (!_enableHeaderCollapse(context)) {
-                        return buildHeader(0);
-                      }
-                      return AnimatedBuilder(
-                        animation: _activeScrollController,
-                        builder: (context, _) =>
-                            buildHeader(_headerCollapseProgress),
-                      );
-                    },
-                  ),
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(16.0, 0.0, 16.0, 16.0),
-                      child: Column(
-                        children: [
-                          if (widget.enableTabs && hasTertiaryContent) ...[
-                            const SizedBox(height: 16.0),
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: _buildTabBar(scheme),
-                            ),
-                          ],
-                          const SizedBox(height: 16.0),
-                          Expanded(
-                            child: Stack(
-                              children: [
-                                Positioned.fill(
-                                  child: LayoutBuilder(
-                                    builder: (context, constraints) {
-                                      final showAlphabetIndex =
-                                          widget.bodyOverride == null &&
-                                          currentTabIndex == 0 &&
-                                          _alphabetSectionIndexes.length >= 3;
-                                      _contentCrossAxisExtent =
-                                          constraints.maxWidth -
-                                          (showAlphabetIndex ? 32 : 0);
-                                      return Row(
-                                        children: [
-                                          Expanded(
-                                            child: MultiSelectPointerRegion<S>(
-                                              controller: multiSelectController,
-                                              child: ListenableBuilder(
-                                                listenable: AppSettings
-                                                    .listMotionNotifier,
-                                                builder: (context, _) =>
-                                                    widget.bodyOverride ??
-                                                    (widget.enableTabs
-                                                        ? DirectionalTabView(
-                                                            index:
-                                                                currentTabIndex,
-                                                            children: [
-                                                              _buildSecondaryContent(
-                                                                multiSelectController,
-                                                                scheme,
-                                                              ),
-                                                              if (hasTertiaryContent)
-                                                                _buildTertiaryContent(
-                                                                  scheme,
-                                                                ),
-                                                            ],
-                                                          )
-                                                        : _buildCombinedContent(
-                                                            multiSelectController,
-                                                            scheme,
-                                                          )),
-                                              ),
-                                            ),
-                                          ),
-                                          if (showAlphabetIndex)
-                                            AlphabetIndexBar(
-                                              controller:
-                                                  _activeScrollController,
-                                              sectionIndexes:
-                                                  _alphabetSectionIndexes,
-                                              indexForOffset: _indexForOffset,
-                                              onSelectIndex: _jumpToIndex,
-                                              onWheel: _forwardWheelToList,
-                                              descending:
-                                                  currSortOrder ==
-                                                  SortOrder.decending,
-                                            ),
-                                        ],
-                                      );
-                                    },
-                                  ),
-                                ),
-                                ListLocateButtons(
-                                  controller: _activeScrollController,
-                                  locateTargetAt: _locateTargetAt,
-                                  onScrollToIndex: _scrollToIndex,
-                                  onWheel: _forwardWheelToList,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
               ),
             ],
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildResultHeader(
+    List<Widget> actions,
+    MultiSelectController<S>? multiSelectController,
+  ) {
+    return ListenableBuilder(
+      listenable: AppSettings.listMotionNotifier,
+      builder: (context, _) {
+        Widget buildHeader(double collapseProgress) => _UniDetailPageHeader(
+          pic: widget.primaryPic,
+          picShape: widget.picShape,
+          title: widget.title,
+          subtitle: widget.subtitle,
+          actions: actions,
+          multiSelectController: multiSelectController,
+          multiSelectViewActions: widget.multiSelectViewActions,
+          onPicTap: widget.onPrimaryPicTap,
+          picBusy: widget.primaryPicBusy,
+          searchController: widget.enableSearch ? _searchController : null,
+          searchQuery: widget.searchQuery,
+          onSearchChanged: widget.onSearchChanged,
+          collapseProgress: collapseProgress,
+        );
+        if (!_enableHeaderCollapse(context)) {
+          return buildHeader(0);
+        }
+        return AnimatedBuilder(
+          animation: _activeScrollController,
+          builder: (context, _) => buildHeader(_headerCollapseProgress),
         );
       },
+    );
+  }
+
+  Widget _buildResultBody({
+    required MultiSelectController<S>? multiSelectController,
+    required ColorScheme scheme,
+    required bool hasTertiaryContent,
+    required int currentTabIndex,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16.0, 0.0, 16.0, 16.0),
+      child: Column(
+        children: [
+          if (widget.enableTabs && hasTertiaryContent) ...[
+            const SizedBox(height: 16.0),
+            Align(alignment: Alignment.centerLeft, child: _buildTabBar(scheme)),
+          ],
+          const SizedBox(height: 16.0),
+          Expanded(
+            child: _resultStack(
+              multiSelectController: multiSelectController,
+              scheme: scheme,
+              hasTertiaryContent: hasTertiaryContent,
+              currentTabIndex: currentTabIndex,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+
+  Widget _resultStack({
+    required MultiSelectController<S>? multiSelectController,
+    required ColorScheme scheme,
+    required bool hasTertiaryContent,
+    required int currentTabIndex,
+  }) {
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: LayoutBuilder(
+            builder: (context, constraints) => _buildResultContentRow(
+              constraints: constraints,
+              multiSelectController: multiSelectController,
+              scheme: scheme,
+              hasTertiaryContent: hasTertiaryContent,
+              currentTabIndex: currentTabIndex,
+            ),
+          ),
+        ),
+        ListLocateButtons(
+          controller: _activeScrollController,
+          locateTargetAt: _locateTargetAt,
+          onScrollToIndex: _scrollToIndex,
+          onWheel: _forwardWheelToList,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildResultContentRow({
+    required BoxConstraints constraints,
+    required MultiSelectController<S>? multiSelectController,
+    required ColorScheme scheme,
+    required bool hasTertiaryContent,
+    required int currentTabIndex,
+  }) {
+    final showAlphabetIndex =
+        widget.bodyOverride == null &&
+        currentTabIndex == 0 &&
+        _alphabetSectionIndexes.length >= 3;
+    _contentCrossAxisExtent =
+        constraints.maxWidth - (showAlphabetIndex ? 32 : 0);
+    return Row(
+      children: [
+        Expanded(
+          child: MultiSelectPointerRegion<S>(
+            controller: multiSelectController,
+            child: _buildResultList(
+              multiSelectController: multiSelectController,
+              scheme: scheme,
+              hasTertiaryContent: hasTertiaryContent,
+              currentTabIndex: currentTabIndex,
+            ),
+          ),
+        ),
+        if (showAlphabetIndex)
+          AlphabetIndexBar(
+            controller: _activeScrollController,
+            sectionIndexes: _alphabetSectionIndexes,
+            indexForOffset: _indexForOffset,
+            onSelectIndex: _jumpToIndex,
+            onWheel: _forwardWheelToList,
+            descending: currSortOrder == SortOrder.decending,
+          ),
+      ],
+    );
+  }
+
+
+  Widget _resultListBody(
+    MultiSelectController<S>? multiSelectController,
+    ColorScheme scheme,
+    bool hasTertiaryContent,
+    int currentTabIndex,
+  ) {
+    if (widget.bodyOverride != null) return widget.bodyOverride!;
+    if (!widget.enableTabs) {
+      return _buildCombinedContent(multiSelectController, scheme);
+    }
+    return DirectionalTabView(
+      index: currentTabIndex,
+      children: [
+        _buildSecondaryContent(multiSelectController, scheme),
+        if (hasTertiaryContent) _buildTertiaryContent(scheme),
+      ],
+    );
+  }
+
+  Widget _buildResultList({
+    required MultiSelectController<S>? multiSelectController,
+    required ColorScheme scheme,
+    required bool hasTertiaryContent,
+    required int currentTabIndex,
+  }) {
+    return ListenableBuilder(
+      listenable: AppSettings.listMotionNotifier,
+      builder: (context, _) => _resultListBody(
+        multiSelectController,
+        scheme,
+        hasTertiaryContent,
+        currentTabIndex,
+      ),
     );
   }
 
@@ -628,83 +695,20 @@ class _UniDetailPageState<P, S, T> extends State<UniDetailPage<P, S, T>> {
       type: MaterialType.transparency,
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final maxCrossAxisExtent = gridDelegate.maxCrossAxisExtent;
           final crossAxisCount = maxExtentGridCrossAxisCount(
             crossAxisExtent: constraints.maxWidth,
-            maxCrossAxisExtent: maxCrossAxisExtent,
+            maxCrossAxisExtent: gridDelegate.maxCrossAxisExtent,
             crossAxisSpacing: gridDelegate.crossAxisSpacing,
           );
           final content = CustomScrollView(
             controller: _secondaryScrollController,
             physics: enableSmoothScrolling ? const SmoothScrollPhysics() : null,
             slivers: [
-              switch (currContentView) {
-                ContentView.list
-                    when widget.secondaryContentSectionBuilder != null =>
-                  SliverList.builder(
-                    itemCount: widget.secondaryContent.length,
-                    itemBuilder: (context, i) {
-                      final item = widget.secondaryContent[i];
-                      final section = widget.secondaryContentSectionBuilder!(
-                        context,
-                        item,
-                        i,
-                      );
-                      return Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          ?section,
-                          SizedBox(
-                            height: _listItemExtent,
-                            child: widget.secondaryContentBuilder(
-                              context,
-                              item,
-                              i,
-                              multiSelectController,
-                              ContentView.list,
-                            ),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                ContentView.list => SliverFixedExtentList.builder(
-                  itemExtent: _listItemExtent,
-                  itemCount: widget.secondaryContent.length,
-                  itemBuilder: (context, i) => StackedSliverItem(
-                    controller: _secondaryScrollController,
-                    rowIndex: i,
-                    itemExtent: _listItemExtent,
-                    enabled: enableStackedEffect,
-                    child: widget.secondaryContentBuilder(
-                      context,
-                      widget.secondaryContent[i],
-                      i,
-                      multiSelectController,
-                      ContentView.list,
-                    ),
-                  ),
-                ),
-                ContentView.table => SliverGrid.builder(
-                  gridDelegate: gridDelegate,
-                  itemCount: widget.secondaryContent.length,
-                  itemBuilder: (context, i) => StackedSliverItem(
-                    controller: _secondaryScrollController,
-                    rowIndex: i ~/ crossAxisCount,
-                    itemExtent:
-                        gridDelegate.mainAxisExtent! +
-                        gridDelegate.mainAxisSpacing,
-                    enabled: enableStackedEffect,
-                    child: widget.secondaryContentBuilder(
-                      context,
-                      widget.secondaryContent[i],
-                      i,
-                      multiSelectController,
-                      ContentView.table,
-                    ),
-                  ),
-                ),
-              },
+              _secondarySliver(
+                multiSelectController,
+                enableStackedEffect,
+                crossAxisCount,
+              ),
               const SliverPadding(padding: EdgeInsets.only(bottom: 96.0)),
             ],
           );
@@ -713,6 +717,105 @@ class _UniDetailPageState<P, S, T> extends State<UniDetailPage<P, S, T>> {
             child: content,
           );
         },
+      ),
+    );
+  }
+
+  Widget _secondarySliver(
+    MultiSelectController<S>? multiSelectController,
+    bool enableStackedEffect,
+    int crossAxisCount,
+  ) {
+    return switch (currContentView) {
+      ContentView.list when widget.secondaryContentSectionBuilder != null =>
+        _secondarySectionedList(multiSelectController),
+      ContentView.list => _secondaryFixedList(
+        multiSelectController,
+        enableStackedEffect,
+      ),
+      ContentView.table => _secondaryGrid(
+        multiSelectController,
+        enableStackedEffect,
+        crossAxisCount,
+      ),
+    };
+  }
+
+  Widget _secondarySectionedList(
+    MultiSelectController<S>? multiSelectController,
+  ) {
+    return SliverList.builder(
+      itemCount: widget.secondaryContent.length,
+      itemBuilder: (context, i) {
+        final item = widget.secondaryContent[i];
+        final section = widget.secondaryContentSectionBuilder!(
+          context,
+          item,
+          i,
+        );
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ?section,
+            SizedBox(
+              height: _listItemExtent,
+              child: widget.secondaryContentBuilder(
+                context,
+                item,
+                i,
+                multiSelectController,
+                ContentView.list,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _secondaryFixedList(
+    MultiSelectController<S>? multiSelectController,
+    bool enableStackedEffect,
+  ) {
+    return SliverFixedExtentList.builder(
+      itemExtent: _listItemExtent,
+      itemCount: widget.secondaryContent.length,
+      itemBuilder: (context, i) => StackedSliverItem(
+        controller: _secondaryScrollController,
+        rowIndex: i,
+        itemExtent: _listItemExtent,
+        enabled: enableStackedEffect,
+        child: widget.secondaryContentBuilder(
+          context,
+          widget.secondaryContent[i],
+          i,
+          multiSelectController,
+          ContentView.list,
+        ),
+      ),
+    );
+  }
+
+  Widget _secondaryGrid(
+    MultiSelectController<S>? multiSelectController,
+    bool enableStackedEffect,
+    int crossAxisCount,
+  ) {
+    return SliverGrid.builder(
+      gridDelegate: gridDelegate,
+      itemCount: widget.secondaryContent.length,
+      itemBuilder: (context, i) => StackedSliverItem(
+        controller: _secondaryScrollController,
+        rowIndex: i ~/ crossAxisCount,
+        itemExtent: gridDelegate.mainAxisExtent! + gridDelegate.mainAxisSpacing,
+        enabled: enableStackedEffect,
+        child: widget.secondaryContentBuilder(
+          context,
+          widget.secondaryContent[i],
+          i,
+          multiSelectController,
+          ContentView.table,
+        ),
       ),
     );
   }
@@ -730,43 +833,57 @@ class _UniDetailPageState<P, S, T> extends State<UniDetailPage<P, S, T>> {
       borderRadius: AppRadius.smCircular,
       type: MaterialType.transparency,
       child: LayoutBuilder(
-        builder: (context, constraints) {
-          final crossAxisCount = maxExtentGridCrossAxisCount(
-            crossAxisExtent: constraints.maxWidth,
-            maxCrossAxisExtent: 300,
-            crossAxisSpacing: 8,
-          );
-          final content = CustomScrollView(
-            controller: _tertiaryScrollController,
-            physics: enableSmoothScrolling ? const SmoothScrollPhysics() : null,
-            slivers: [
-              SliverGrid.builder(
-                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                  maxCrossAxisExtent: 300,
-                  mainAxisExtent: 72,
-                  mainAxisSpacing: 8.0,
-                  crossAxisSpacing: 8.0,
-                ),
-                itemCount: widget.tertiaryContent!.length,
-                itemBuilder: (context, i) => StackedSliverItem(
-                  controller: _tertiaryScrollController,
-                  rowIndex: i ~/ crossAxisCount,
-                  itemExtent: 80,
-                  enabled: enableStackedEffect,
-                  child: widget.tertiaryContentBuilder!(
-                    context,
-                    widget.tertiaryContent![i],
-                    i,
-                    null,
-                    ContentView.list,
-                  ),
-                ),
-              ),
-              const SliverPadding(padding: EdgeInsets.only(bottom: 96.0)),
-            ],
-          );
-          return SidebarFrozenViewport(child: content);
-        },
+        builder: (context, constraints) => _tertiaryScrollView(
+          constraints,
+          enableStackedEffect,
+          enableSmoothScrolling,
+        ),
+      ),
+    );
+  }
+
+  Widget _tertiaryScrollView(
+    BoxConstraints constraints,
+    bool enableStackedEffect,
+    bool enableSmoothScrolling,
+  ) {
+    final crossAxisCount = maxExtentGridCrossAxisCount(
+      crossAxisExtent: constraints.maxWidth,
+      maxCrossAxisExtent: 300,
+      crossAxisSpacing: 8,
+    );
+    final content = CustomScrollView(
+      controller: _tertiaryScrollController,
+      physics: enableSmoothScrolling ? const SmoothScrollPhysics() : null,
+      slivers: [
+        _tertiaryGrid(enableStackedEffect, crossAxisCount),
+        const SliverPadding(padding: EdgeInsets.only(bottom: 96.0)),
+      ],
+    );
+    return SidebarFrozenViewport(child: content);
+  }
+
+  Widget _tertiaryGrid(bool enableStackedEffect, int crossAxisCount) {
+    return SliverGrid.builder(
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 300,
+        mainAxisExtent: 72,
+        mainAxisSpacing: 8.0,
+        crossAxisSpacing: 8.0,
+      ),
+      itemCount: widget.tertiaryContent!.length,
+      itemBuilder: (context, i) => StackedSliverItem(
+        controller: _tertiaryScrollController,
+        rowIndex: i ~/ crossAxisCount,
+        itemExtent: 80,
+        enabled: enableStackedEffect,
+        child: widget.tertiaryContentBuilder!(
+          context,
+          widget.tertiaryContent![i],
+          i,
+          null,
+          ContentView.list,
+        ),
       ),
     );
   }
@@ -792,112 +909,16 @@ class _UniDetailPageState<P, S, T> extends State<UniDetailPage<P, S, T>> {
             controller: _combinedScrollController,
             physics: enableSmoothScrolling ? const SmoothScrollPhysics() : null,
             slivers: [
-              switch (currContentView) {
-                ContentView.list
-                    when widget.secondaryContentSectionBuilder != null =>
-                  SliverList.builder(
-                    itemCount: widget.secondaryContent.length,
-                    itemBuilder: (context, i) {
-                      final item = widget.secondaryContent[i];
-                      final section = widget.secondaryContentSectionBuilder!(
-                        context,
-                        item,
-                        i,
-                      );
-                      return Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          ?section,
-                          SizedBox(
-                            height: _listItemExtent,
-                            child: widget.secondaryContentBuilder(
-                              context,
-                              item,
-                              i,
-                              multiSelectController,
-                              ContentView.list,
-                            ),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                ContentView.list => SliverFixedExtentList.builder(
-                  itemExtent: _listItemExtent,
-                  itemCount: widget.secondaryContent.length,
-                  itemBuilder: (context, i) => StackedSliverItem(
-                    controller: _combinedScrollController,
-                    rowIndex: i,
-                    itemExtent: _listItemExtent,
-                    enabled: enableStackedEffect,
-                    child: widget.secondaryContentBuilder(
-                      context,
-                      widget.secondaryContent[i],
-                      i,
-                      multiSelectController,
-                      ContentView.list,
-                    ),
-                  ),
-                ),
-                ContentView.table => SliverGrid.builder(
-                  gridDelegate: gridDelegate,
-                  itemCount: widget.secondaryContent.length,
-                  itemBuilder: (context, i) => StackedSliverItem(
-                    controller: _combinedScrollController,
-                    rowIndex: i ~/ crossAxisCount,
-                    itemExtent:
-                        gridDelegate.mainAxisExtent! +
-                        gridDelegate.mainAxisSpacing,
-                    enabled: enableStackedEffect,
-                    child: widget.secondaryContentBuilder(
-                      context,
-                      widget.secondaryContent[i],
-                      i,
-                      multiSelectController,
-                      ContentView.table,
-                    ),
-                  ),
-                ),
-              },
-              if (widget.tertiaryContent != null &&
-                  widget.tertiaryContent!.isNotEmpty &&
-                  widget.tertiaryContentTitle != null) ...[
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: Text(
-                      widget.tertiaryContentTitle!,
-                      style: TextStyle(
-                        color: scheme.onSurface,
-                        fontSize: AppType.sectionTitle,
-                        fontWeight: AppType.weightBold,
-                      ),
-                    ),
-                  ),
-                ),
-                SliverGrid.builder(
-                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                    maxCrossAxisExtent: 300,
-                    mainAxisExtent: 72,
-                    mainAxisSpacing: 8.0,
-                    crossAxisSpacing: 8.0,
-                  ),
-                  itemCount: widget.tertiaryContent!.length,
-                  itemBuilder: (context, i) => StackedSliverItem(
-                    controller: _combinedScrollController,
-                    rowIndex: i ~/ crossAxisCount,
-                    itemExtent: 80,
-                    enabled: enableStackedEffect,
-                    child: widget.tertiaryContentBuilder!(
-                      context,
-                      widget.tertiaryContent![i],
-                      i,
-                      null,
-                      ContentView.list,
-                    ),
-                  ),
-                ),
-              ],
+              _combinedPrimarySliver(
+                multiSelectController,
+                enableStackedEffect,
+                crossAxisCount,
+              ),
+              ..._combinedTertiarySlivers(
+                scheme,
+                enableStackedEffect,
+                crossAxisCount,
+              ),
               const SliverPadding(padding: EdgeInsets.only(bottom: 96.0)),
             ],
           );
@@ -908,6 +929,154 @@ class _UniDetailPageState<P, S, T> extends State<UniDetailPage<P, S, T>> {
         },
       ),
     );
+  }
+
+  Widget _combinedPrimarySliver(
+    MultiSelectController<S>? multiSelectController,
+    bool enableStackedEffect,
+    int crossAxisCount,
+  ) {
+    return switch (currContentView) {
+      ContentView.list when widget.secondaryContentSectionBuilder != null =>
+        _combinedSectionedList(multiSelectController),
+      ContentView.list => _combinedFixedList(
+        multiSelectController,
+        enableStackedEffect,
+      ),
+      ContentView.table => _combinedGrid(
+        multiSelectController,
+        enableStackedEffect,
+        crossAxisCount,
+      ),
+    };
+  }
+
+  Widget _combinedSectionedList(
+    MultiSelectController<S>? multiSelectController,
+  ) {
+    return SliverList.builder(
+      itemCount: widget.secondaryContent.length,
+      itemBuilder: (context, i) {
+        final item = widget.secondaryContent[i];
+        final section = widget.secondaryContentSectionBuilder!(
+          context,
+          item,
+          i,
+        );
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ?section,
+            SizedBox(
+              height: _listItemExtent,
+              child: widget.secondaryContentBuilder(
+                context,
+                item,
+                i,
+                multiSelectController,
+                ContentView.list,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _combinedFixedList(
+    MultiSelectController<S>? multiSelectController,
+    bool enableStackedEffect,
+  ) {
+    return SliverFixedExtentList.builder(
+      itemExtent: _listItemExtent,
+      itemCount: widget.secondaryContent.length,
+      itemBuilder: (context, i) => StackedSliverItem(
+        controller: _combinedScrollController,
+        rowIndex: i,
+        itemExtent: _listItemExtent,
+        enabled: enableStackedEffect,
+        child: widget.secondaryContentBuilder(
+          context,
+          widget.secondaryContent[i],
+          i,
+          multiSelectController,
+          ContentView.list,
+        ),
+      ),
+    );
+  }
+
+  Widget _combinedGrid(
+    MultiSelectController<S>? multiSelectController,
+    bool enableStackedEffect,
+    int crossAxisCount,
+  ) {
+    return SliverGrid.builder(
+      gridDelegate: gridDelegate,
+      itemCount: widget.secondaryContent.length,
+      itemBuilder: (context, i) => StackedSliverItem(
+        controller: _combinedScrollController,
+        rowIndex: i ~/ crossAxisCount,
+        itemExtent: gridDelegate.mainAxisExtent! + gridDelegate.mainAxisSpacing,
+        enabled: enableStackedEffect,
+        child: widget.secondaryContentBuilder(
+          context,
+          widget.secondaryContent[i],
+          i,
+          multiSelectController,
+          ContentView.table,
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _combinedTertiarySlivers(
+    ColorScheme scheme,
+    bool enableStackedEffect,
+    int crossAxisCount,
+  ) {
+    if (widget.tertiaryContent == null ||
+        widget.tertiaryContent!.isEmpty ||
+        widget.tertiaryContentTitle == null) {
+      return const [];
+    }
+    return [
+      SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Text(
+            widget.tertiaryContentTitle!,
+            style: TextStyle(
+              color: scheme.onSurface,
+              fontSize: AppType.sectionTitle,
+              fontWeight: AppType.weightBold,
+            ),
+          ),
+        ),
+      ),
+      SliverGrid.builder(
+        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: 300,
+          mainAxisExtent: 72,
+          mainAxisSpacing: 8.0,
+          crossAxisSpacing: 8.0,
+        ),
+        itemCount: widget.tertiaryContent!.length,
+        itemBuilder: (context, i) => StackedSliverItem(
+          controller: _combinedScrollController,
+          rowIndex: i ~/ crossAxisCount,
+          itemExtent: 80,
+          enabled: enableStackedEffect,
+          child: widget.tertiaryContentBuilder!(
+            context,
+            widget.tertiaryContent![i],
+            i,
+            null,
+            ContentView.list,
+          ),
+        ),
+      ),
+    ];
   }
 }
 
@@ -940,6 +1109,13 @@ class _ActionsRow extends StatelessWidget {
           )
         : null;
 
+    if (SidebarMotionScope.maybeOf(context) != null) {
+      return AdaptiveActionLayout(
+        compact: MediaQuery.sizeOf(context).width < 600,
+        actions: actions,
+        trailing: searchField,
+      );
+    }
     return LayoutBuilder(
       builder: (context, constraints) => AdaptiveActionLayout(
         compact: constraints.maxWidth < 600,
@@ -996,7 +1172,6 @@ class _CompactSearchBarState extends State<_CompactSearchBar> {
     final bgColor = _isFocused
         ? widget.scheme.secondaryContainer.withValues(alpha: 0.7)
         : widget.scheme.surfaceContainerHighest.withValues(alpha: 0.5);
-
     return SizedBox(
       height: 40.0,
       child: TextField(
@@ -1007,72 +1182,70 @@ class _CompactSearchBarState extends State<_CompactSearchBar> {
           fontSize: AppType.body,
           fontWeight: AppType.weightRegular,
         ),
-        decoration: InputDecoration(
-          isDense: true,
-          filled: true,
-          fillColor: bgColor,
-          hintText: '搜索…',
-          hintStyle: TextStyle(
-            color: widget.scheme.onSurfaceVariant.withValues(alpha: 0.5),
-            fontSize: AppType.body,
-            fontWeight: AppType.weightRegular,
-          ),
-          prefixIcon: Padding(
-            padding: const EdgeInsets.only(left: 10),
-            child: Icon(
-              Symbols.search,
-              size: 18,
-              color: widget.scheme.onSurfaceVariant.withValues(alpha: 0.6),
-            ),
-          ),
-          prefixIconConstraints: const BoxConstraints(
-            minWidth: 34,
-            maxHeight: 40,
-          ),
-          suffixIcon: widget.query.isNotEmpty
-              ? IconButton(
-                  icon: Icon(
-                    Symbols.close,
-                    size: 16,
-                    color: widget.scheme.onSurfaceVariant.withValues(
-                      alpha: 0.6,
-                    ),
-                  ),
-                  onPressed: () {
-                    widget.controller.clear();
-                    widget.onChanged?.call('');
-                  },
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: 30,
-                    maxWidth: 30,
-                    minHeight: 40,
-                    maxHeight: 40,
-                  ),
-                )
-              : null,
-          suffixIconConstraints: const BoxConstraints(maxHeight: 40),
-          border: OutlineInputBorder(
-            borderRadius: AppRadius.mdCircular,
-            borderSide: BorderSide.none,
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: AppRadius.mdCircular,
-            borderSide: BorderSide.none,
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: AppRadius.mdCircular,
-            borderSide: BorderSide(
-              color: widget.scheme.primary.withValues(alpha: 0.5),
-              width: 1.5,
-            ),
-          ),
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 12,
-            vertical: 8,
-          ),
-        ),
+        decoration: _searchDecoration(bgColor),
         onChanged: widget.onChanged,
+      ),
+    );
+  }
+
+  InputDecoration _searchDecoration(Color bgColor) {
+    return InputDecoration(
+      isDense: true,
+      filled: true,
+      fillColor: bgColor,
+      hintText: '搜索…',
+      hintStyle: TextStyle(
+        color: widget.scheme.onSurfaceVariant.withValues(alpha: 0.5),
+        fontSize: AppType.body,
+        fontWeight: AppType.weightRegular,
+      ),
+      prefixIcon: Padding(
+        padding: const EdgeInsets.only(left: 10),
+        child: Icon(
+          Symbols.search,
+          size: 18,
+          color: widget.scheme.onSurfaceVariant.withValues(alpha: 0.6),
+        ),
+      ),
+      prefixIconConstraints: const BoxConstraints(minWidth: 34, maxHeight: 40),
+      suffixIcon: widget.query.isNotEmpty ? _searchClearButton() : null,
+      suffixIconConstraints: const BoxConstraints(maxHeight: 40),
+      border: OutlineInputBorder(
+        borderRadius: AppRadius.mdCircular,
+        borderSide: BorderSide.none,
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: AppRadius.mdCircular,
+        borderSide: BorderSide.none,
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: AppRadius.mdCircular,
+        borderSide: BorderSide(
+          color: widget.scheme.primary.withValues(alpha: 0.5),
+          width: 1.5,
+        ),
+      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    );
+  }
+
+  Widget _searchClearButton() {
+    return IconButton(
+      icon: Icon(
+        Symbols.close,
+        size: 16,
+        color: widget.scheme.onSurfaceVariant.withValues(alpha: 0.6),
+      ),
+      onPressed: () {
+        widget.controller.clear();
+        widget.onChanged?.call('');
+      },
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(
+        minWidth: 30,
+        maxWidth: 30,
+        minHeight: 40,
+        maxHeight: 40,
       ),
     );
   }
@@ -1113,124 +1286,139 @@ class _UniDetailPageHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final brightness = theme.brightness;
+    if (SidebarMotionScope.maybeOf(context) != null) {
+      return _buildHeaderBody(
+        context,
+        theme,
+        BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width),
+      );
+    }
     return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact =
-            constraints.maxWidth.isFinite && constraints.maxWidth < 560;
-        final expandedCoverSize = compact ? 156.0 : 200.0;
-        // Scroll-scrubbed layout stays 1:1 with pixels. Easing the scrub
-        // front-loads the collapse (easeOutCubic(0.5) ≈ 0.875) so the first
-        // ticks read as a snap and the rest crawls.
-        final progress = compact ? 0.0 : MotionCurve.scrub(collapseProgress);
-        final coverSize = lerpDouble(expandedCoverSize, 72.0, progress)!;
-        final gap = lerpDouble(compact ? 12.0 : 16.0, 12.0, progress)!;
-        final titleSize = lerpDouble(
-          compact ? AppType.pageTitle : AppType.hero,
-          AppType.pageTitle,
-          progress,
-        )!;
-        final expandedContentOpacity = 1.0 - progress;
-        final horizontalInset = lerpDouble(
-          compact ? 12.0 : 16.0,
-          12.0,
-          progress,
-        )!;
-        final verticalInset = lerpDouble(12.0, 8.0, progress)!;
-        final coverDecoration = BoxDecoration(
-          shape: picShape == PicShape.oval
-              ? BoxShape.circle
-              : BoxShape.rectangle,
-          borderRadius: picShape == PicShape.rrect
-              ? AppRadius.smCircular
-              : null,
-          border: Border.all(color: scheme.onSurface.withValues(alpha: 0.10)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(
-                alpha: brightness == Brightness.dark ? 0.30 : 0.18,
-              ),
-              blurRadius: 20,
-              offset: const Offset(0, 8),
-            ),
-          ],
-        );
+      builder: (context, constraints) =>
+          _buildHeaderBody(context, theme, constraints),
+    );
+  }
 
-        return Padding(
-          padding: EdgeInsets.symmetric(
-            horizontal: horizontalInset,
-            vertical: verticalInset,
+  Widget _buildHeaderBody(
+    BuildContext context,
+    ThemeData theme,
+    BoxConstraints constraints,
+  ) {
+    final scheme = theme.colorScheme;
+    final compact =
+        SidebarMotionScope.layoutWidthOf(context, constraints.maxWidth) < 560;
+    final expandedCoverSize = compact ? 156.0 : 200.0;
+    // Scroll-scrubbed layout stays 1:1 with pixels. Easing the scrub
+    // front-loads the collapse (easeOutCubic(0.5) ≈ 0.875) so the first
+    // ticks read as a snap and the rest crawls.
+    final progress = compact ? 0.0 : MotionCurve.scrub(collapseProgress);
+    final coverSize = lerpDouble(expandedCoverSize, 72.0, progress)!;
+    final gap = lerpDouble(compact ? 12.0 : 16.0, 12.0, progress)!;
+    final titleSize = lerpDouble(
+      compact ? AppType.pageTitle : AppType.hero,
+      AppType.pageTitle,
+      progress,
+    )!;
+    final expandedContentOpacity = 1.0 - progress;
+    final horizontalInset = lerpDouble(compact ? 12.0 : 16.0, 12.0, progress)!;
+    final verticalInset = lerpDouble(12.0, 8.0, progress)!;
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: horizontalInset,
+        vertical: verticalInset,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          _headerCover(scheme, theme.brightness, coverSize),
+          SizedBox(width: gap),
+          Expanded(
+            child: _headerInfo(scheme, titleSize, expandedContentOpacity),
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              DecoratedBox(
-                decoration: coverDecoration,
-                child: _HoverableCover(
-                  futurePic: pic,
-                  picShape: picShape,
-                  scheme: scheme,
-                  size: coverSize,
-                  onTap: onPicTap,
-                  busy: picBusy,
-                  placeholder: Icon(
-                    Symbols.queue_music,
-                    size: coverSize,
-                    color: scheme.onSurface,
-                  ),
+        ],
+      ),
+    );
+  }
+
+  Widget _headerCover(ColorScheme scheme, Brightness brightness, double size) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        shape: picShape == PicShape.oval ? BoxShape.circle : BoxShape.rectangle,
+        borderRadius: picShape == PicShape.rrect ? AppRadius.smCircular : null,
+        border: Border.all(color: scheme.onSurface.withValues(alpha: 0.10)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(
+              alpha: brightness == Brightness.dark ? 0.30 : 0.18,
+            ),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: _HoverableCover(
+        futurePic: pic,
+        picShape: picShape,
+        scheme: scheme,
+        size: size,
+        onTap: onPicTap,
+        busy: picBusy,
+        placeholder: Icon(
+          Symbols.queue_music,
+          size: size,
+          color: scheme.onSurface,
+        ),
+      ),
+    );
+  }
+
+  Widget _headerInfo(
+    ColorScheme scheme,
+    double titleSize,
+    double expandedContentOpacity,
+  ) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.end,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: TextStyle(
+            fontSize: titleSize,
+            color: scheme.onSurface,
+            fontWeight: AppType.weightBold,
+          ),
+        ),
+        ClipRect(
+          child: Align(
+            alignment: Alignment.topLeft,
+            heightFactor: expandedContentOpacity,
+            child: Opacity(
+              opacity: expandedContentOpacity,
+              child: Text(
+                subtitle,
+                style: TextStyle(
+                  fontSize: AppType.body,
+                  color: scheme.onSurfaceVariant,
                 ),
               ),
-              SizedBox(width: gap),
-              Expanded(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        fontSize: titleSize,
-                        color: scheme.onSurface,
-                        fontWeight: AppType.weightBold,
-                      ),
-                    ),
-                    ClipRect(
-                      child: Align(
-                        alignment: Alignment.topLeft,
-                        heightFactor: expandedContentOpacity,
-                        child: Opacity(
-                          opacity: expandedContentOpacity,
-                          child: Text(
-                            subtitle,
-                            style: TextStyle(
-                              fontSize: AppType.body,
-                              color: scheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    SizedBox(height: 8.0 * expandedContentOpacity),
-                    _ActionsRow(
-                      actions: multiSelectController == null
-                          ? actions
-                          : multiSelectController!.enableMultiSelectView
-                          ? multiSelectViewActions!
-                          : actions,
-                      searchController: searchController,
-                      searchQuery: searchQuery,
-                      onSearchChanged: onSearchChanged,
-                      scheme: scheme,
-                    ),
-                  ],
-                ),
-              ),
-            ],
+            ),
           ),
-        );
-      },
+        ),
+        SizedBox(height: 8.0 * expandedContentOpacity),
+        _ActionsRow(
+          actions: multiSelectController == null
+              ? actions
+              : multiSelectController!.enableMultiSelectView
+              ? multiSelectViewActions!
+              : actions,
+          searchController: searchController,
+          searchQuery: searchQuery,
+          onSearchChanged: onSearchChanged,
+          scheme: scheme,
+        ),
+      ],
     );
   }
 }
@@ -1263,47 +1451,8 @@ class _HoverableCoverState extends State<_HoverableCover> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final overlayColor = scheme.onSurface.withValues(alpha: 0.25);
-
-    Widget cover = SizedBox(
-      width: widget.size,
-      height: widget.size,
-      child: FutureBuilder(
-        future: widget.futurePic,
-        builder: (context, snapshot) {
-          return switch (snapshot.connectionState) {
-            ConnectionState.done =>
-              snapshot.data == null
-                  ? widget.placeholder
-                  : switch (widget.picShape) {
-                      PicShape.oval => ClipOval(
-                        child: Image(
-                          image: snapshot.data!,
-                          width: widget.size,
-                          height: widget.size,
-                          gaplessPlayback: true,
-                          errorBuilder: (_, _, _) => widget.placeholder,
-                        ),
-                      ),
-                      PicShape.rrect => ClipRRect(
-                        borderRadius: AppRadius.smCircular,
-                        child: Image(
-                          image: snapshot.data!,
-                          width: widget.size,
-                          height: widget.size,
-                          gaplessPlayback: true,
-                          errorBuilder: (_, _, _) => widget.placeholder,
-                        ),
-                      ),
-                    },
-            _ => const Center(child: CircularProgressIndicator()),
-          };
-        },
-      ),
-    );
-
+    final cover = _coverImage();
     if (widget.onTap == null && !widget.busy) return cover;
-
     return MouseRegion(
       onEnter: (_) {
         if (!widget.busy) setState(() => _isHovered = true);
@@ -1314,51 +1463,82 @@ class _HoverableCoverState extends State<_HoverableCover> {
         child: Stack(
           children: [
             cover,
-            if (_isHovered || widget.busy)
-              Positioned.fill(
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: overlayColor,
-                    borderRadius: BorderRadius.circular(
-                      widget.picShape == PicShape.oval
-                          ? widget.size / 2
-                          : AppRadius.sm,
-                    ),
-                  ),
-                  child: Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        widget.busy
-                            ? SizedBox(
-                                width: 28,
-                                height: 28,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2.4,
-                                  color: scheme.onSurface,
-                                ),
-                              )
-                            : Icon(
-                                Symbols.brush,
-                                size: 28,
-                                color: scheme.onSurface,
-                              ),
-                        const SizedBox(height: 4),
-                        Text(
-                          widget.busy ? '选择中' : '更换封面',
-                          style: TextStyle(
-                            color: scheme.onSurface,
-                            fontSize: AppType.body,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
+            if (_isHovered || widget.busy) _coverOverlay(scheme),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _coverImage() {
+    return SizedBox(
+      width: widget.size,
+      height: widget.size,
+      child: FutureBuilder(
+        future: widget.futurePic,
+        builder: (context, snapshot) => _coverSnapshot(snapshot),
+      ),
+    );
+  }
+
+  Widget _coverSnapshot(AsyncSnapshot<ImageProvider?> snapshot) {
+    if (snapshot.connectionState != ConnectionState.done) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (snapshot.data == null) return widget.placeholder;
+    final image = Image(
+      image: snapshot.data!,
+      width: widget.size,
+      height: widget.size,
+      gaplessPlayback: true,
+      errorBuilder: (_, _, _) => widget.placeholder,
+    );
+    return switch (widget.picShape) {
+      PicShape.oval => ClipOval(child: image),
+      PicShape.rrect => ClipRRect(
+        borderRadius: AppRadius.smCircular,
+        child: image,
+      ),
+    };
+  }
+
+  Widget _coverOverlay(ColorScheme scheme) {
+    return Positioned.fill(
+      child: Container(
+        decoration: BoxDecoration(
+          color: scheme.onSurface.withValues(alpha: 0.25),
+          borderRadius: BorderRadius.circular(
+            widget.picShape == PicShape.oval ? widget.size / 2 : AppRadius.sm,
+          ),
+        ),
+        child: Center(child: _overlayStatus(scheme)),
+      ),
+    );
+  }
+
+  Widget _overlayStatus(ColorScheme scheme) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        widget.busy
+            ? SizedBox(
+                width: 28,
+                height: 28,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.4,
+                  color: scheme.onSurface,
+                ),
+              )
+            : Icon(Symbols.brush, size: 28, color: scheme.onSurface),
+        const SizedBox(height: 4),
+        Text(
+          widget.busy ? '选择中' : '更换封面',
+          style: TextStyle(
+            color: scheme.onSurface,
+            fontSize: AppType.body,
+          ),
+        ),
+      ],
     );
   }
 }

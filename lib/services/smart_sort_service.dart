@@ -46,15 +46,39 @@ class SmartSortService {
   /// [taste] 0 全部 / 1 换口味 / 2 常听的（按播放次数偏置采样）。
   static Future<SmartSortResult> run(SmartSortOptions options) async {
     final tracks = options.tracks;
-    final climaxPosition = options.climaxPosition;
-    final contrast = options.contrast;
-    final takeCount = options.takeCount;
-    final smoothness = options.smoothness;
-    final outroStyle = options.outroStyle;
-    final taste = options.taste;
-    final onProgress = options.onProgress;
-    final isCancelled = options.isCancelled;
     if (tracks.isEmpty) throw StateError('没有可排序的乐曲');
+    final collected = await _collectTrackFeatures(options);
+    if (options.isCancelled?.call() ?? false) {
+      await SmartSortFeatureCache.instance.flush();
+      throw const SmartSortCancelledException();
+    }
+    options.onProgress?.call(tracks.length, tracks.length);
+    await SmartSortFeatureCache.instance.flush();
+    if (collected.kept.isEmpty) throw StateError('所有乐曲分析失败');
+    return _planSmartSortResult(options, collected);
+  }
+
+  static String _neutralFeatureJson() => jsonEncode({
+    'integratedRmsDbfs': -42.0,
+    'bpm': 0.0,
+    'entranceOnsetDensity': 0.0,
+    'entranceEnergyDbfs': -42.0,
+    'exitOnsetDensity': 0.0,
+    'exitEnergyDbfs': -42.0,
+  });
+
+  static Future<
+    ({
+      List<Audio> kept,
+      List<String> features,
+      int analyzedCount,
+      int cachedCount,
+    })
+  >
+  _collectTrackFeatures(SmartSortOptions options) async {
+    final tracks = options.tracks;
+    final isCancelled = options.isCancelled;
+    final onProgress = options.onProgress;
     final libraryRoot = (await getAppDataDir()).path;
     final cache = SmartSortFeatureCache.instance;
     final kept = <Audio>[];
@@ -74,64 +98,91 @@ class SmartSortService {
         cachedCount++;
         continue;
       }
-      try {
-        final jobId = BigInt.from(_nextJobId++);
-        final profileJson = await _analyzeTrack(
-          jobId: jobId,
-          path: audio.path,
-          libraryRoot: libraryRoot,
-          isCancelled: isCancelled,
-        );
-        if (isCancelled?.call() ?? false) {
-          throw const SmartSortCancelledException();
-        }
-        final featureJson = _extractFeatureJson(profileJson);
-        cache.put(audio, featureJson);
-        features.add(featureJson);
-        kept.add(audio);
-        analyzedCount++;
-      } catch (error, trace) {
-        if (isCancelled?.call() ?? false) {
-          throw const SmartSortCancelledException();
-        }
-        log.app.warn('legacy', '[smart sort] analyze failed, use neutral features for ${audio.path}', error: error,
-          stackTrace: trace,);
-        final neutralFeatures = jsonEncode({
-          'integratedRmsDbfs': -42.0,
-          'bpm': 0.0,
-          'entranceOnsetDensity': 0.0,
-          'entranceEnergyDbfs': -42.0,
-          'exitOnsetDensity': 0.0,
-          'exitEnergyDbfs': -42.0,
-        });
-        cache.put(audio, neutralFeatures);
-        features.add(neutralFeatures);
-        kept.add(audio);
-        analyzedCount++;
+      await _analyzeOrNeutralize(
+        audio,
+        cache: cache,
+        libraryRoot: libraryRoot,
+        isCancelled: isCancelled,
+        kept: kept,
+        features: features,
+      );
+      analyzedCount++;
+    }
+    return (
+      kept: kept,
+      features: features,
+      analyzedCount: analyzedCount,
+      cachedCount: cachedCount,
+    );
+  }
+
+  static Future<void> _analyzeOrNeutralize(
+    Audio audio, {
+    required SmartSortFeatureCache cache,
+    required String libraryRoot,
+    required bool Function()? isCancelled,
+    required List<Audio> kept,
+    required List<String> features,
+  }) async {
+    try {
+      final jobId = BigInt.from(_nextJobId++);
+      final profileJson = await _analyzeTrack(
+        jobId: jobId,
+        path: audio.path,
+        libraryRoot: libraryRoot,
+        isCancelled: isCancelled,
+      );
+      if (isCancelled?.call() ?? false) {
+        throw const SmartSortCancelledException();
       }
+      final featureJson = _extractFeatureJson(profileJson);
+      cache.put(audio, featureJson);
+      features.add(featureJson);
+      kept.add(audio);
+    } catch (error, trace) {
+      if (isCancelled?.call() ?? false) {
+        throw const SmartSortCancelledException();
+      }
+      log.app.warn(
+        'legacy',
+        '[smart sort] analyze failed, use neutral features for ${audio.path}',
+        error: error,
+        stackTrace: trace,
+      );
+      final neutralFeatures = _neutralFeatureJson();
+      cache.put(audio, neutralFeatures);
+      features.add(neutralFeatures);
+      kept.add(audio);
     }
-    if (isCancelled?.call() ?? false) {
-      await cache.flush();
-      throw const SmartSortCancelledException();
-    }
-    onProgress?.call(tracks.length, tracks.length);
-    await cache.flush();
-    if (kept.isEmpty) throw StateError('所有乐曲分析失败');
-    final playCounts = kept.map((audio) => audio.playCount).toList();
+  }
+
+  static Future<SmartSortResult> _planSmartSortResult(
+    SmartSortOptions options,
+    ({
+      List<Audio> kept,
+      List<String> features,
+      int analyzedCount,
+      int cachedCount,
+    })
+    collected,
+  ) async {
+    final playCounts = collected.kept.map((audio) => audio.playCount).toList();
     final payload = jsonEncode({
-      'features': [for (final feature in features) jsonDecode(feature)],
+      'features': [
+        for (final feature in collected.features) jsonDecode(feature),
+      ],
       'playCounts': playCounts,
     });
     final outputJson = await smart_sort.planSmartSortJson(
       payloadJson: payload,
-      climaxPosition: climaxPosition,
-      contrast: contrast,
-      takeCount: BigInt.from(takeCount),
-      smoothness: smoothness,
-      outroStyle: outroStyle,
-      taste: taste,
+      climaxPosition: options.climaxPosition,
+      contrast: options.contrast,
+      takeCount: BigInt.from(options.takeCount),
+      smoothness: options.smoothness,
+      outroStyle: options.outroStyle,
+      taste: options.taste,
     );
-    if (isCancelled?.call() ?? false) {
+    if (options.isCancelled?.call() ?? false) {
       throw const SmartSortCancelledException();
     }
     final decoded = jsonDecode(outputJson) as Map<String, dynamic>;
@@ -139,11 +190,11 @@ class SmartSortService {
         (values as List).map((value) => (value as num).toDouble()).toList();
     final order = (decoded['order'] as List).cast<int>();
     return SmartSortResult(
-      audios: [for (final index in order) kept[index]],
+      audios: [for (final index in order) collected.kept[index]],
       idealCurve: toDoubles(decoded['idealCurve']),
       actualCurve: toDoubles(decoded['actualCurve']),
-      analyzedCount: analyzedCount,
-      cachedCount: cachedCount,
+      analyzedCount: collected.analyzedCount,
+      cachedCount: collected.cachedCount,
     );
   }
 

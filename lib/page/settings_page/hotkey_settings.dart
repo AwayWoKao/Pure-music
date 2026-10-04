@@ -54,7 +54,21 @@ class _HotkeySettingsPanelState extends State<HotkeySettingsPanel> {
       );
       return;
     }
+    if (!await _commitHotkeyMap(
+      isGlobal: isGlobal,
+      action: action,
+      binding: binding,
+    )) {
+      return;
+    }
+    await _reloadHotkeys();
+  }
 
+  Future<bool> _commitHotkeyMap({
+    required bool isGlobal,
+    required HotkeyAction action,
+    required HotkeyBinding binding,
+  }) async {
     if (isGlobal) {
       final previous = Map<HotkeyAction, HotkeyBinding>.from(
         settings.globalHotkeys,
@@ -64,22 +78,22 @@ class _HotkeySettingsPanelState extends State<HotkeySettingsPanel> {
       });
       if (!await _save()) {
         setState(() => settings.globalHotkeys = previous);
-        return;
+        return false;
       }
-    } else {
-      if (binding.isUnbound) return;
-      final previous = Map<HotkeyAction, HotkeyBinding>.from(
-        settings.inAppHotkeys,
-      );
-      setState(() {
-        settings.inAppHotkeys = {...settings.inAppHotkeys, action: binding};
-      });
-      if (!await _save()) {
-        setState(() => settings.inAppHotkeys = previous);
-        return;
-      }
+      return true;
     }
-    await _reloadHotkeys();
+    if (binding.isUnbound) return false;
+    final previous = Map<HotkeyAction, HotkeyBinding>.from(
+      settings.inAppHotkeys,
+    );
+    setState(() {
+      settings.inAppHotkeys = {...settings.inAppHotkeys, action: binding};
+    });
+    if (!await _save()) {
+      setState(() => settings.inAppHotkeys = previous);
+      return false;
+    }
+    return true;
   }
 
   Future<void> _recordBinding({
@@ -119,6 +133,22 @@ class _HotkeySettingsPanelState extends State<HotkeySettingsPanel> {
     await _reloadHotkeys();
   }
 
+  Widget _inAppHotkeyTile(HotkeyAction action) {
+    return SettingsTile(
+      description: action.title,
+      subtitle:
+          (settings.inAppHotkeys[action] ?? defaultInAppBinding(action)).label,
+      action: OutlinedButton(
+        onPressed: () => _recordBinding(action: action, isGlobal: false),
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          shape: RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
+        ),
+        child: const Text('更改'),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -126,25 +156,7 @@ class _HotkeySettingsPanelState extends State<HotkeySettingsPanel> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         for (final action in inAppHotkeyActions) ...[
-          SettingsTile(
-            description: action.title,
-            subtitle:
-                (settings.inAppHotkeys[action] ?? defaultInAppBinding(action))
-                    .label,
-            action: OutlinedButton(
-              onPressed: () => _recordBinding(action: action, isGlobal: false),
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: AppRadius.smCircular,
-                ),
-              ),
-              child: const Text('更改'),
-            ),
-          ),
+          _inAppHotkeyTile(action),
           const SizedBox(height: 16.0),
         ],
         Align(
@@ -164,8 +176,7 @@ class GlobalHotkeySettingsPanel extends StatefulWidget {
       _GlobalHotkeySettingsPanelState();
 }
 
-class _GlobalHotkeySettingsPanelState
-    extends State<GlobalHotkeySettingsPanel> {
+class _GlobalHotkeySettingsPanelState extends State<GlobalHotkeySettingsPanel> {
   final settings = AppSettings.instance;
 
   Future<bool> _save() async {
@@ -184,8 +195,7 @@ class _GlobalHotkeySettingsPanelState
   Future<void> _setGlobalEnabled(bool value) async {
     if (value) {
       for (final action in globalHotkeyActions) {
-        final binding =
-            settings.globalHotkeys[action] ?? HotkeyBinding.unbound;
+        final binding = settings.globalHotkeys[action] ?? HotkeyBinding.unbound;
         final conflict = findHotkeyConflict(
           candidate: binding,
           action: action,
@@ -229,6 +239,13 @@ class _GlobalHotkeySettingsPanelState
     );
     await HotkeysHelper.resumeAfterRecording();
     if (recorded == null) return;
+    await _commitRecordedGlobal(action, recorded);
+  }
+
+  Future<void> _commitRecordedGlobal(
+    HotkeyAction action,
+    HotkeyBinding recorded,
+  ) async {
 
     if (!recorded.isUnbound && recorded.modifierHids.isEmpty) {
       showTextOnSnackBar('全局热键需要带 Ctrl / Alt / Shift，避免抢游戏按键');
@@ -253,7 +270,12 @@ class _GlobalHotkeySettingsPanelState
     final previous = Map<HotkeyAction, HotkeyBinding>.from(
       settings.globalHotkeys,
     );
-    setState(() => settings.globalHotkeys = {...settings.globalHotkeys, action: recorded});
+    setState(
+      () => settings.globalHotkeys = {
+        ...settings.globalHotkeys,
+        action: recorded,
+      },
+    );
     if (!await _save()) {
       setState(() => settings.globalHotkeys = previous);
       return;
@@ -271,6 +293,23 @@ class _GlobalHotkeySettingsPanelState
       return;
     }
     await _reloadHotkeys();
+  }
+
+  Widget _globalHotkeyTile(HotkeyAction action) {
+    return SettingsTile(
+      description: action.title,
+      subtitle: (settings.globalHotkeys[action] ?? HotkeyBinding.unbound).label,
+      action: OutlinedButton(
+        onPressed: settings.globalHotkeysEnabled
+            ? () => _recordBinding(action)
+            : null,
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          shape: RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
+        ),
+        child: const Text('更改'),
+      ),
+    );
   }
 
   @override
@@ -291,27 +330,7 @@ class _GlobalHotkeySettingsPanelState
         ),
         const SizedBox(height: 16.0),
         for (final action in globalHotkeyActions) ...[
-          SettingsTile(
-            description: action.title,
-            subtitle:
-                (settings.globalHotkeys[action] ?? HotkeyBinding.unbound)
-                    .label,
-            action: OutlinedButton(
-              onPressed: settings.globalHotkeysEnabled
-                  ? () => _recordBinding(action)
-                  : null,
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: AppRadius.smCircular,
-                ),
-              ),
-              child: const Text('更改'),
-            ),
-          ),
+          _globalHotkeyTile(action),
           const SizedBox(height: 16.0),
         ],
         Align(

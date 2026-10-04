@@ -111,61 +111,85 @@ class _ListLocateButtonsState extends State<ListLocateButtons> {
   Widget _locateNowPlayingButton() {
     final playbackService = PlayService.instance.playbackService;
     final locateTargetAt = widget.locateTargetAt;
-
     return ListenableBuilder(
       listenable: playbackService.nowPlayingNotifier,
       builder: (context, _) {
         final targetAt = locateTargetAt?.call();
         if (targetAt == null) return const SizedBox.shrink();
-
         return ResponsiveBuilder(
           builder: (context, screenType) {
-            final bottom = screenType == ScreenType.small ? 88.0 : 112.0;
-            final right = screenType == ScreenType.small ? 88.0 : 128.0;
-            final reduceMotion = MediaQuery.disableAnimationsOf(context);
-            final nowPlayingPath = playbackService.nowPlaying?.path ?? '';
-            return Positioned(
-              right: right,
-              bottom: bottom,
-              child: Listener(
-                onPointerSignal: (event) {
-                  if (event is PointerScrollEvent) {
-                    _forwardWheelToList(event.scrollDelta.dy);
-                  }
-                },
-                child: TweenAnimationBuilder<double>(
-                  key: ValueKey(nowPlayingPath),
-                  tween: Tween(begin: 0.0, end: 1.0),
-                  duration: MotionDuration.fast,
-                  curve: MotionCurve.standard,
-                  builder: (context, t, child) => Opacity(
-                    opacity: t,
-                    child: Transform.scale(
-                      scale: reduceMotion ? 1.0 : 0.7 + t * 0.3,
-                      filterQuality: FilterQuality.low,
-                      child: child,
-                    ),
-                  ),
-                  child: IconButton.filledTonal(
-                    tooltip: '定位正在播放',
-                    onPressed: () => widget.onScrollToIndex?.call(targetAt),
-                    style: ButtonStyle(
-                      fixedSize: const WidgetStatePropertyAll(Size(40, 40)),
-                      padding: const WidgetStatePropertyAll(EdgeInsets.zero),
-                      shape: WidgetStatePropertyAll(
-                        RoundedRectangleBorder(
-                          borderRadius: AppRadius.smCircular,
-                        ),
-                      ),
-                    ),
-                    icon: const Icon(Symbols.my_location),
-                  ),
-                ),
-              ),
+            return _locateFab(
+              context,
+              nowPlayingPath: playbackService.nowPlaying?.path ?? '',
+              screenType: screenType,
+              targetAt: targetAt,
             );
           },
         );
       },
+    );
+  }
+
+  Widget _locateFab(
+    BuildContext context, {
+    required String nowPlayingPath,
+    required ScreenType screenType,
+    required int targetAt,
+  }) {
+    final bottom = screenType == ScreenType.small ? 88.0 : 112.0;
+    final right = screenType == ScreenType.small ? 88.0 : 128.0;
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    return Positioned(
+      right: right,
+      bottom: bottom,
+      child: Listener(
+        onPointerSignal: (event) {
+          if (event is PointerScrollEvent) {
+            _forwardWheelToList(event.scrollDelta.dy);
+          }
+        },
+        child: TweenAnimationBuilder<double>(
+          key: ValueKey(nowPlayingPath),
+          tween: Tween(begin: 0.0, end: 1.0),
+          duration: MotionDuration.fast,
+          curve: MotionCurve.standard,
+          builder: (context, t, child) => Opacity(
+            opacity: t,
+            child: Transform.scale(
+              scale: reduceMotion ? 1.0 : 0.7 + t * 0.3,
+              filterQuality: FilterQuality.low,
+              child: child,
+            ),
+          ),
+          child: IconButton.filledTonal(
+            tooltip: '定位正在播放',
+            onPressed: () => widget.onScrollToIndex?.call(targetAt),
+            style: ButtonStyle(
+              fixedSize: const WidgetStatePropertyAll(Size(40, 40)),
+              padding: const WidgetStatePropertyAll(EdgeInsets.zero),
+              shape: WidgetStatePropertyAll(
+                RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
+              ),
+            ),
+            icon: const Icon(Symbols.my_location),
+          ),
+        ),
+      ),
+    );
+  }
+
+
+  Widget _fadeScale(double t, bool reduceMotion, Widget? child) {
+    return IgnorePointer(
+      ignoring: t <= 0.01,
+      child: Opacity(
+        opacity: t,
+        child: Transform.scale(
+          scale: reduceMotion ? 1.0 : 0.7 + t * 0.3,
+          filterQuality: FilterQuality.low,
+          child: child,
+        ),
+      ),
     );
   }
 
@@ -188,17 +212,8 @@ class _ListLocateButtonsState extends State<ListLocateButtons> {
               tween: Tween(begin: 0.0, end: _showScrollToTop ? 1.0 : 0.0),
               duration: MotionDuration.fast,
               curve: MotionCurve.standard,
-              builder: (context, t, child) => IgnorePointer(
-                ignoring: t <= 0.01,
-                child: Opacity(
-                  opacity: t,
-                  child: Transform.scale(
-                    scale: reduceMotion ? 1.0 : 0.7 + t * 0.3,
-                    filterQuality: FilterQuality.low,
-                    child: child,
-                  ),
-                ),
-              ),
+              builder: (context, t, child) =>
+                  _fadeScale(t, reduceMotion, child),
               child: IconButton.filledTonal(
                 tooltip: '回到顶部',
                 onPressed: () => _smoothScrollTo(0.0),

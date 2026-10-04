@@ -93,57 +93,8 @@ class _FolderManagerDialogState extends State<FolderManagerDialog> {
         _managedFolderGroupsLibraryVersion == libraryVersion) {
       return cached;
     }
-    final foldersByParent = <String, List<AudioFolder>>{};
-    final parentPaths = <String, String>{};
-    for (final folder in folders) {
-      final parentPath = p.windows.dirname(folder.path);
-      final parentKey = pendingFolderKey(parentPath);
-      if (parentKey.isEmpty || parentKey == pendingFolderKey(folder.path)) {
-        continue;
-      }
-      parentPaths.putIfAbsent(parentKey, () => parentPath);
-      foldersByParent.putIfAbsent(parentKey, () => []).add(folder);
-    }
-
-    final groupedParents = <String>{};
-    final drafts = <({String path, List<AudioFolder> sourceFolders})>[];
-    for (final folder in folders) {
-      final parentPath = p.windows.dirname(folder.path);
-      final parentKey = pendingFolderKey(parentPath);
-      final siblings = foldersByParent[parentKey];
-      if (siblings != null && siblings.length > 1) {
-        if (!groupedParents.add(parentKey)) continue;
-        final rootPath = parentPaths[parentKey]!;
-        drafts.add((path: rootPath, sourceFolders: siblings));
-        continue;
-      }
-      drafts.add((path: folder.path, sourceFolders: [folder]));
-    }
-
-    final draftIndexesByRoot = <String, List<int>>{};
-    for (var index = 0; index < drafts.length; index++) {
-      final rootKey = pendingFolderKey(drafts[index].path);
-      if (rootKey.isEmpty) continue;
-      draftIndexesByRoot.putIfAbsent(rootKey, () => <int>[]).add(index);
-    }
-    final scannedFolders = List<List<AudioFolder>>.generate(
-      drafts.length,
-      (_) => <AudioFolder>[],
-    );
-    for (final folder in AudioLibrary.instance.folders) {
-      var ancestor = pendingFolderKey(folder.path);
-      while (ancestor.isNotEmpty) {
-        final indexes = draftIndexesByRoot[ancestor];
-        if (indexes != null) {
-          for (final index in indexes) {
-            scannedFolders[index].add(folder);
-          }
-        }
-        final separator = ancestor.lastIndexOf('/');
-        if (separator <= 0) break;
-        ancestor = ancestor.substring(0, separator);
-      }
-    }
+    final drafts = _managedFolderDrafts();
+    final scannedFolders = _scannedFoldersForDrafts(drafts);
     final result = List<_ManagedFolderGroup>.generate(drafts.length, (index) {
       final draft = drafts[index];
       return _ManagedFolderGroup(
@@ -160,6 +111,75 @@ class _FolderManagerDialogState extends State<FolderManagerDialog> {
     return _managedFolderGroupsCache = result;
   }
 
+  List<({String path, List<AudioFolder> sourceFolders})>
+  _managedFolderDrafts() {
+    final foldersByParent = <String, List<AudioFolder>>{};
+    final parentPaths = <String, String>{};
+    for (final folder in folders) {
+      final parentPath = p.windows.dirname(folder.path);
+      final parentKey = pendingFolderKey(parentPath);
+      if (parentKey.isEmpty || parentKey == pendingFolderKey(folder.path)) {
+        continue;
+      }
+      parentPaths.putIfAbsent(parentKey, () => parentPath);
+      foldersByParent.putIfAbsent(parentKey, () => []).add(folder);
+    }
+    final groupedParents = <String>{};
+    final drafts = <({String path, List<AudioFolder> sourceFolders})>[];
+    for (final folder in folders) {
+      final parentPath = p.windows.dirname(folder.path);
+      final parentKey = pendingFolderKey(parentPath);
+      final siblings = foldersByParent[parentKey];
+      if (siblings != null && siblings.length > 1) {
+        if (!groupedParents.add(parentKey)) continue;
+        drafts.add((path: parentPaths[parentKey]!, sourceFolders: siblings));
+        continue;
+      }
+      drafts.add((path: folder.path, sourceFolders: [folder]));
+    }
+    return drafts;
+  }
+
+  void _addScannedFolderToDrafts(
+    AudioFolder folder,
+    List<int>? indexes,
+    List<List<AudioFolder>> scannedFolders,
+  ) {
+    if (indexes == null) return;
+    for (final index in indexes) {
+      scannedFolders[index].add(folder);
+    }
+  }
+
+  List<List<AudioFolder>> _scannedFoldersForDrafts(
+    List<({String path, List<AudioFolder> sourceFolders})> drafts,
+  ) {
+    final draftIndexesByRoot = <String, List<int>>{};
+    for (var index = 0; index < drafts.length; index++) {
+      final rootKey = pendingFolderKey(drafts[index].path);
+      if (rootKey.isEmpty) continue;
+      draftIndexesByRoot.putIfAbsent(rootKey, () => <int>[]).add(index);
+    }
+    final scannedFolders = List<List<AudioFolder>>.generate(
+      drafts.length,
+      (_) => <AudioFolder>[],
+    );
+    for (final folder in AudioLibrary.instance.folders) {
+      var ancestor = pendingFolderKey(folder.path);
+      while (ancestor.isNotEmpty) {
+        _addScannedFolderToDrafts(
+          folder,
+          draftIndexesByRoot[ancestor],
+          scannedFolders,
+        );
+        final separator = ancestor.lastIndexOf('/');
+        if (separator <= 0) break;
+        ancestor = ancestor.substring(0, separator);
+      }
+    }
+    return scannedFolders;
+  }
+
   _ManagedFolderTreeNode _buildFolderTree(
     String rootPath,
     Iterable<AudioFolder> sourceFolders,
@@ -168,39 +188,12 @@ class _FolderManagerDialogState extends State<FolderManagerDialog> {
     final rootKey = pendingFolderKey(rootPath);
     final root = _MutableManagedFolderTreeNode(rootPath);
     if (rootKey.isEmpty) return root.freeze();
-
-    _MutableManagedFolderTreeNode? nodeForPath(String folderPath) {
-      final folderKey = pendingFolderKey(folderPath);
-      if (folderKey == rootKey) return root;
-      if (!folderKey.startsWith('$rootKey/')) return null;
-
-      final relativePath = p.windows.relative(folderPath, from: rootPath);
-      final segments = p.windows
-          .split(relativePath)
-          .where((segment) => segment.isNotEmpty && segment != '.')
-          .toList();
-      if (segments.isEmpty || segments.first == '..') return null;
-
-      var current = root;
-      var currentPath = rootPath;
-      for (var i = 0; i < segments.length; i++) {
-        final segment = segments[i];
-        currentPath = p.windows.join(currentPath, segment);
-        current = current.children.putIfAbsent(
-          segment.toLowerCase(),
-          () => _MutableManagedFolderTreeNode(
-            i == segments.length - 1 ? folderPath : currentPath,
-          ),
-        );
-      }
-      return current;
-    }
-
     for (final folder in scannedFolders) {
-      nodeForPath(folder.path)?.directAudioCount += folder.audios.length;
+      _nodeForPath(root, rootPath, rootKey, folder.path)?.directAudioCount +=
+          folder.audios.length;
     }
     for (final folder in sourceFolders) {
-      final node = nodeForPath(folder.path);
+      final node = _nodeForPath(root, rootPath, rootKey, folder.path);
       if (node == null) continue;
       node.sourceFolder = folder;
       node.pendingScan = !containsEquivalentFolderPath(
@@ -208,8 +201,37 @@ class _FolderManagerDialogState extends State<FolderManagerDialog> {
         target: folder.path,
       );
     }
-
     return root.freeze();
+  }
+
+  _MutableManagedFolderTreeNode? _nodeForPath(
+    _MutableManagedFolderTreeNode root,
+    String rootPath,
+    String rootKey,
+    String folderPath,
+  ) {
+    final folderKey = pendingFolderKey(folderPath);
+    if (folderKey == rootKey) return root;
+    if (!folderKey.startsWith('$rootKey/')) return null;
+    final relativePath = p.windows.relative(folderPath, from: rootPath);
+    final segments = p.windows
+        .split(relativePath)
+        .where((segment) => segment.isNotEmpty && segment != '.')
+        .toList();
+    if (segments.isEmpty || segments.first == '..') return null;
+    var current = root;
+    var currentPath = rootPath;
+    for (var i = 0; i < segments.length; i++) {
+      final segment = segments[i];
+      currentPath = p.windows.join(currentPath, segment);
+      current = current.children.putIfAbsent(
+        segment.toLowerCase(),
+        () => _MutableManagedFolderTreeNode(
+          i == segments.length - 1 ? folderPath : currentPath,
+        ),
+      );
+    }
+    return current;
   }
 
   Future<bool> _confirmRemoveFolder(String folderPath) async {
@@ -261,40 +283,12 @@ class _FolderManagerDialogState extends State<FolderManagerDialog> {
             key: const ValueKey('index_builder'),
             indexPath: snapshot.data!,
             folders: folders.map((f) => f.path).toList(),
-            whenIndexBuilt: () async {
-              final preference = AppPreference.instance;
-              final oldUserFolders = List<String>.from(preference.userFolders);
-              final oldExcludedFolderPaths = List<String>.from(
-                preference.excludedFolderPaths,
-              );
-              final oldFolderAliases = Map<String, String>.from(
-                preference.folderAliases,
-              );
-              preference.userFolders = userFolders;
-              preference.excludedFolderPaths = excludedFolderPaths;
-              preference.folderAliases = folderAliases;
-              try {
-                await AudioLibrary.initFromIndex();
-              } catch (_) {
-                preference.userFolders = oldUserFolders;
-                preference.excludedFolderPaths = oldExcludedFolderPaths;
-                preference.folderAliases = oldFolderAliases;
-                rethrow;
-              }
-              final saved = await preference.save();
-              if (!saved) {
-                preference.userFolders = oldUserFolders;
-                preference.excludedFolderPaths = oldExcludedFolderPaths;
-                preference.folderAliases = oldFolderAliases;
-                throw StateError('保存文件夹设置失败');
-              }
-              pruneLyricSourcesWhereMissing(
-                (path) => AudioLibrary.instance.audioByPath(path) != null,
-              );
-              if (context.mounted) {
-                Navigator.pop(context);
-              }
-            },
+            whenIndexBuilt: () => _commitBuiltIndex(
+              context,
+              userFolders: userFolders,
+              excludedFolderPaths: excludedFolderPaths,
+              folderAliases: folderAliases,
+            ),
           ),
         );
       },
@@ -302,6 +296,203 @@ class _FolderManagerDialogState extends State<FolderManagerDialog> {
     setState(() {
       editing = false;
     });
+  }
+
+  Future<void> _commitBuiltIndex(
+    BuildContext context, {
+    required List<String> userFolders,
+    required List<String> excludedFolderPaths,
+    required Map<String, String> folderAliases,
+  }) async {
+    final preference = AppPreference.instance;
+    final oldUserFolders = List<String>.from(preference.userFolders);
+    final oldExcludedFolderPaths = List<String>.from(
+      preference.excludedFolderPaths,
+    );
+    final oldFolderAliases = Map<String, String>.from(preference.folderAliases);
+    preference.userFolders = userFolders;
+    preference.excludedFolderPaths = excludedFolderPaths;
+    preference.folderAliases = folderAliases;
+    try {
+      await AudioLibrary.initFromIndex();
+    } catch (_) {
+      preference.userFolders = oldUserFolders;
+      preference.excludedFolderPaths = oldExcludedFolderPaths;
+      preference.folderAliases = oldFolderAliases;
+      rethrow;
+    }
+    final saved = await preference.save();
+    if (!saved) {
+      preference.userFolders = oldUserFolders;
+      preference.excludedFolderPaths = oldExcludedFolderPaths;
+      preference.folderAliases = oldFolderAliases;
+      throw StateError('保存文件夹设置失败');
+    }
+    pruneLyricSourcesWhereMissing(
+      (path) => AudioLibrary.instance.audioByPath(path) != null,
+    );
+    if (context.mounted) {
+      Navigator.pop(context);
+    }
+  }
+
+  Future<void> _pickFolders() async {
+    setState(() => _isPickingFolder = true);
+    await Future<void>.delayed(Duration.zero);
+    try {
+      final paths = pickMultipleDirectories(title: '选择文件夹');
+      if (paths.isEmpty || !mounted) return;
+      setState(() {
+        _appendUniqueFolders(paths);
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isPickingFolder = false);
+      }
+    }
+  }
+
+  void _applyFolderChanges() {
+    final kept = folders.map((f) => f.path).toList();
+    final original = List<String>.from(AppPreference.instance.userFolders);
+    final nextUserFolders = List<String>.from(
+      AppPreference.instance.userFolders,
+    );
+    final nextExcludedFolderPaths = List<String>.from(
+      AppPreference.instance.excludedFolderPaths,
+    );
+    final nextFolderAliases = Map<String, String>.from(
+      AppPreference.instance.folderAliases,
+    );
+    final added = kept
+        .where((f) => !containsEquivalentFolderPath(paths: original, target: f))
+        .toList();
+    final removed = original
+        .where((f) => !containsEquivalentFolderPath(paths: kept, target: f))
+        .toList();
+    final userFolderKeys = nextUserFolders.map(pendingFolderKey).toSet();
+    nextUserFolders.addAll(
+      added.where((f) => userFolderKeys.add(pendingFolderKey(f))),
+    );
+    nextUserFolders.removeWhere(
+      (f) => !containsEquivalentFolderPath(paths: kept, target: f),
+    );
+    nextExcludedFolderPaths.removeWhere(
+      (excluded) => kept.any((root) => _folderPathsOverlap(excluded, root)),
+    );
+    final excludedFolderKeys = nextExcludedFolderPaths
+        .map(pendingFolderKey)
+        .toSet();
+    nextExcludedFolderPaths.addAll(
+      removed
+          .where(
+            (removedPath) =>
+                !kept.any((root) => _folderPathsOverlap(removedPath, root)),
+          )
+          .where((f) => excludedFolderKeys.add(pendingFolderKey(f))),
+    );
+    final removedKeys = removed.map(pendingFolderKey).toSet();
+    nextFolderAliases.removeWhere((key, _) => removedKeys.contains(key));
+    _startBuild(
+      userFolders: nextUserFolders,
+      excludedFolderPaths: nextExcludedFolderPaths,
+      folderAliases: nextFolderAliases,
+    );
+  }
+
+  Widget _header(ColorScheme scheme, int folderCount) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '管理文件夹',
+            style: TextStyle(
+              color: scheme.onSurface,
+              fontSize: AppType.sectionTitle,
+              fontWeight: AppType.weightBold,
+            ),
+          ),
+          Text(
+            '$folderCount 个文件夹',
+            style: TextStyle(
+              color: scheme.onSurfaceVariant,
+              fontSize: AppType.caption,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _body(List<_ManagedFolderGroup> managedFolders) {
+    return AnimatedSwitcher(
+      duration: MotionDuration.xFast,
+      switchInCurve: MotionCurve.standard,
+      switchOutCurve: MotionCurve.standard,
+      child: editing
+          ? _editingBody(managedFolders)
+          : (_buildView ?? const SizedBox(key: ValueKey('empty'))),
+    );
+  }
+
+  Widget _editingBody(List<_ManagedFolderGroup> managedFolders) {
+    if (folders.isEmpty) return const _EmptyManagedFolderState();
+    return ListView.builder(
+      key: const ValueKey('folder_list'),
+      itemCount: managedFolders.length,
+      itemBuilder: (context, i) => _managedFolderTile(managedFolders[i]),
+    );
+  }
+
+  Widget _managedFolderTile(_ManagedFolderGroup folder) {
+    final canEdit = !(building || _isPickingFolder);
+    return _ManagedFolderTile(
+      key: ValueKey(
+        folder.sourceFolders
+            .map((source) => pendingFolderKey(source.path))
+            .join('|'),
+      ),
+      tree: folder.tree,
+      onRemove: canEdit
+          ? () => _removeManagedFolders(folder.path, folder.sourceFolders)
+          : null,
+      onRemoveFolder: canEdit
+          ? (source) => _removeManagedFolders(source.path, [source])
+          : null,
+    );
+  }
+
+  Widget _actionBar(bool canApplyChanges) {
+    return OverflowBar(
+      alignment: MainAxisAlignment.end,
+      spacing: 8.0,
+      overflowSpacing: 8.0,
+      children: [
+        TextButton.icon(
+          onPressed: building || _isPickingFolder ? null : _pickFolders,
+          icon: _isPickingFolder
+              ? const SizedBox(
+                  width: 18.0,
+                  height: 18.0,
+                  child: CircularProgressIndicator(strokeWidth: 2.0),
+                )
+              : const Icon(Symbols.create_new_folder),
+          label: Text(_isPickingFolder ? '选择中' : '添加'),
+        ),
+        TextButton(
+          onPressed: building || _isPickingFolder
+              ? null
+              : () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: !canApplyChanges ? null : _applyFolderChanges,
+          child: const Text('确定'),
+        ),
+      ],
+    );
   }
 
   @override
@@ -312,7 +503,6 @@ class _FolderManagerDialogState extends State<FolderManagerDialog> {
     final height = (size.height - 96.0).clamp(320.0, 520.0).toDouble();
     final canApplyChanges = !building && !_isPickingFolder && _hasFolderChanges;
     final managedFolders = _managedFolderGroups();
-
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(
         horizontal: 24.0,
@@ -327,202 +517,10 @@ class _FolderManagerDialogState extends State<FolderManagerDialog> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Padding(
-                padding: const EdgeInsets.only(bottom: 16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '管理文件夹',
-                      style: TextStyle(
-                        color: scheme.onSurface,
-                        fontSize: AppType.sectionTitle,
-                        fontWeight: AppType.weightBold,
-                      ),
-                    ),
-                    Text(
-                      '${managedFolders.length} 个文件夹',
-                      style: TextStyle(
-                        color: scheme.onSurfaceVariant,
-                        fontSize: AppType.caption,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: AnimatedSwitcher(
-                  duration: MotionDuration.xFast,
-                  switchInCurve: MotionCurve.standard,
-                  switchOutCurve: MotionCurve.standard,
-                  child: editing
-                      ? folders.isEmpty
-                            ? const _EmptyManagedFolderState()
-                            : ListView.builder(
-                                key: const ValueKey('folder_list'),
-                                itemCount: managedFolders.length,
-                                itemBuilder: (context, i) {
-                                  final folder = managedFolders[i];
-                                  return _ManagedFolderTile(
-                                    key: ValueKey(
-                                      folder.sourceFolders
-                                          .map(
-                                            (source) =>
-                                                pendingFolderKey(source.path),
-                                          )
-                                          .join('|'),
-                                    ),
-                                    tree: folder.tree,
-                                    onRemove: building || _isPickingFolder
-                                        ? null
-                                        : () => _removeManagedFolders(
-                                            folder.path,
-                                            folder.sourceFolders,
-                                          ),
-                                    onRemoveFolder: building || _isPickingFolder
-                                        ? null
-                                        : (source) => _removeManagedFolders(
-                                            source.path,
-                                            [source],
-                                          ),
-                                  );
-                                },
-                              )
-                      : (_buildView ?? const SizedBox(key: ValueKey('empty'))),
-                ),
-              ),
+              _header(scheme, managedFolders.length),
+              Expanded(child: _body(managedFolders)),
               const SizedBox(height: 16.0),
-              OverflowBar(
-                alignment: MainAxisAlignment.end,
-                spacing: 8.0,
-                overflowSpacing: 8.0,
-                children: [
-                  TextButton.icon(
-                    onPressed: building || _isPickingFolder
-                        ? null
-                        : () async {
-                            setState(() => _isPickingFolder = true);
-                            await Future<void>.delayed(Duration.zero);
-
-                            try {
-                              final paths = pickMultipleDirectories(
-                                title: '选择文件夹',
-                              );
-                              if (paths.isEmpty || !context.mounted) return;
-
-                              setState(() {
-                                _appendUniqueFolders(paths);
-                              });
-                            } finally {
-                              if (context.mounted) {
-                                setState(() => _isPickingFolder = false);
-                              }
-                            }
-                          },
-                    icon: _isPickingFolder
-                        ? const SizedBox(
-                            width: 18.0,
-                            height: 18.0,
-                            child: CircularProgressIndicator(strokeWidth: 2.0),
-                          )
-                        : const Icon(Symbols.create_new_folder),
-                    label: Text(_isPickingFolder ? '选择中' : '添加'),
-                  ),
-                  TextButton(
-                    onPressed: building || _isPickingFolder
-                        ? null
-                        : () => Navigator.pop(context),
-                    child: const Text('取消'),
-                  ),
-                  FilledButton(
-                    onPressed: !canApplyChanges
-                        ? null
-                        : () async {
-                            final kept = folders.map((f) => f.path).toList();
-                            final original = List<String>.from(
-                              AppPreference.instance.userFolders,
-                            );
-                            final nextUserFolders = List<String>.from(
-                              AppPreference.instance.userFolders,
-                            );
-                            final nextExcludedFolderPaths = List<String>.from(
-                              AppPreference.instance.excludedFolderPaths,
-                            );
-                            final nextFolderAliases = Map<String, String>.from(
-                              AppPreference.instance.folderAliases,
-                            );
-
-                            final added = kept
-                                .where(
-                                  (f) => !containsEquivalentFolderPath(
-                                    paths: original,
-                                    target: f,
-                                  ),
-                                )
-                                .toList();
-                            final removed = original
-                                .where(
-                                  (f) => !containsEquivalentFolderPath(
-                                    paths: kept,
-                                    target: f,
-                                  ),
-                                )
-                                .toList();
-
-                            final userFolderKeys = nextUserFolders
-                                .map(pendingFolderKey)
-                                .toSet();
-                            nextUserFolders.addAll(
-                              added.where(
-                                (f) => userFolderKeys.add(pendingFolderKey(f)),
-                              ),
-                            );
-                            nextUserFolders.removeWhere(
-                              (f) => !containsEquivalentFolderPath(
-                                paths: kept,
-                                target: f,
-                              ),
-                            );
-                            nextExcludedFolderPaths.removeWhere(
-                              (excluded) => kept.any(
-                                (root) => _folderPathsOverlap(excluded, root),
-                              ),
-                            );
-                            final excludedFolderKeys = nextExcludedFolderPaths
-                                .map(pendingFolderKey)
-                                .toSet();
-                            nextExcludedFolderPaths.addAll(
-                              removed
-                                  .where(
-                                    (removedPath) => !kept.any(
-                                      (root) => _folderPathsOverlap(
-                                        removedPath,
-                                        root,
-                                      ),
-                                    ),
-                                  )
-                                  .where(
-                                    (f) => excludedFolderKeys.add(
-                                      pendingFolderKey(f),
-                                    ),
-                                  ),
-                            );
-                            final removedKeys = removed
-                                .map(pendingFolderKey)
-                                .toSet();
-                            nextFolderAliases.removeWhere(
-                              (key, _) => removedKeys.contains(key),
-                            );
-                            _startBuild(
-                              userFolders: nextUserFolders,
-                              excludedFolderPaths: nextExcludedFolderPaths,
-                              folderAliases: nextFolderAliases,
-                            );
-                          },
-                    child: const Text('确定'),
-                  ),
-                ],
-              ),
+              _actionBar(canApplyChanges),
             ],
           ),
         ),

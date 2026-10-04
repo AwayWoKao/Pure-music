@@ -72,151 +72,150 @@ class _CurrentPlaylistViewState extends State<CurrentPlaylistView> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-
     return Material(
       type: MaterialType.transparency,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8.0, 8.0, 4.0, 8.0),
-            child: Row(
-              children: [
-                Text(
-                  '播放列表',
-                  style: TextStyle(
-                    color: scheme.onSecondaryContainer,
-                    fontSize: AppType.hero,
-                    fontWeight: AppType.weightBold,
-                  ),
-                ),
-                const Spacer(),
-                // 排序模式切换按钮
-                ValueListenableBuilder<List<Audio>>(
-                  valueListenable: playbackService.playlistNotifier,
-                  builder: (context, playlist, _) {
-                    if (playlist.isEmpty) return const SizedBox.shrink();
-                    final canReorder = hasEnoughItemsToReorder(playlist.length);
-                    return IconButton(
-                      tooltip: canReorder
-                          ? _isReordering
-                              ? '完成排序'
-                              : '排序'
-                          : '至少两首歌曲才能排序',
-                      icon: Icon(
-                        _isReordering ? Symbols.check : Symbols.reorder,
-                      ),
-                      style: IconButton.styleFrom(
-                        foregroundColor: _isReordering
-                            ? scheme.onTertiaryContainer
-                            : scheme.onSecondaryContainer,
-                        disabledForegroundColor:
-                            scheme.onSecondaryContainer.withValues(alpha: 0.38),
-                        backgroundColor:
-                            _isReordering ? scheme.tertiaryContainer : null,
-                      ),
-                      onPressed: canReorder
-                          ? () => setState(() => _isReordering = !_isReordering)
-                          : null,
-                    );
-                  },
-                ),
-                // 清除队列按钮
-                ValueListenableBuilder<List<Audio>>(
-                  valueListenable: playbackService.playlistNotifier,
-                  builder: (context, playlist, _) {
-                    if (playlist.isEmpty) return const SizedBox.shrink();
-                    return IconButton(
-                      tooltip: _isReordering ? '完成排序后再清空队列' : '清空播放队列',
-                      icon: const Icon(Symbols.clear_all),
-                      style: IconButton.styleFrom(
-                        foregroundColor: scheme.error,
-                        disabledForegroundColor:
-                            scheme.onSecondaryContainer.withValues(alpha: 0.38),
-                      ),
-                      onPressed: _isReordering
-                          ? null
-                          : () => _confirmClearQueue(context),
-                    );
-                  },
-                ),
-              ],
+          _header(scheme),
+          Expanded(child: _playlistBody(scheme)),
+        ],
+      ),
+    );
+  }
+
+  Widget _header(ColorScheme scheme) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8.0, 8.0, 4.0, 8.0),
+      child: Row(
+        children: [
+          Text(
+            '播放列表',
+            style: TextStyle(
+              color: scheme.onSecondaryContainer,
+              fontSize: AppType.hero,
+              fontWeight: AppType.weightBold,
             ),
           ),
-          Expanded(
-            child: ListenableBuilder(
-              listenable: playbackService.shuffle,
-              builder: (context, _) {
-                return ValueListenableBuilder<List<Audio>>(
-                  valueListenable: playbackService.playlistNotifier,
-                  builder: (context, playlist, _) {
-                    if (playlist.isEmpty) {
-                      return Center(
-                        child: SingleChildScrollView(
-                          padding: const EdgeInsets.all(32.0),
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 280),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Symbols.queue_music,
-                                  color: scheme.onSecondaryContainer
-                                      .withValues(alpha: 0.62),
-                                  size: 32,
-                                ),
-                                const SizedBox(height: 14),
-                                Text(
-                                  '播放队列还是空的',
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    color: scheme.onSecondaryContainer,
-                                    fontSize: AppType.subtitle,
-                                    fontWeight: AppType.weightBold,
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  '选择歌曲后，它们会出现在这里。',
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    color: scheme.onSecondaryContainer
-                                        .withValues(alpha: 0.62),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      );
-                    }
+          const Spacer(),
+          _reorderButton(scheme),
+          _clearButton(scheme),
+        ],
+      ),
+    );
+  }
 
-                    if (_isReordering) {
-                      return _buildReorderList(playlist, scheme);
-                    }
+  Widget _reorderButton(ColorScheme scheme) {
+    return ValueListenableBuilder<List<Audio>>(
+      valueListenable: playbackService.playlistNotifier,
+      builder: (context, playlist, _) {
+        if (playlist.isEmpty) return const SizedBox.shrink();
+        final canReorder = hasEnoughItemsToReorder(playlist.length);
+        return IconButton(
+          tooltip: canReorder ? (_isReordering ? '完成排序' : '排序') : '至少两首歌曲才能排序',
+          icon: Icon(_isReordering ? Symbols.check : Symbols.reorder),
+          style: IconButton.styleFrom(
+            foregroundColor: _isReordering
+                ? scheme.onTertiaryContainer
+                : scheme.onSecondaryContainer,
+            disabledForegroundColor: scheme.onSecondaryContainer.withValues(
+              alpha: 0.38,
+            ),
+            backgroundColor: _isReordering ? scheme.tertiaryContainer : null,
+          ),
+          onPressed: canReorder
+              ? () => setState(() => _isReordering = !_isReordering)
+              : null,
+        );
+      },
+    );
+  }
 
-                    return ListView.builder(
-                      controller: scrollController,
-                      itemCount: playlist.length,
-                      itemExtent: 64.0,
-                      itemBuilder: (context, index) {
-                        final audio = playlist[index];
-                        return _PlaylistViewItem(
-                          index: index,
-                          audio: audio,
-                          isNowPlaying:
-                              playbackService.nowPlaying?.path == audio.path,
-                          hasNowPlaying: playbackService.nowPlaying != null,
-                          currentIndex: playbackService.playlistIndex,
-                        );
-                      },
-                    );
-                  },
+  Widget _clearButton(ColorScheme scheme) {
+    return ValueListenableBuilder<List<Audio>>(
+      valueListenable: playbackService.playlistNotifier,
+      builder: (context, playlist, _) {
+        if (playlist.isEmpty) return const SizedBox.shrink();
+        return IconButton(
+          tooltip: _isReordering ? '完成排序后再清空队列' : '清空播放队列',
+          icon: const Icon(Symbols.clear_all),
+          style: IconButton.styleFrom(
+            foregroundColor: scheme.error,
+            disabledForegroundColor: scheme.onSecondaryContainer.withValues(
+              alpha: 0.38,
+            ),
+          ),
+          onPressed: _isReordering ? null : () => _confirmClearQueue(context),
+        );
+      },
+    );
+  }
+
+  Widget _playlistBody(ColorScheme scheme) {
+    return ListenableBuilder(
+      listenable: playbackService.shuffle,
+      builder: (context, _) {
+        return ValueListenableBuilder<List<Audio>>(
+          valueListenable: playbackService.playlistNotifier,
+          builder: (context, playlist, _) {
+            if (playlist.isEmpty) return _emptyQueue(scheme);
+            if (_isReordering) return _buildReorderList(playlist, scheme);
+            return ListView.builder(
+              controller: scrollController,
+              itemCount: playlist.length,
+              itemExtent: 64.0,
+              itemBuilder: (context, index) {
+                final audio = playlist[index];
+                return _PlaylistViewItem(
+                  index: index,
+                  audio: audio,
+                  isNowPlaying: playbackService.nowPlaying?.path == audio.path,
+                  hasNowPlaying: playbackService.nowPlaying != null,
+                  currentIndex: playbackService.playlistIndex,
                 );
               },
-            ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _emptyQueue(ColorScheme scheme) {
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(32.0),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 280),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Symbols.queue_music,
+                color: scheme.onSecondaryContainer.withValues(alpha: 0.62),
+                size: 32,
+              ),
+              const SizedBox(height: 14),
+              Text(
+                '播放队列还是空的',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: scheme.onSecondaryContainer,
+                  fontSize: AppType.subtitle,
+                  fontWeight: AppType.weightBold,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '选择歌曲后，它们会出现在这里。',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: scheme.onSecondaryContainer.withValues(alpha: 0.62),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -313,47 +312,14 @@ class _PlaylistViewItem extends StatelessWidget {
 
     return InkWell(
       borderRadius: AppRadius.smCircular,
-      onTap:
-          canActivate ? () => playbackService.playIndexOfPlaylist(index) : null,
+      onTap: canActivate
+          ? () => playbackService.playIndexOfPlaylist(index)
+          : null,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8.0),
         child: Row(
           children: [
-            Expanded(
-              child: DefaultTextStyle(
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: isNowPlaying
-                      ? scheme.primary
-                      : scheme.onSecondaryContainer,
-                  fontSize: AppType.body,
-                ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      audio.title,
-                      style: TextStyle(
-                        fontWeight:
-                            isNowPlaying ? AppType.weightSemibold : FontWeight.normal,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${audio.artist} - ${audio.album}',
-                      style: TextStyle(
-                        fontSize: AppType.caption,
-                        color: isNowPlaying
-                            ? scheme.primary.withAlpha(179)
-                            : scheme.onSecondaryContainer.withAlpha(179),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+            Expanded(child: _titles(scheme)),
             const SizedBox(width: 8),
             // 移除按钮
             IconButton(
@@ -373,6 +339,41 @@ class _PlaylistViewItem extends StatelessWidget {
       ),
     );
   }
+
+  Widget _titles(ColorScheme scheme) {
+    return DefaultTextStyle(
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        color: isNowPlaying ? scheme.primary : scheme.onSecondaryContainer,
+        fontSize: AppType.body,
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            audio.title,
+            style: TextStyle(
+              fontWeight: isNowPlaying
+                  ? AppType.weightSemibold
+                  : FontWeight.normal,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '${audio.artist} - ${audio.album}',
+            style: TextStyle(
+              fontSize: AppType.caption,
+              color: isNowPlaying
+                  ? scheme.primary.withAlpha(179)
+                  : scheme.onSecondaryContainer.withAlpha(179),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _ReorderItem extends StatelessWidget {
@@ -389,6 +390,17 @@ class _ReorderItem extends StatelessWidget {
   final bool isNowPlaying;
   final ColorScheme colorScheme;
 
+
+  Widget _dragHandle(ColorScheme scheme) {
+    return ReorderableDragStartListener(
+      index: index,
+      child: Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: Icon(Symbols.drag_indicator, color: scheme.onSurfaceVariant),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = colorScheme;
@@ -400,54 +412,45 @@ class _ReorderItem extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 4.0),
           child: Row(
             children: [
-              ReorderableDragStartListener(
-                index: index,
-                child: Padding(
-                  padding: const EdgeInsets.all(8.0),
-                  child: Icon(
-                    Symbols.drag_indicator,
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
+              _dragHandle(scheme),
               const SizedBox(width: 4.0),
-              Expanded(
-                child: DefaultTextStyle(
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: isNowPlaying ? scheme.primary : scheme.onSurface,
-                    fontSize: AppType.body,
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        audio.title,
-                        style: TextStyle(
-                          fontWeight: isNowPlaying
-                              ? FontWeight.w600
-                              : FontWeight.normal,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '${audio.artist} - ${audio.album}',
-                        style: TextStyle(
-                          fontSize: AppType.caption,
-                          color: isNowPlaying
-                              ? scheme.primary.withAlpha(179)
-                              : scheme.onSurface.withAlpha(179),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+              Expanded(child: _titles(scheme)),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _titles(ColorScheme scheme) {
+    return DefaultTextStyle(
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        color: isNowPlaying ? scheme.primary : scheme.onSurface,
+        fontSize: AppType.body,
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            audio.title,
+            style: TextStyle(
+              fontWeight: isNowPlaying ? FontWeight.w600 : FontWeight.normal,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '${audio.artist} - ${audio.album}',
+            style: TextStyle(
+              fontSize: AppType.caption,
+              color: isNowPlaying
+                  ? scheme.primary.withAlpha(179)
+                  : scheme.onSurface.withAlpha(179),
+            ),
+          ),
+        ],
       ),
     );
   }

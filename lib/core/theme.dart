@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 
 import 'package:pure_music/core/app_fonts.dart' as app_fonts;
 import 'package:pure_music/core/color_extraction.dart';
@@ -38,18 +39,52 @@ Color _contrastingTextColor(Color background) {
 
 ColorScheme _buildIndependentColorScheme(Color accent, Brightness brightness) {
   final isDark = brightness == Brightness.dark;
-  final surface = isDark ? const Color(0xff121212) : const Color(0xfffafafa);
-  final onSurface = isDark ? const Color(0xffe6e6e6) : const Color(0xff1b1b1b);
-  final surfaceContainer = isDark
-      ? const Color(0xff202020)
-      : const Color(0xffeeeeee);
+  final surfaces = _independentSurfaces(isDark);
   final accentContainer = Color.alphaBlend(
     accent.withValues(alpha: isDark ? 0.32 : 0.18),
-    surfaceContainer,
+    surfaces.surfaceContainer,
   );
   final onAccent = _contrastingTextColor(accent);
   final onAccentContainer = _contrastingTextColor(accentContainer);
+  return _independentAccentScheme(
+    brightness: brightness,
+    accent: accent,
+    onAccent: onAccent,
+    accentContainer: accentContainer,
+    onAccentContainer: onAccentContainer,
+  ).copyWith(
+    error: isDark ? const Color(0xffffb4ab) : const Color(0xffba1a1a),
+    onError: isDark ? const Color(0xff690005) : Colors.white,
+    errorContainer: isDark ? const Color(0xff93000a) : const Color(0xffffdad6),
+    onErrorContainer: isDark
+        ? const Color(0xffffdad6)
+        : const Color(0xff410002),
+    surface: surfaces.surface,
+    onSurface: surfaces.onSurface,
+    surfaceDim: surfaces.surfaceDim,
+    surfaceBright: surfaces.surfaceBright,
+    surfaceContainerLowest: surfaces.surfaceContainerLowest,
+    surfaceContainerLow: surfaces.surfaceContainerLow,
+    surfaceContainer: surfaces.surfaceContainer,
+    surfaceContainerHigh: surfaces.surfaceContainerHigh,
+    surfaceContainerHighest: surfaces.surfaceContainerHighest,
+    onSurfaceVariant: surfaces.onSurfaceVariant,
+    outline: surfaces.outline,
+    outlineVariant: surfaces.outlineVariant,
+    inverseSurface: surfaces.inverseSurface,
+    onInverseSurface: surfaces.onInverseSurface,
+    inversePrimary: accent,
+    surfaceTint: Colors.transparent,
+  );
+}
 
+ColorScheme _independentAccentScheme({
+  required Brightness brightness,
+  required Color accent,
+  required Color onAccent,
+  required Color accentContainer,
+  required Color onAccentContainer,
+}) {
   return ColorScheme(
     brightness: brightness,
     primary: accent,
@@ -76,21 +111,42 @@ ColorScheme _buildIndependentColorScheme(Color accent, Brightness brightness) {
     tertiaryFixedDim: accent,
     onTertiaryFixed: onAccent,
     onTertiaryFixedVariant: onAccent,
-    error: isDark ? const Color(0xffffb4ab) : const Color(0xffba1a1a),
-    onError: isDark ? const Color(0xff690005) : Colors.white,
-    errorContainer: isDark ? const Color(0xff93000a) : const Color(0xffffdad6),
-    onErrorContainer: isDark
-        ? const Color(0xffffdad6)
-        : const Color(0xff410002),
-    surface: surface,
-    onSurface: onSurface,
+    error: const Color(0xffba1a1a),
+    onError: Colors.white,
+    surface: const Color(0xfffafafa),
+    onSurface: const Color(0xff1b1b1b),
+  );
+}
+
+({
+  Color surface,
+  Color onSurface,
+  Color surfaceDim,
+  Color surfaceBright,
+  Color surfaceContainerLowest,
+  Color surfaceContainerLow,
+  Color surfaceContainer,
+  Color surfaceContainerHigh,
+  Color surfaceContainerHighest,
+  Color onSurfaceVariant,
+  Color outline,
+  Color outlineVariant,
+  Color inverseSurface,
+  Color onInverseSurface,
+})
+_independentSurfaces(bool isDark) {
+  return (
+    surface: isDark ? const Color(0xff121212) : const Color(0xfffafafa),
+    onSurface: isDark ? const Color(0xffe6e6e6) : const Color(0xff1b1b1b),
     surfaceDim: isDark ? const Color(0xff121212) : const Color(0xffdadada),
     surfaceBright: isDark ? const Color(0xff393939) : const Color(0xfffafafa),
     surfaceContainerLowest: isDark ? const Color(0xff0d0d0d) : Colors.white,
     surfaceContainerLow: isDark
         ? const Color(0xff1b1b1b)
         : const Color(0xfff4f4f4),
-    surfaceContainer: surfaceContainer,
+    surfaceContainer: isDark
+        ? const Color(0xff202020)
+        : const Color(0xffeeeeee),
     surfaceContainerHigh: isDark
         ? const Color(0xff2b2b2b)
         : const Color(0xffe8e8e8),
@@ -102,14 +158,10 @@ ColorScheme _buildIndependentColorScheme(Color accent, Brightness brightness) {
         : const Color(0xff494949),
     outline: isDark ? const Color(0xff919191) : const Color(0xff767676),
     outlineVariant: isDark ? const Color(0xff454545) : const Color(0xffc6c6c6),
-    shadow: Colors.black,
-    scrim: Colors.black,
     inverseSurface: isDark ? const Color(0xffe6e6e6) : const Color(0xff303030),
     onInverseSurface: isDark
         ? const Color(0xff303030)
         : const Color(0xfff2f2f2),
-    inversePrimary: accent,
-    surfaceTint: Colors.transparent,
   );
 }
 
@@ -165,10 +217,10 @@ class ThemeProvider extends ChangeNotifier {
   bool lyricFontFollowsUi = AppSettings.instance.lyricFontFollowsUi;
 
   String? get resolvedLyricFontFamily => app_fonts.resolvedLyricFontFamily(
-        followsUi: lyricFontFollowsUi,
-        lyricFontFamily: lyricFontFamily,
-        uiFontFamily: fontFamily,
-      );
+    followsUi: lyricFontFollowsUi,
+    lyricFontFamily: lyricFontFamily,
+    uiFontFamily: fontFamily,
+  );
 
   Brightness get effectiveBrightness => switch (themeMode) {
     ThemeMode.light => Brightness.light,
@@ -282,37 +334,53 @@ class ThemeProvider extends ChangeNotifier {
     _notifyThemeChanged();
   }
 
-  Color? _getCachedSeedColor(String path) {
-    final palette = _colorService.getCachedPaletteForPath(path);
+  Color? _getCachedSeedColor(String path, {int? modified}) {
+    final palette = _colorService.getCachedPaletteForPath(
+      path,
+      modified: modified,
+    );
     if (palette == null || palette.isEmpty) return null;
     return _selectThemeSeedColor(palette);
   }
 
   /// 直接应用预计算好的种子色，避免重复解码。
-  void applySeedColorDirectly(Color seedColor, String cacheKey) {
+  void applySeedColorDirectly(
+    Color seedColor,
+    String cacheKey, {
+    int? modified,
+  }) {
     if (!AppSettings.instance.enableCoverColorExtraction) {
       _applySeedColor(_configuredThemeSeedColor());
       return;
     }
 
-    _applySeedColor(_getCachedSeedColor(cacheKey) ?? seedColor);
+    _applySeedColor(
+      _getCachedSeedColor(cacheKey, modified: modified) ?? seedColor,
+    );
   }
 
   /// 从完整封面提取与播放页一致的种子色。
-  Future<Color> _extractSeedColor(String cacheKey) async {
-    final cachedSeedColor = _getCachedSeedColor(cacheKey);
+  Future<Color> _extractSeedColor(String path, {int? modified}) async {
+    final cachedSeedColor = _getCachedSeedColor(path, modified: modified);
     if (cachedSeedColor != null) return cachedSeedColor;
 
     try {
-      final (_, rustColors) = await rust_tag_reader.getPictureAndColors(
-        path: cacheKey,
-        width: 1,
-        height: 1,
-        numColors: 4,
-      );
+      developer.Timeline.startSync('cover.extractColors');
+      late final List<int> rustColors;
+      try {
+        final result = await rust_tag_reader.getPictureAndColors(
+          path: path,
+          width: 1,
+          height: 1,
+          numColors: 4,
+        );
+        rustColors = result.$2;
+      } finally {
+        developer.Timeline.finishSync();
+      }
       final palette = rustColors.map(Color.new).toList(growable: false);
       if (palette.isNotEmpty) {
-        _colorService.cachePaletteForPath(cacheKey, palette);
+        _colorService.cachePaletteForPath(path, palette, modified: modified);
       }
 
       return palette.isNotEmpty
@@ -342,7 +410,10 @@ class ThemeProvider extends ChangeNotifier {
     _themeDebounceTimer?.cancel();
     _themeDebounceTimer = null;
 
-    final cachedSeedColor = _getCachedSeedColor(audio.path);
+    final cachedSeedColor = _getCachedSeedColor(
+      audio.path,
+      modified: audio.modified,
+    );
     if (cachedSeedColor != null) {
       _applySeedColor(cachedSeedColor);
       return;
@@ -351,7 +422,10 @@ class ThemeProvider extends ChangeNotifier {
     _themeDebounceTimer = Timer(const Duration(milliseconds: 60), () async {
       if (token != _themeRequestToken) return;
 
-      final seedColor = await _extractSeedColor(audio.path);
+      final seedColor = await _extractSeedColor(
+        audio.path,
+        modified: audio.modified,
+      );
       if (token != _themeRequestToken ||
           !AppSettings.instance.enableCoverColorExtraction) {
         return;

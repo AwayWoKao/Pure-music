@@ -40,8 +40,9 @@ class _ArtistSeparatorEditDialog extends StatefulWidget {
 class __ArtistSeparatorEditDialogState
     extends State<_ArtistSeparatorEditDialog> {
   final appSettings = AppSettings.instance;
-  late final List<String> separators =
-      uniqueTextListItems(appSettings.artistSeparator);
+  late final List<String> separators = uniqueTextListItems(
+    appSettings.artistSeparator,
+  );
   final currEditController = TextEditingController();
   bool editing = false;
 
@@ -158,9 +159,7 @@ class __ArtistSeparatorEditDialogState
         horizontal: 24.0,
         vertical: 24.0,
       ),
-      shape: RoundedRectangleBorder(
-        borderRadius: AppRadius.mdCircular,
-      ),
+      shape: RoundedRectangleBorder(borderRadius: AppRadius.mdCircular),
       child: SizedBox(
         width: width,
         height: height,
@@ -169,90 +168,97 @@ class __ArtistSeparatorEditDialogState
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Padding(
-                padding: const EdgeInsets.only(bottom: 16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '管理艺术家分隔符',
-                      style: TextStyle(
-                        color: scheme.onSurface,
-                        fontSize: AppType.sectionTitle,
-                        fontWeight: AppType.weightBold,
-                      ),
-                    ),
-                    Text(
-                      '${separators.length} 个分隔符',
-                      style: TextStyle(
-                        color: scheme.onSurfaceVariant,
-                        fontSize: AppType.caption,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: separators.isEmpty && !editing
-                    ? const _EmptySeparatorState()
-                    : ListView(
-                        children: [
-                          ...separators.map(_buildSeparatorTile),
-                          if (editing) _buildEditingTile(),
-                        ],
-                      ),
-              ),
+              _dialogHeader(scheme),
+              Expanded(child: _separatorList()),
               const SizedBox(height: 16.0),
-              OverflowBar(
-                alignment: MainAxisAlignment.end,
-                spacing: 8.0,
-                overflowSpacing: 8.0,
-                children: [
-                  TextButton.icon(
-                    onPressed: _toggleEditingSeparator,
-                    icon: Icon(editing ? Symbols.close : Symbols.add),
-                    label: Text(editing ? '取消新增' : '新增'),
-                  ),
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('取消'),
-                  ),
-                  FilledButton.icon(
-                    onPressed: !canApplyChanges
-                        ? null
-                        : () async {
-                            final oldSeparators = List<String>.from(
-                              appSettings.artistSeparator,
-                            );
-                            final oldPattern = appSettings.artistSplitPattern;
-                            appSettings.artistSeparator =
-                                List.from(separators);
-                            appSettings.artistSplitPattern =
-                                appSettings.artistSeparator.join('|');
-                            final saved = await appSettings.saveSettings();
-                            if (!saved) {
-                              appSettings.artistSeparator = oldSeparators;
-                              appSettings.artistSplitPattern = oldPattern;
-                              if (context.mounted) {
-                                showTextOnSnackBar('保存艺术家分隔符失败');
-                              }
-                              return;
-                            }
-                            await AudioLibrary.initFromIndex();
-                            if (context.mounted) {
-                              Navigator.pop(context);
-                            }
-                          },
-                    icon: const Icon(Symbols.check),
-                    label: const Text('确定'),
-                  ),
-                ],
-              ),
+              _dialogActions(context, canApplyChanges),
             ],
           ),
         ),
       ),
     );
+  }
+
+  Widget _dialogHeader(ColorScheme scheme) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '管理艺术家分隔符',
+            style: TextStyle(
+              color: scheme.onSurface,
+              fontSize: AppType.sectionTitle,
+              fontWeight: AppType.weightBold,
+            ),
+          ),
+          Text(
+            '${separators.length} 个分隔符',
+            style: TextStyle(
+              color: scheme.onSurfaceVariant,
+              fontSize: AppType.caption,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _separatorList() {
+    if (separators.isEmpty && !editing) {
+      return const _EmptySeparatorState();
+    }
+    return ListView(
+      children: [
+        ...separators.map(_buildSeparatorTile),
+        if (editing) _buildEditingTile(),
+      ],
+    );
+  }
+
+  Widget _dialogActions(BuildContext context, bool canApplyChanges) {
+    return OverflowBar(
+      alignment: MainAxisAlignment.end,
+      spacing: 8.0,
+      overflowSpacing: 8.0,
+      children: [
+        TextButton.icon(
+          onPressed: _toggleEditingSeparator,
+          icon: Icon(editing ? Symbols.close : Symbols.add),
+          label: Text(editing ? '取消新增' : '新增'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton.icon(
+          onPressed: !canApplyChanges ? null : () => _saveSeparators(context),
+          icon: const Icon(Symbols.check),
+          label: const Text('确定'),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _saveSeparators(BuildContext context) async {
+    final oldSeparators = List<String>.from(appSettings.artistSeparator);
+    final oldPattern = appSettings.artistSplitPattern;
+    appSettings.artistSeparator = List.from(separators);
+    appSettings.artistSplitPattern = appSettings.artistSeparator.join('|');
+    final saved = await appSettings.saveSettings();
+    if (!saved) {
+      appSettings.artistSeparator = oldSeparators;
+      appSettings.artistSplitPattern = oldPattern;
+      if (context.mounted) {
+        showTextOnSnackBar('保存艺术家分隔符失败');
+      }
+      return;
+    }
+    await AudioLibrary.initFromIndex();
+    if (context.mounted) {
+      Navigator.pop(context);
+    }
   }
 }
 
@@ -275,11 +281,7 @@ class _EmptySeparatorState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              Symbols.group,
-              size: 40.0,
-              color: scheme.onSurfaceVariant,
-            ),
+            Icon(Symbols.group, size: 40.0, color: scheme.onSurfaceVariant),
             const SizedBox(height: 12.0),
             Text(
               '还没有分隔符',

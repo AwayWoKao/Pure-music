@@ -78,8 +78,7 @@ class SmoothScrollPosition extends ScrollPositionWithSingleContext {
   /// 快速连续滚轮时速度累积，产生连贯的加速感。
   static const double wheelSensitivity = 1.6;
 
-  double get _deltaToVelocity =>
-      velocityDecayPerSecond * wheelSensitivity;
+  double get _deltaToVelocity => velocityDecayPerSecond * wheelSensitivity;
 
   static const _wheelTolerance = Tolerance(distance: 0.05, velocity: 0.5);
 
@@ -88,10 +87,7 @@ class SmoothScrollPosition extends ScrollPositionWithSingleContext {
     // 关闭"列表效果"开关或系统"减少动画"时，即使 position 未被重建，
     // 也直接回退到默认滚动行为，避免平滑滚轮残留。
     if (!AppSettings.instance.enableStackedScrollEffect ||
-        MediaQuery.maybeDisableAnimationsOf(
-          context.storageContext,
-        ) ==
-            true) {
+        MediaQuery.maybeDisableAnimationsOf(context.storageContext) == true) {
       super.pointerScroll(delta);
       return;
     }
@@ -188,34 +184,36 @@ class StackedListView extends StatelessWidget {
           padding: padding,
           itemExtent: itemExtent,
           itemCount: itemCount,
-          itemBuilder: (context, index) {
-            final child = itemBuilder(context, index);
-            if (reduceMotion) return child;
-            return AnimatedBuilder(
-              animation: controller,
-              child: child,
-              builder: (context, child) {
-                final attached = controller.positions;
-                if (attached.length != 1) {
-                  if (attached.isEmpty) return child!;
-                }
-                final position = attached.first;
-                final offset = position.pixels;
-                final viewportHeight = position.viewportDimension;
-                // 视口高度异常（视图切换动画中尚未稳定）时不应用变换。
-                if (viewportHeight < itemExtent * 2) return child!;
-                final itemTop = index * itemExtent - offset;
-                return StackedItemTransform(
-                  itemTop: itemTop,
-                  itemExtent: itemExtent,
-                  viewportHeight: viewportHeight,
-                  child: child!,
-                );
-              },
-            );
-          },
+          itemBuilder: (context, index) =>
+              _itemAt(context, index, reduceMotion),
         ),
       ),
+    );
+  }
+
+  Widget _itemAt(BuildContext context, int index, bool reduceMotion) {
+    final child = itemBuilder(context, index);
+    if (reduceMotion) return child;
+    return AnimatedBuilder(
+      animation: controller,
+      child: child,
+      builder: (context, child) => _stackedItem(child!, index),
+    );
+  }
+
+  Widget _stackedItem(Widget child, int index) {
+    final attached = controller.positions;
+    if (attached.length != 1) {
+      if (attached.isEmpty) return child;
+    }
+    final position = attached.first;
+    final viewportHeight = position.viewportDimension;
+    if (viewportHeight < itemExtent * 2) return child;
+    return StackedItemTransform(
+      itemTop: index * itemExtent - position.pixels,
+      itemExtent: itemExtent,
+      viewportHeight: viewportHeight,
+      child: child,
     );
   }
 }
@@ -243,11 +241,7 @@ class StackedScrollConfiguration extends StatelessWidget {
 /// 关闭或系统"减少动画"时回退默认滚动。内部持有自己的
 /// [SmoothScrollController]，不依赖外部。
 class SmoothScrollListView extends StatefulWidget {
-  const SmoothScrollListView({
-    super.key,
-    this.padding,
-    required this.children,
-  });
+  const SmoothScrollListView({super.key, this.padding, required this.children});
 
   final EdgeInsetsGeometry? padding;
   final List<Widget> children;
@@ -336,66 +330,82 @@ class StackedGridView extends StatelessWidget {
   Widget build(BuildContext context) {
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
     final physics = reduceMotion ? null : const SmoothScrollPhysics();
-    final maxCrossAxisExtent = gridDelegate.maxCrossAxisExtent;
     return StackedEffectScope(
       child: ScrollConfiguration(
         behavior: ScrollConfiguration.of(context).copyWith(physics: physics),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final crossAxisExtent = math.max(
-              0.0,
-              constraints.maxWidth - (padding?.horizontal ?? 0),
-            );
-            final crossAxisCount = maxExtentGridCrossAxisCount(
-              crossAxisExtent: crossAxisExtent,
-              maxCrossAxisExtent: maxCrossAxisExtent,
-              crossAxisSpacing: gridDelegate.crossAxisSpacing,
-            );
-            final usableCrossAxisExtent = math.max(
-              0.0,
-              crossAxisExtent -
-                  gridDelegate.crossAxisSpacing * (crossAxisCount - 1),
-            );
-            final tileWidth = usableCrossAxisExtent / crossAxisCount;
-            final tileHeight =
-                gridDelegate.mainAxisExtent ??
-                tileWidth / gridDelegate.childAspectRatio;
-            final mainAxisStep = tileHeight + gridDelegate.mainAxisSpacing;
+            final metrics = _gridMetrics(constraints);
             return GridView.builder(
               controller: controller,
               padding: padding,
               gridDelegate: gridDelegate,
               itemCount: itemCount,
-              itemBuilder: (context, index) {
-                final child = itemBuilder(context, index);
-                if (reduceMotion) return child;
-                final row = index ~/ crossAxisCount;
-                return AnimatedBuilder(
-                  animation: controller,
-                  child: child,
-                  builder: (context, child) {
-                    final attached = controller.positions;
-                    if (attached.length != 1) {
-                      if (attached.isEmpty) return child!;
-                    }
-                    final position = attached.first;
-                    final offset = position.pixels;
-                    final viewportHeight = position.viewportDimension;
-                    if (viewportHeight < mainAxisStep * 2) return child!;
-                    final itemTop = row * mainAxisStep - offset;
-                    return StackedItemTransform(
-                      itemTop: itemTop,
-                      itemExtent: mainAxisStep,
-                      viewportHeight: viewportHeight,
-                      child: child!,
-                    );
-                  },
-                );
-              },
+              itemBuilder: (context, index) =>
+                  _itemAt(context, index, metrics, reduceMotion),
             );
           },
         ),
       ),
+    );
+  }
+
+  ({int crossAxisCount, double mainAxisStep}) _gridMetrics(
+    BoxConstraints constraints,
+  ) {
+    final crossAxisExtent = math.max(
+      0.0,
+      constraints.maxWidth - (padding?.horizontal ?? 0),
+    );
+    final crossAxisCount = maxExtentGridCrossAxisCount(
+      crossAxisExtent: crossAxisExtent,
+      maxCrossAxisExtent: gridDelegate.maxCrossAxisExtent,
+      crossAxisSpacing: gridDelegate.crossAxisSpacing,
+    );
+    final usableCrossAxisExtent = math.max(
+      0.0,
+      crossAxisExtent - gridDelegate.crossAxisSpacing * (crossAxisCount - 1),
+    );
+    final tileWidth = usableCrossAxisExtent / crossAxisCount;
+    final tileHeight =
+        gridDelegate.mainAxisExtent ??
+        tileWidth / gridDelegate.childAspectRatio;
+    return (
+      crossAxisCount: crossAxisCount,
+      mainAxisStep: tileHeight + gridDelegate.mainAxisSpacing,
+    );
+  }
+
+  Widget _itemAt(
+    BuildContext context,
+    int index,
+    ({int crossAxisCount, double mainAxisStep}) metrics,
+    bool reduceMotion,
+  ) {
+    final child = itemBuilder(context, index);
+    if (reduceMotion) return child;
+    final row = index ~/ metrics.crossAxisCount;
+    return AnimatedBuilder(
+      animation: controller,
+      child: child,
+      builder: (context, child) =>
+          _stackedItem(child!, row, metrics.mainAxisStep),
+    );
+  }
+
+  Widget _stackedItem(Widget child, int row, double mainAxisStep) {
+    final attached = controller.positions;
+    if (attached.length != 1) {
+      if (attached.isEmpty) return child;
+    }
+    final position = attached.first;
+    final viewportHeight = position.viewportDimension;
+    if (viewportHeight < mainAxisStep * 2) return child;
+    return StackedItemTransform(
+      itemTop: row * mainAxisStep - position.pixels,
+      itemExtent: mainAxisStep,
+      viewportHeight: viewportHeight,
+      child: child,
     );
   }
 }

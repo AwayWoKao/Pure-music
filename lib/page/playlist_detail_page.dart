@@ -117,115 +117,49 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final allAudios = widget.playlist.audios;
-    final contentList = _searchQuery.isEmpty
-        ? List<Audio>.from(allAudios)
-        : allAudios.where((audio) {
-            final q = _searchQuery.toLowerCase();
-            return audio.title.toLowerCase().contains(q) ||
-                audio.artist.toLowerCase().contains(q) ||
-                audio.album.toLowerCase().contains(q);
-          }).toList();
-    final scheme = Theme.of(context).colorScheme;
-    final pref = AppPreference.instance.playlistDetailPagePref;
+  void _sortByOrder(
+    List<Audio> list,
+    SortOrder order,
+    int Function(Audio a, Audio b) compare,
+  ) {
+    switch (order) {
+      case SortOrder.ascending:
+        list.sort(compare);
+      case SortOrder.decending:
+        list.sort((a, b) => compare(b, a));
+    }
+  }
 
-    final List<SortMethodDesc<Audio>> sortMethods = [
-      SortMethodDesc<Audio>(
-        icon: Symbols.title,
-        name: '标题',
-        alphabetValueOf: (audio) => audio.title,
-        method: (list, order) {
-          switch (order) {
-            case SortOrder.ascending:
-              list.sort((a, b) => a.title.naturalCompareTo(b.title));
-              break;
-            case SortOrder.decending:
-              list.sort((a, b) => b.title.naturalCompareTo(a.title));
-              break;
-          }
-        },
-      ),
-      SortMethodDesc<Audio>(
-        icon: Symbols.artist,
-        name: '艺术家',
-        alphabetValueOf: (audio) => audio.artist,
-        method: (list, order) {
-          switch (order) {
-            case SortOrder.ascending:
-              list.sort((a, b) => a.artist.naturalCompareTo(b.artist));
-              break;
-            case SortOrder.decending:
-              list.sort((a, b) => b.artist.naturalCompareTo(a.artist));
-              break;
-          }
-        },
-      ),
-      SortMethodDesc<Audio>(
-        icon: Symbols.album,
-        name: '专辑',
-        alphabetValueOf: (audio) => audio.album,
-        method: (list, order) {
-          switch (order) {
-            case SortOrder.ascending:
-              list.sort((a, b) => a.album.naturalCompareTo(b.album));
-              break;
-            case SortOrder.decending:
-              list.sort((a, b) => b.album.naturalCompareTo(a.album));
-              break;
-          }
-        },
-      ),
+  List<SortMethodDesc<Audio>> _playlistSortMethods() {
+    return [
+      _audioTextSort(Symbols.title, '标题', (audio) => audio.title),
+      _audioTextSort(Symbols.artist, '艺术家', (audio) => audio.artist),
+      _audioTextSort(Symbols.album, '专辑', (audio) => audio.album),
       SortMethodDesc<Audio>(
         icon: Symbols.add_circle,
         name: '添加时间',
-        method: (list, order) {
-          switch (order) {
-            case SortOrder.ascending:
-              list.sort(
-                (a, b) => widget.playlist
-                    .addedAt(a.path)
-                    .compareTo(widget.playlist.addedAt(b.path)),
-              );
-              break;
-            case SortOrder.decending:
-              list.sort(
-                (a, b) => widget.playlist
-                    .addedAt(b.path)
-                    .compareTo(widget.playlist.addedAt(a.path)),
-              );
-              break;
-          }
-        },
+        method: (list, order) => _sortByOrder(
+          list,
+          order,
+          (a, b) => widget.playlist
+              .addedAt(a.path)
+              .compareTo(widget.playlist.addedAt(b.path)),
+        ),
       ),
       SortMethodDesc<Audio>(
         icon: Symbols.add,
         name: '创建时间',
-        method: (list, order) {
-          switch (order) {
-            case SortOrder.ascending:
-              list.sort((a, b) => a.created.compareTo(b.created));
-              break;
-            case SortOrder.decending:
-              list.sort((a, b) => b.created.compareTo(a.created));
-              break;
-          }
-        },
+        method: (list, order) =>
+            _sortByOrder(list, order, (a, b) => a.created.compareTo(b.created)),
       ),
       SortMethodDesc<Audio>(
         icon: Symbols.edit,
         name: '修改时间',
-        method: (list, order) {
-          switch (order) {
-            case SortOrder.ascending:
-              list.sort((a, b) => a.modified.compareTo(b.modified));
-              break;
-            case SortOrder.decending:
-              list.sort((a, b) => b.modified.compareTo(a.modified));
-              break;
-          }
-        },
+        method: (list, order) => _sortByOrder(
+          list,
+          order,
+          (a, b) => a.modified.compareTo(b.modified),
+        ),
       ),
       SortMethodDesc<Audio>(
         icon: Symbols.drag_indicator,
@@ -233,13 +167,161 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
         method: (list, order) {},
       ),
     ];
+  }
 
+  SortMethodDesc<Audio> _audioTextSort(
+    IconData icon,
+    String name,
+    String Function(Audio audio) valueOf,
+  ) {
+    return SortMethodDesc<Audio>(
+      icon: icon,
+      name: name,
+      alphabetValueOf: valueOf,
+      method: (list, order) => _sortByOrder(
+        list,
+        order,
+        (a, b) => valueOf(a).naturalCompareTo(valueOf(b)),
+      ),
+    );
+  }
+
+  Future<void> _removeAudioFromPlaylist(Audio removedAudio) async {
+    final oldPaths = List<String>.from(widget.playlist.paths);
+    setState(() {
+      widget.playlist.removeByPath(removedAudio.path);
+      _refreshCoverFutures();
+    });
+    final saved = await savePlaylists();
+    if (!mounted) return;
+    if (!saved) {
+      setState(() {
+        widget.playlist.replacePaths(oldPaths);
+        _refreshCoverFutures();
+      });
+      showTextOnSnackBar('保存歌单失败');
+      return;
+    }
+    showTextOnSnackBar('已从歌单移除');
+  }
+
+  Future<void> _removeSelectedAudios() async {
+    if (_isRemovingSelected) return;
+    final selected = List<Audio>.from(multiSelectController.selected);
+    final confirmed = await _confirmRemoveSelectedAudios(selected);
+    if (!confirmed || !mounted) return;
+    setState(() => _isRemovingSelected = true);
+    try {
+      final oldPaths = List<String>.from(widget.playlist.paths);
+      setState(() {
+        for (final item in selected) {
+          widget.playlist.removeByPath(item.path);
+        }
+        _refreshCoverFutures();
+      });
+      final saved = await savePlaylists();
+      if (!mounted) return;
+      if (!saved) {
+        setState(() {
+          widget.playlist.replacePaths(oldPaths);
+          _refreshCoverFutures();
+        });
+        showTextOnSnackBar('保存歌单失败');
+        return;
+      }
+      showTextOnSnackBar('已从歌单移除');
+      multiSelectController.useMultiSelectView(false);
+      multiSelectController.clear();
+    } finally {
+      if (mounted) {
+        setState(() => _isRemovingSelected = false);
+      }
+    }
+  }
+
+  List<Widget> _multiSelectActions(
+    List<Audio> contentList,
+    ColorScheme scheme,
+  ) {
+    return [
+      ListenableBuilder(
+        listenable: multiSelectController,
+        builder: (context, _) => IconButton.filled(
+          tooltip: '移除选中歌曲',
+          iconSize: 20,
+          style: IconButton.styleFrom(
+            fixedSize: const Size(40, 40),
+            padding: EdgeInsets.zero,
+            shape: RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
+            backgroundColor: scheme.error,
+            foregroundColor: scheme.onError,
+          ),
+          onPressed:
+              multiSelectController.selected.isEmpty || _isRemovingSelected
+              ? null
+              : _removeSelectedAudios,
+          icon: _isRemovingSelected
+              ? const SizedBox(
+                  width: 20.0,
+                  height: 20.0,
+                  child: CircularProgressIndicator(strokeWidth: 2.0),
+                )
+              : const Icon(Symbols.delete),
+        ),
+      ),
+      if (!_isRemovingSelected)
+        AddAllToPlaylist(
+          multiSelectController: multiSelectController,
+          excludedPlaylist: widget.playlist,
+          label: '添加到其他歌单',
+        ),
+      if (!_isRemovingSelected)
+        MultiSelectSelectOrClearAll(
+          multiSelectController: multiSelectController,
+          contentList: contentList,
+        ),
+      if (!_isRemovingSelected)
+        MultiSelectExit(multiSelectController: multiSelectController),
+    ];
+  }
+
+  Widget _reorderButton(ColorScheme scheme) {
+    return FilledButton.tonalIcon(
+      onPressed: () => setState(() => _isReordering = !_isReordering),
+      icon: Icon(_isReordering ? Symbols.check : Symbols.reorder, size: 20),
+      label: Text(_isReordering ? '完成' : '排序'),
+      style: ButtonStyle(
+        fixedSize: const WidgetStatePropertyAll(Size.fromHeight(40)),
+        padding: const WidgetStatePropertyAll(
+          EdgeInsets.symmetric(horizontal: 16),
+        ),
+        shape: WidgetStatePropertyAll(
+          RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
+        ),
+        backgroundColor: WidgetStatePropertyAll(
+          _isReordering ? scheme.tertiaryContainer : scheme.secondaryContainer,
+        ),
+        foregroundColor: WidgetStatePropertyAll(
+          _isReordering
+              ? scheme.onTertiaryContainer
+              : scheme.onSecondaryContainer,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final allAudios = widget.playlist.audios;
+    final contentList = _filteredAudios(allAudios);
+    final scheme = Theme.of(context).colorScheme;
+    final pref = AppPreference.instance.playlistDetailPagePref;
+    final sortMethods = _playlistSortMethods();
     final currMethodIndex = pref.sortMethod.clamp(0, sortMethods.length - 1);
     final isCustomSort = currMethodIndex == sortMethods.length - 1;
     final canSortSongs = hasEnoughItemsToSort(contentList.length);
     final canReorder =
         isCustomSort && hasEnoughItemsToReorder(contentList.length);
-
     return UniDetailPage<Playlist, Audio, Object>(
       pref: pref,
       primaryContent: widget.playlist,
@@ -254,24 +336,7 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
         audioIndex: i,
         playlist: contentList,
         multiSelectController: msc,
-        onRemoveFromPlaylist: (removedAudio) async {
-          final oldPaths = List<String>.from(widget.playlist.paths);
-          setState(() {
-            widget.playlist.removeByPath(removedAudio.path);
-            _refreshCoverFutures();
-          });
-          final saved = await savePlaylists();
-          if (!mounted) return;
-          if (!saved) {
-            setState(() {
-              widget.playlist.replacePaths(oldPaths);
-              _refreshCoverFutures();
-            });
-            showTextOnSnackBar('保存歌单失败');
-            return;
-          }
-          showTextOnSnackBar('已从歌单移除');
-        },
+        onRemoveFromPlaylist: _removeAudioFromPlaylist,
       ),
       enableShufflePlay: contentList.isNotEmpty,
       enableSortMethod: canSortSongs,
@@ -281,126 +346,40 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
       searchQuery: _searchQuery,
       onSearchChanged: _setSearchQuery,
       multiSelectController: multiSelectController,
-      multiSelectViewActions: [
-        ListenableBuilder(
-          listenable: multiSelectController,
-          builder: (context, _) => IconButton.filled(
-            tooltip: '移除选中歌曲',
-            iconSize: 20,
-            style: IconButton.styleFrom(
-              fixedSize: const Size(40, 40),
-              padding: EdgeInsets.zero,
-              shape: RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
-              backgroundColor: scheme.error,
-              foregroundColor: scheme.onError,
-            ),
-            onPressed:
-                multiSelectController.selected.isEmpty || _isRemovingSelected
-                ? null
-                : () async {
-                    if (_isRemovingSelected) return;
-                    final selected = List<Audio>.from(
-                      multiSelectController.selected,
-                    );
-                    final confirmed = await _confirmRemoveSelectedAudios(
-                      selected,
-                    );
-                    if (!confirmed || !mounted) return;
-                    setState(() => _isRemovingSelected = true);
-                    try {
-                      final oldPaths = List<String>.from(widget.playlist.paths);
-                      setState(() {
-                        for (final item in selected) {
-                          widget.playlist.removeByPath(item.path);
-                        }
-                        _refreshCoverFutures();
-                      });
-                      final saved = await savePlaylists();
-                      if (!mounted) return;
-                      if (!saved) {
-                        setState(() {
-                          widget.playlist.replacePaths(oldPaths);
-                          _refreshCoverFutures();
-                        });
-                        showTextOnSnackBar('保存歌单失败');
-                        return;
-                      }
-                      showTextOnSnackBar('已从歌单移除');
-                      multiSelectController.useMultiSelectView(false);
-                      multiSelectController.clear();
-                    } finally {
-                      if (mounted) {
-                        setState(() => _isRemovingSelected = false);
-                      }
-                    }
-                  },
-            icon: _isRemovingSelected
-                ? const SizedBox(
-                    width: 20.0,
-                    height: 20.0,
-                    child: CircularProgressIndicator(strokeWidth: 2.0),
-                  )
-                : const Icon(Symbols.delete),
-          ),
-        ),
-        if (!_isRemovingSelected)
-          AddAllToPlaylist(
-            multiSelectController: multiSelectController,
-            excludedPlaylist: widget.playlist,
-            label: '添加到其他歌单',
-          ),
-        if (!_isRemovingSelected)
-          MultiSelectSelectOrClearAll(
-            multiSelectController: multiSelectController,
-            contentList: contentList,
-          ),
-        if (!_isRemovingSelected)
-          MultiSelectExit(multiSelectController: multiSelectController),
-      ],
+      multiSelectViewActions: _multiSelectActions(contentList, scheme),
       sortMethods: sortMethods,
       onSortMethodChanged: _onSortChanged,
       onPrimaryPicTap: _isPickingCover ? null : _changeCover,
       primaryPicBusy: _isPickingCover,
       locateButtonsController: _reorderScrollController,
-      bodyOverride: contentList.isEmpty
-          ? const _EmptyPlaylistBody()
-          : _isReordering && canReorder
-          ? ListenableBuilder(
-              listenable: AppSettings.listMotionNotifier,
-              builder: (context, _) => _buildReorderBody(contentList, scheme),
-            )
-          : null,
-      extraActions: canReorder
-          ? [
-              FilledButton.tonalIcon(
-                onPressed: () => setState(() => _isReordering = !_isReordering),
-                icon: Icon(
-                  _isReordering ? Symbols.check : Symbols.reorder,
-                  size: 20,
-                ),
-                label: Text(_isReordering ? '完成' : '排序'),
-                style: ButtonStyle(
-                  fixedSize: const WidgetStatePropertyAll(Size.fromHeight(40)),
-                  padding: const WidgetStatePropertyAll(
-                    EdgeInsets.symmetric(horizontal: 16),
-                  ),
-                  shape: WidgetStatePropertyAll(
-                    RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
-                  ),
-                  backgroundColor: WidgetStatePropertyAll(
-                    _isReordering
-                        ? scheme.tertiaryContainer
-                        : scheme.secondaryContainer,
-                  ),
-                  foregroundColor: WidgetStatePropertyAll(
-                    _isReordering
-                        ? scheme.onTertiaryContainer
-                        : scheme.onSecondaryContainer,
-                  ),
-                ),
-              ),
-            ]
-          : null,
+      bodyOverride: _bodyOverride(contentList, scheme, canReorder),
+      extraActions: canReorder ? [_reorderButton(scheme)] : null,
+    );
+  }
+
+  List<Audio> _filteredAudios(List<Audio> allAudios) {
+    if (_searchQuery.isEmpty) return List<Audio>.from(allAudios);
+    final q = _searchQuery.toLowerCase();
+    return allAudios
+        .where(
+          (audio) =>
+              audio.title.toLowerCase().contains(q) ||
+              audio.artist.toLowerCase().contains(q) ||
+              audio.album.toLowerCase().contains(q),
+        )
+        .toList();
+  }
+
+  Widget? _bodyOverride(
+    List<Audio> contentList,
+    ColorScheme scheme,
+    bool canReorder,
+  ) {
+    if (contentList.isEmpty) return const _EmptyPlaylistBody();
+    if (!_isReordering || !canReorder) return null;
+    return ListenableBuilder(
+      listenable: AppSettings.listMotionNotifier,
+      builder: (context, _) => _buildReorderBody(contentList, scheme),
     );
   }
 
@@ -469,6 +448,17 @@ class _ReorderItem extends StatelessWidget {
   final ColorScheme colorScheme;
   final ScrollPosition? scrollPosition;
 
+
+  Widget _dragHandle(ColorScheme scheme) {
+    return ReorderableDragStartListener(
+      index: index,
+      child: Padding(
+        padding: const EdgeInsets.all(12.0),
+        child: Icon(Symbols.drag_indicator, color: scheme.onSurfaceVariant),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = colorScheme;
@@ -480,44 +470,9 @@ class _ReorderItem extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 8.0),
           child: Row(
             children: [
-              ReorderableDragStartListener(
-                index: index,
-                child: Padding(
-                  padding: const EdgeInsets.all(12.0),
-                  child: Icon(
-                    Symbols.drag_indicator,
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
+              _dragHandle(scheme),
               const SizedBox(width: 8.0),
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      audio.title,
-                      style: TextStyle(
-                        color: scheme.onSurface,
-                        fontSize: AppType.subtitle,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 4.0),
-                    Text(
-                      '${audio.artist} - ${audio.album}',
-                      style: TextStyle(
-                        color: scheme.onSurfaceVariant,
-                        fontSize: AppType.body,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
+              Expanded(child: _titles(scheme)),
             ],
           ),
         ),
@@ -539,6 +494,31 @@ class _ReorderItem extends StatelessWidget {
           child: child!,
         );
       },
+    );
+  }
+
+  Widget _titles(ColorScheme scheme) {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          audio.title,
+          style: TextStyle(color: scheme.onSurface, fontSize: AppType.subtitle),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        const SizedBox(height: 4.0),
+        Text(
+          '${audio.artist} - ${audio.album}',
+          style: TextStyle(
+            color: scheme.onSurfaceVariant,
+            fontSize: AppType.body,
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ],
     );
   }
 }

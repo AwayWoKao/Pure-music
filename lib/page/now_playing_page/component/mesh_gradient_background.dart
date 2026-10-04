@@ -38,53 +38,74 @@ class _MeshAnimationController {
 
 List<Color> _adjustMeshColors(List<Color> colors, Brightness brightness) {
   if (colors.isEmpty) return colors;
-
   final isDark = brightness == Brightness.dark;
   if (isDark && colors.every((color) => color.computeLuminance() <= 0.008)) {
     const levels = <double>[0.10, 0.19, 0.14, 0.07];
-    return levels
-        .map(
-          (level) =>
-              Color.from(alpha: 1.0, red: level, green: level, blue: level),
-        )
-        .toList(growable: false);
+    return List<Color>.generate(
+      levels.length,
+      (index) => Color.from(
+        alpha: 1.0,
+        red: levels[index],
+        green: levels[index],
+        blue: levels[index],
+      ),
+      growable: false,
+    );
   }
+  final stats = _meshLuminanceStats(colors);
+  final darkLuminanceLimit = stats.hasBrightPalette
+      ? const <double>[0.26, 0.34, 0.30, 0.32]
+      : const <double>[0.13, 0.22, 0.17, 0.20];
+  return [
+    for (final entry in colors.indexed)
+      _mapMeshColor(
+        entry,
+        isDark: isDark,
+        stats: stats,
+        darkLimit: darkLuminanceLimit,
+      ),
+  ].toList(growable: false);
+}
+
+({double average, double min, double max, bool hasBrightPalette})
+_meshLuminanceStats(List<Color> colors) {
   final luminances = colors.map((color) => color.computeLuminance()).toList();
-  final averageLuminance =
+  final average =
       luminances.reduce((left, right) => left + right) / luminances.length;
-  final minLuminance = luminances.reduce(
-    (left, right) => left < right ? left : right,
-  );
-  final maxLuminance = luminances.reduce(
-    (left, right) => left > right ? left : right,
-  );
+  final minL = luminances.reduce((left, right) => left < right ? left : right);
+  final maxL = luminances.reduce((left, right) => left > right ? left : right);
   final hasNeutralAnchor = colors.any(
     (color) => HSLColor.fromColor(color).saturation <= 0.18,
   );
-  final hasBrightPalette =
-      averageLuminance >= 0.34 &&
-      minLuminance >= 0.16 &&
-      maxLuminance - minLuminance <= 0.24 &&
-      hasNeutralAnchor;
-  final darkLuminanceLimit = hasBrightPalette
-      ? const <double>[0.26, 0.34, 0.30, 0.32]
-      : const <double>[0.13, 0.22, 0.17, 0.20];
-  return colors.indexed
-      .map((entry) {
-        final (index, color) = entry;
-        final hsl = HSLColor.fromColor(color);
-        final saturation = hasBrightPalette && hsl.saturation > 0.08
-            ? (hsl.saturation * 1.18 + 0.04).clamp(0.0, 0.68)
-            : hsl.saturation.clamp(0.0, 0.78);
-        final adjusted = hsl.withSaturation(saturation).toColor();
-        if (isDark) {
-          return _capMeshLuminance(adjusted, darkLuminanceLimit[index]);
-        }
-        return HSLColor.fromColor(adjusted)
-            .withLightness((hsl.lightness * 0.82 + 0.12).clamp(0.34, 0.82))
-            .toColor();
-      })
-      .toList(growable: false);
+  return (
+    average: average,
+    min: minL,
+    max: maxL,
+    hasBrightPalette:
+        average >= 0.34 &&
+        minL >= 0.16 &&
+        maxL - minL <= 0.24 &&
+        hasNeutralAnchor,
+  );
+}
+
+Color _mapMeshColor(
+  (int, Color) entry, {
+  required bool isDark,
+  required ({double average, double min, double max, bool hasBrightPalette})
+  stats,
+  required List<double> darkLimit,
+}) {
+  final (index, color) = entry;
+  final hsl = HSLColor.fromColor(color);
+  final saturation = stats.hasBrightPalette && hsl.saturation > 0.08
+      ? (hsl.saturation * 1.18 + 0.04).clamp(0.0, 0.68)
+      : hsl.saturation.clamp(0.0, 0.78);
+  final adjusted = hsl.withSaturation(saturation).toColor();
+  if (isDark) return _capMeshLuminance(adjusted, darkLimit[index]);
+  return HSLColor.fromColor(
+    adjusted,
+  ).withLightness((hsl.lightness * 0.82 + 0.12).clamp(0.34, 0.82)).toColor();
 }
 
 Color _capMeshLuminance(Color color, double limit) {
@@ -322,11 +343,8 @@ class _MeshGradientBackgroundInternalState
         _transitionTicker = null;
         return;
       }
-      final value =
-          (elapsed.inMicroseconds / transitionDuration.inMicroseconds).clamp(
-            0.0,
-            1.0,
-          );
+      final value = (elapsed.inMicroseconds / transitionDuration.inMicroseconds)
+          .clamp(0.0, 1.0);
       if (value >= 1.0) {
         _transitionTicker?.dispose();
         _transitionTicker = null;

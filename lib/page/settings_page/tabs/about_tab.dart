@@ -92,7 +92,10 @@ class _AboutContributorsSectionState extends State<_AboutContributorsSection> {
       if (!mounted) return;
       setState(() => _contributors = contributors);
     } catch (error, trace) {
-      log.settings.warn('legacy', '[About] contributors request failed: ${error.runtimeType}');
+      log.settings.warn(
+        'legacy',
+        '[About] contributors request failed: ${error.runtimeType}',
+      );
       log.settings.debug('legacy', trace.toString());
     }
   }
@@ -153,32 +156,31 @@ class _AboutContributorsSectionState extends State<_AboutContributorsSection> {
         children: [
           const SettingsSectionHeader('贡献者'),
           const SizedBox(height: 8.0),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final columns = constraints.maxWidth >= 720
-                  ? 3
-                  : constraints.maxWidth >= 460
-                  ? 2
-                  : 1;
-              final tileWidth =
-                  (constraints.maxWidth - (columns - 1) * Spacing.sm) / columns;
-              return Wrap(
-                spacing: Spacing.sm,
-                runSpacing: Spacing.sm,
-                children: [
-                  for (final contributor in _contributors)
-                    _ContributorTile(
-                      contributor: contributor,
-                      width: tileWidth,
-                    ),
-                ],
-              );
-            },
-          ),
+          LayoutBuilder(builder: (context, constraints) => _contributorWrap(constraints)),
         ],
       ),
     );
   }
+
+  Widget _contributorWrap(BoxConstraints constraints) {
+    final columns = constraints.maxWidth >= 720
+        ? 3
+        : constraints.maxWidth >= 460
+        ? 2
+        : 1;
+    final tileWidth =
+        (constraints.maxWidth - (columns - 1) * Spacing.sm) / columns;
+    return Wrap(
+      spacing: Spacing.sm,
+      runSpacing: Spacing.sm,
+      children: [
+        for (final contributor in _contributors)
+          _ContributorTile(contributor: contributor, width: tileWidth),
+      ],
+    );
+  }
+
+
 }
 
 class _AboutContributor {
@@ -224,53 +226,57 @@ class _ContributorTile extends StatelessWidget {
         borderRadius: AppRadius.smCircular,
         child: InkWell(
           borderRadius: AppRadius.smCircular,
-          onTap: () async {
-            final opened = await rust_utils.launchInBrowser(
-              uri: contributor.profileUrl,
-            );
-            if (!opened && context.mounted) {
-              showTextOnSnackBar('打开链接失败');
-            }
-          },
+          onTap: () => _openProfile(context),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12.0),
             child: Row(
               children: [
                 _ContributorAvatar(contributor: contributor),
                 const SizedBox(width: 10.0),
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        contributor.login,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: scheme.onSurface,
-                          fontSize: AppType.body,
-                          fontWeight: AppType.weightSemibold,
-                        ),
-                      ),
-                      Text(
-                        '${contributor.contributions} 次贡献',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: scheme.onSurfaceVariant,
-                          fontSize: AppType.caption,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+                Expanded(child: _info(scheme)),
                 Icon(Symbols.open_in_new, size: 16, color: scheme.outline),
               ],
             ),
           ),
         ),
       ),
+    );
+  }
+
+  Future<void> _openProfile(BuildContext context) async {
+    final opened = await rust_utils.launchInBrowser(
+      uri: contributor.profileUrl,
+    );
+    if (!opened && context.mounted) {
+      showTextOnSnackBar('打开链接失败');
+    }
+  }
+
+  Widget _info(ColorScheme scheme) {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          contributor.login,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: scheme.onSurface,
+            fontSize: AppType.body,
+            fontWeight: AppType.weightSemibold,
+          ),
+        ),
+        Text(
+          '${contributor.contributions} 次贡献',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: scheme.onSurfaceVariant,
+            fontSize: AppType.caption,
+          ),
+        ),
+      ],
     );
   }
 }

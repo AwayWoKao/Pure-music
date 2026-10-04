@@ -82,32 +82,7 @@ class _SettingsTabsState extends State<SettingsTabs> {
               currentIndex: _currentIndex,
               targetIndex: i,
             );
-            return OutlinedButton.icon(
-              onPressed: canSwitch
-                  ? () => setState(() => _currentIndex = i)
-                  : null,
-              icon: Icon(_tabs[i].icon, size: 18),
-              label: Text(_tabs[i].label),
-              style: ButtonStyle(
-                foregroundColor: WidgetStatePropertyAll(
-                  selected ? scheme.onSecondaryContainer : scheme.onSurface,
-                ),
-                backgroundColor: WidgetStatePropertyAll(
-                  selected
-                      ? scheme.secondaryContainer
-                      : scheme.surfaceContainerHighest,
-                ),
-                side: WidgetStatePropertyAll(
-                  BorderSide(color: selected ? scheme.primary : scheme.outline),
-                ),
-                shape: WidgetStatePropertyAll(
-                  RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
-                ),
-                padding: const WidgetStatePropertyAll(
-                  EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                ),
-              ),
-            );
+            return _settingsTabButton(scheme, i, selected, canSwitch);
           }),
         ),
         const SizedBox(height: 24.0),
@@ -125,6 +100,36 @@ class _SettingsTabsState extends State<SettingsTabs> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _settingsTabButton(
+    ColorScheme scheme,
+    int i,
+    bool selected,
+    bool canSwitch,
+  ) {
+    return OutlinedButton.icon(
+      onPressed: canSwitch ? () => setState(() => _currentIndex = i) : null,
+      icon: Icon(_tabs[i].icon, size: 18),
+      label: Text(_tabs[i].label),
+      style: ButtonStyle(
+        foregroundColor: WidgetStatePropertyAll(
+          selected ? scheme.onSecondaryContainer : scheme.onSurface,
+        ),
+        backgroundColor: WidgetStatePropertyAll(
+          selected ? scheme.secondaryContainer : scheme.surfaceContainerHighest,
+        ),
+        side: WidgetStatePropertyAll(
+          BorderSide(color: selected ? scheme.primary : scheme.outline),
+        ),
+        shape: WidgetStatePropertyAll(
+          RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
+        ),
+        padding: const WidgetStatePropertyAll(
+          EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        ),
+      ),
     );
   }
 }
@@ -475,110 +480,131 @@ class _AppBackgroundControlState extends State<_AppBackgroundControl> {
         SettingsTile(
           description: '背景图片',
           subtitle: imagePath == null ? '未设置，使用主题背景' : path.basename(imagePath),
-          action: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                tooltip: '选择背景图片',
-                onPressed: _updating || transparent ? null : _pickImage,
-                icon: _updating
-                    ? const SizedBox.square(
-                        dimension: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Symbols.wallpaper),
-              ),
-              IconButton(
-                tooltip: '恢复默认背景',
-                onPressed: imagePath == null || _updating || transparent
-                    ? null
-                    : _clearImage,
-                icon: const Icon(Symbols.restart_alt),
-              ),
-            ],
-          ),
+          action: _backgroundImageActions(imagePath, transparent),
         ),
-        if (transparent) ...[
-          const SizedBox(height: 16),
-          SettingsTile(
-            description: '透明度',
-            subtitle: '${(settings.appWindowOpacity * 100).round()}%',
-            action: SizedBox(
-              width: 160,
-              child: Slider(
-                value: settings.appWindowOpacity,
-                min: 0.1,
-                max: 1.0,
-                divisions: 18,
-                label: '${(settings.appWindowOpacity * 100).round()}%',
-                onChanged: _updating ? null : _setWindowOpacity,
-                onChangeEnd: _updating ? null : _saveWindowOpacity,
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          SettingsTile(
-            description: '模糊度',
-            subtitle: settings.appWindowBlur == 0
-                ? '不模糊'
-                : '${settings.appWindowBlur.round()}',
-            action: SizedBox(
-              width: 160,
-              child: Slider(
-                value: settings.appWindowBlur,
-                min: 0,
-                max: 30,
-                divisions: 15,
-                label: settings.appWindowBlur == 0
-                    ? '不模糊'
-                    : '${settings.appWindowBlur.round()}',
-                onChanged: _updating ? null : _setWindowBlur,
-                onChangeEnd: _updating ? null : _saveWindowBlur,
-              ),
-            ),
-          ),
-        ],
-        if (imagePath != null && !transparent) ...[
-          const SizedBox(height: 16),
-          SettingsTile(
-            description: '背景强度',
-            subtitle: '${(settings.appBackgroundImageOpacity * 100).round()}%',
-            action: SizedBox(
-              width: 160,
-              child: Slider(
-                value: settings.appBackgroundImageOpacity,
-                min: 0.1,
-                max: 0.6,
-                divisions: 10,
-                label: '${(settings.appBackgroundImageOpacity * 100).round()}%',
-                onChanged: _updating ? null : _setOpacity,
-                onChangeEnd: _updating ? null : _saveOpacity,
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          SettingsTile(
-            description: '背景模糊',
-            subtitle: settings.appBackgroundImageBlur == 0
-                ? '不模糊'
-                : '${settings.appBackgroundImageBlur.round()}',
-            action: SizedBox(
-              width: 160,
-              child: Slider(
-                value: settings.appBackgroundImageBlur,
-                min: 0,
-                max: 30,
-                divisions: 15,
-                label: settings.appBackgroundImageBlur == 0
-                    ? '不模糊'
-                    : '${settings.appBackgroundImageBlur.round()}',
-                onChanged: _updating ? null : _setBlur,
-                onChangeEnd: _updating ? null : _saveBlur,
-              ),
-            ),
-          ),
-        ],
+        if (transparent) ..._windowTransparentSliders(),
+        if (imagePath != null && !transparent) ..._imageSliders(),
       ],
+    );
+  }
+
+  List<Widget> _windowTransparentSliders() {
+    final opacityPct = '${(settings.appWindowOpacity * 100).round()}%';
+    final blurLabel = settings.appWindowBlur == 0
+        ? '不模糊'
+        : '${settings.appWindowBlur.round()}';
+    return [
+      const SizedBox(height: 16),
+      _backgroundSliderTile(
+        description: '透明度',
+        subtitle: opacityPct,
+        value: settings.appWindowOpacity,
+        min: 0.1,
+        max: 1.0,
+        divisions: 18,
+        label: opacityPct,
+        onChanged: _updating ? null : _setWindowOpacity,
+        onChangeEnd: _updating ? null : _saveWindowOpacity,
+      ),
+      const SizedBox(height: 16),
+      _backgroundSliderTile(
+        description: '模糊度',
+        subtitle: blurLabel,
+        value: settings.appWindowBlur,
+        min: 0,
+        max: 30,
+        divisions: 15,
+        label: blurLabel,
+        onChanged: _updating ? null : _setWindowBlur,
+        onChangeEnd: _updating ? null : _saveWindowBlur,
+      ),
+    ];
+  }
+
+  List<Widget> _imageSliders() {
+    final opacityPct = '${(settings.appBackgroundImageOpacity * 100).round()}%';
+    final blurLabel = settings.appBackgroundImageBlur == 0
+        ? '不模糊'
+        : '${settings.appBackgroundImageBlur.round()}';
+    return [
+      const SizedBox(height: 16),
+      _backgroundSliderTile(
+        description: '背景强度',
+        subtitle: opacityPct,
+        value: settings.appBackgroundImageOpacity,
+        min: 0.1,
+        max: 0.6,
+        divisions: 10,
+        label: opacityPct,
+        onChanged: _updating ? null : _setOpacity,
+        onChangeEnd: _updating ? null : _saveOpacity,
+      ),
+      const SizedBox(height: 16),
+      _backgroundSliderTile(
+        description: '背景模糊',
+        subtitle: blurLabel,
+        value: settings.appBackgroundImageBlur,
+        min: 0,
+        max: 30,
+        divisions: 15,
+        label: blurLabel,
+        onChanged: _updating ? null : _setBlur,
+        onChangeEnd: _updating ? null : _saveBlur,
+      ),
+    ];
+  }
+
+  Widget _backgroundImageActions(String? imagePath, bool transparent) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          tooltip: '选择背景图片',
+          onPressed: _updating || transparent ? null : _pickImage,
+          icon: _updating
+              ? const SizedBox.square(
+                  dimension: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Symbols.wallpaper),
+        ),
+        IconButton(
+          tooltip: '恢复默认背景',
+          onPressed: imagePath == null || _updating || transparent
+              ? null
+              : _clearImage,
+          icon: const Icon(Symbols.restart_alt),
+        ),
+      ],
+    );
+  }
+
+  Widget _backgroundSliderTile({
+    required String description,
+    required String subtitle,
+    required double value,
+    required double min,
+    required double max,
+    required int divisions,
+    required String label,
+    required ValueChanged<double>? onChanged,
+    required ValueChanged<double>? onChangeEnd,
+  }) {
+    return SettingsTile(
+      description: description,
+      subtitle: subtitle,
+      action: SizedBox(
+        width: 160,
+        child: Slider(
+          value: value,
+          min: min,
+          max: max,
+          divisions: divisions,
+          label: label,
+          onChanged: onChanged,
+          onChangeEnd: onChangeEnd,
+        ),
+      ),
     );
   }
 }
@@ -1099,31 +1125,35 @@ class _LiftStyleSelectorState extends State<_LiftStyleSelector> {
             },
           ),
         ),
-        if (style == LyricLiftStyle.vertical ||
-            style == LyricLiftStyle.cosine) ...[
-          const SizedBox(height: 16.0),
-          SettingsTile(
-            description: '上抬幅度',
-            subtitle: '${nowPlayingPagePref.liftPeak.toStringAsFixed(1)}x',
-            action: SizedBox(
-              width: 140,
-              child: Slider(
-                value: nowPlayingPagePref.liftPeak,
-                min: 0.5,
-                max: 6.0,
-                divisions: 55,
-                label: '${nowPlayingPagePref.liftPeak.toStringAsFixed(1)}x',
-                onChanged: (v) {
-                  setState(() => nowPlayingPagePref.liftPeak = v);
-                  LyricViewController.instance.triggerRebuild();
-                  AppPreference.instance.save();
-                },
-              ),
-            ),
-          ),
-        ],
+        if (style == LyricLiftStyle.vertical || style == LyricLiftStyle.cosine)
+          ..._liftPeakTiles(),
       ],
     );
+  }
+
+  List<Widget> _liftPeakTiles() {
+    return [
+      const SizedBox(height: 16.0),
+      SettingsTile(
+        description: '上抬幅度',
+        subtitle: '${nowPlayingPagePref.liftPeak.toStringAsFixed(1)}x',
+        action: SizedBox(
+          width: 140,
+          child: Slider(
+            value: nowPlayingPagePref.liftPeak,
+            min: 0.5,
+            max: 6.0,
+            divisions: 55,
+            label: '${nowPlayingPagePref.liftPeak.toStringAsFixed(1)}x',
+            onChanged: (v) {
+              setState(() => nowPlayingPagePref.liftPeak = v);
+              LyricViewController.instance.triggerRebuild();
+              AppPreference.instance.save();
+            },
+          ),
+        ),
+      ),
+    ];
   }
 }
 
@@ -1283,43 +1313,46 @@ class _ThemeColorSourceControlState extends State<_ThemeColorSourceControl> {
         ),
         if (!isAuto) ...[
           const SizedBox(height: 16),
-          SettingsTile(
-            description: '自定义颜色',
-            subtitle: _colorToHex(customColor),
-            action: OutlinedButton.icon(
-              onPressed: _isPickingColor || _updating ? null : _pickCustomColor,
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: AppRadius.smCircular,
-                ),
-              ),
-              icon: _isPickingColor
-                  ? const SizedBox.square(
-                      dimension: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Container(
-                      width: 18,
-                      height: 18,
-                      decoration: BoxDecoration(
-                        color: customColor,
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: scheme.outline.withValues(alpha: 0.6),
-                        ),
-                      ),
-                    ),
-              label: Text(_isPickingColor ? '选择中' : '选择'),
-            ),
-          ),
+          _customColorTile(scheme, customColor),
         ],
       ],
     );
   }
+
+  Widget _customColorTile(ColorScheme scheme, Color customColor) {
+    return SettingsTile(
+      description: '自定义颜色',
+      subtitle: _colorToHex(customColor),
+      action: OutlinedButton.icon(
+        onPressed: _isPickingColor || _updating ? null : _pickCustomColor,
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          shape: RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
+        ),
+        icon: _isPickingColor
+            ? const SizedBox.square(
+                dimension: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : _colorDot(scheme, customColor),
+        label: Text(_isPickingColor ? '选择中' : '选择'),
+      ),
+    );
+  }
+
+  Widget _colorDot(ColorScheme scheme, Color customColor) {
+    return Container(
+      width: 18,
+      height: 18,
+      decoration: BoxDecoration(
+        color: customColor,
+        shape: BoxShape.circle,
+        border: Border.all(color: scheme.outline.withValues(alpha: 0.6)),
+      ),
+    );
+  }
+
+
 }
 
 /// 自定义主题色选择对话框 — HSV 色域 + 色相条 + Hex 输入
@@ -1375,7 +1408,6 @@ class _ThemeColorPickerDialogState extends State<_ThemeColorPickerDialog> {
     final size = MediaQuery.of(context).size;
     final dialogWidth = (size.width - 64).clamp(260.0, 360.0).toDouble();
     final pickerSize = (dialogWidth - 32).clamp(220.0, 300.0).toDouble();
-
     return AlertDialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       title: const Text('选择颜色'),
@@ -1385,107 +1417,11 @@ class _ThemeColorPickerDialogState extends State<_ThemeColorPickerDialog> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // 2D 色域 (饱和度 × 明度)
-              ClipRRect(
-                borderRadius: AppRadius.smCircular,
-                child: SizedBox(
-                  width: pickerSize,
-                  height: pickerSize * 0.7,
-                  child: _HsvPicker(hsv: _hsv, onChanged: _updateColor),
-                ),
-              ),
+              _hsvBoard(pickerSize),
               const SizedBox(height: 12),
-              // 色相条 + 预览
-              Row(
-                children: [
-                  // 当前颜色预览
-                  Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: color,
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: scheme.outline.withValues(alpha: 0.4),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  // 色相条
-                  Expanded(
-                    child: ClipRRect(
-                      borderRadius: AppRadius.smCircular,
-                      child: SizedBox(
-                        height: 20,
-                        child: _HueSlider(
-                          hue: _hsv.hue,
-                          onChanged: (hue) => _updateColor(_hsv.withHue(hue)),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+              _hueRow(scheme, color),
               const SizedBox(height: 16),
-              // Hex 输入
-              Row(
-                children: [
-                  Text(
-                    '#',
-                    style: TextStyle(
-                      color: scheme.onSurface,
-                      fontSize: AppType.sectionTitle,
-                      fontWeight: AppType.weightMedium,
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Focus(
-                      onFocusChange: HotkeysHelper.onFocusChanges,
-                      child: TextField(
-                        controller: _hexCtrl,
-                        decoration: InputDecoration(
-                          isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
-                          border: OutlineInputBorder(
-                            borderRadius: AppRadius.smCircular,
-                          ),
-                          hintText: 'RRGGBB',
-                          hintStyle: TextStyle(
-                            color: scheme.onSurfaceVariant.withValues(
-                              alpha: 0.5,
-                            ),
-                          ),
-                        ),
-                        style: const TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: AppType.subtitle,
-                          letterSpacing: 1.2,
-                        ),
-                        textCapitalization: TextCapitalization.characters,
-                        inputFormatters: [
-                          UpperCaseTextFormatter(),
-                          LengthLimitingTextInputFormatter(6),
-                          FilteringTextInputFormatter.allow(
-                            RegExp(r'[0-9A-Fa-f]'),
-                          ),
-                        ],
-                        onSubmitted: _onHexSubmitted,
-                        onChanged: (text) {
-                          if (text.length == 6) {
-                            _onHexSubmitted(text);
-                          } else {
-                            setState(() {});
-                          }
-                        },
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+              _hexField(scheme),
             ],
           ),
         ),
@@ -1502,6 +1438,103 @@ class _ThemeColorPickerDialogState extends State<_ThemeColorPickerDialog> {
           child: const Text('确定'),
         ),
       ],
+    );
+  }
+
+  Widget _hsvBoard(double pickerSize) {
+    return ClipRRect(
+      borderRadius: AppRadius.smCircular,
+      child: SizedBox(
+        width: pickerSize,
+        height: pickerSize * 0.7,
+        child: _HsvPicker(hsv: _hsv, onChanged: _updateColor),
+      ),
+    );
+  }
+
+  Widget _hueRow(ColorScheme scheme, Color color) {
+    return Row(
+      children: [
+        Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+            border: Border.all(color: scheme.outline.withValues(alpha: 0.4)),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: ClipRRect(
+            borderRadius: AppRadius.smCircular,
+            child: SizedBox(
+              height: 20,
+              child: _HueSlider(
+                hue: _hsv.hue,
+                onChanged: (hue) => _updateColor(_hsv.withHue(hue)),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _hexField(ColorScheme scheme) {
+    return Row(
+      children: [
+        Text(
+          '#',
+          style: TextStyle(
+            color: scheme.onSurface,
+            fontSize: AppType.sectionTitle,
+            fontWeight: AppType.weightMedium,
+          ),
+        ),
+        const SizedBox(width: 4),
+        Expanded(child: _hexTextField(scheme)),
+      ],
+    );
+  }
+
+  Widget _hexTextField(ColorScheme scheme) {
+    return Focus(
+      onFocusChange: HotkeysHelper.onFocusChanges,
+      child: TextField(
+        controller: _hexCtrl,
+        decoration: InputDecoration(
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 8,
+          ),
+          border: OutlineInputBorder(borderRadius: AppRadius.smCircular),
+          hintText: 'RRGGBB',
+          hintStyle: TextStyle(
+            color: scheme.onSurfaceVariant.withValues(alpha: 0.5),
+          ),
+        ),
+        style: const TextStyle(
+          fontFamily: 'monospace',
+          fontSize: AppType.subtitle,
+          letterSpacing: 1.2,
+        ),
+        textCapitalization: TextCapitalization.characters,
+        inputFormatters: [
+          UpperCaseTextFormatter(),
+          LengthLimitingTextInputFormatter(6),
+          FilteringTextInputFormatter.allow(RegExp(r'[0-9A-Fa-f]')),
+        ],
+        onSubmitted: _onHexSubmitted,
+        onChanged: (text) {
+          if (text.length == 6) {
+            _onHexSubmitted(text);
+          } else {
+            setState(() {});
+          }
+        },
+      ),
     );
   }
 }
@@ -1816,78 +1849,86 @@ class _DesktopLyricTabContentState extends State<_DesktopLyricTabContent> {
     final scheme = Theme.of(context).colorScheme;
     return ListenableBuilder(
       listenable: _service,
-      builder: (context, _) {
-        final running = _service.isRunning;
-        final busy = _service.isKilling;
-        return SmoothScrollListView(
-          padding: const EdgeInsets.only(bottom: 96.0, right: 20),
-          children: [
-            SettingsTile(
-              description: '桌面歌词',
-              action: Switch(
-                value: running,
-                onChanged: busy ? null : _toggleDesktopLyric,
-              ),
-            ),
-            const SizedBox(height: 16),
-            if (running && _service.isLocked) ...[
-              _DesktopLyricUnlockTile(onUnlock: _service.sendUnlockMessage),
-              const SizedBox(height: 16),
-            ],
-            if (!running)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 16),
-                child: Text(
-                  '桌面歌词未启动，修改将在下次启动时生效',
-                  style: TextStyle(
-                    color: scheme.onSurfaceVariant,
-                    fontSize: AppType.caption,
-                  ),
-                ),
-              ),
-            const SizedBox(height: 8),
-            const SettingsSectionHeader('内容与布局'),
-            const SizedBox(height: 4),
-            const _GroupEntry(
-              icon: Symbols.lyrics,
-              title: '歌词内容',
-              subtitle: '翻译、注音、歌名',
-              groupId: 'desktop-basic',
-            ),
-            const SizedBox(height: 8),
-            const _GroupEntry(
-              icon: Symbols.view_week,
-              title: '布局与动画',
-              subtitle: '竖排、双行、对齐',
-              groupId: 'desktop-display',
-            ),
-            const SizedBox(height: 8),
-            const _GroupEntry(
-              icon: Symbols.desktop_windows,
-              title: '窗口行为',
-              subtitle: '暂停、全屏、置顶',
-              groupId: 'desktop-window',
-            ),
-            const SizedBox(height: 8),
-            const SettingsSectionHeader('视觉样式'),
-            const SizedBox(height: 4),
-            const _GroupEntry(
-              icon: Symbols.format_size,
-              title: '文字样式',
-              subtitle: '字号、粗细、描边',
-              groupId: 'desktop-style',
-            ),
-            const SizedBox(height: 8),
-            const _GroupEntry(
-              icon: Symbols.palette,
-              title: '颜色',
-              subtitle: '主题色或自定义',
-              groupId: 'desktop-color',
-            ),
-          ],
-        );
-      },
+      builder: (context, _) => _desktopLyricBody(scheme),
     );
+  }
+
+  Widget _desktopLyricBody(ColorScheme scheme) {
+    final running = _service.isRunning;
+    final busy = _service.isKilling;
+    return SmoothScrollListView(
+      padding: const EdgeInsets.only(bottom: 96.0, right: 20),
+      children: [
+        SettingsTile(
+          description: '桌面歌词',
+          action: Switch(
+            value: running,
+            onChanged: busy ? null : _toggleDesktopLyric,
+          ),
+        ),
+        const SizedBox(height: 16),
+        if (running && _service.isLocked) ...[
+          _DesktopLyricUnlockTile(onUnlock: _service.sendUnlockMessage),
+          const SizedBox(height: 16),
+        ],
+        if (!running)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: Text(
+              '桌面歌词未启动，修改将在下次启动时生效',
+              style: TextStyle(
+                color: scheme.onSurfaceVariant,
+                fontSize: AppType.caption,
+              ),
+            ),
+          ),
+        const SizedBox(height: 8),
+        ..._desktopLyricGroups(),
+      ],
+    );
+  }
+
+  List<Widget> _desktopLyricGroups() {
+    return const [
+      SettingsSectionHeader('内容与布局'),
+      SizedBox(height: 4),
+      _GroupEntry(
+        icon: Symbols.lyrics,
+        title: '歌词内容',
+        subtitle: '翻译、注音、歌名',
+        groupId: 'desktop-basic',
+      ),
+      SizedBox(height: 8),
+      _GroupEntry(
+        icon: Symbols.view_week,
+        title: '布局与动画',
+        subtitle: '竖排、双行、对齐',
+        groupId: 'desktop-display',
+      ),
+      SizedBox(height: 8),
+      _GroupEntry(
+        icon: Symbols.desktop_windows,
+        title: '窗口行为',
+        subtitle: '暂停、全屏、置顶',
+        groupId: 'desktop-window',
+      ),
+      SizedBox(height: 8),
+      SettingsSectionHeader('视觉样式'),
+      SizedBox(height: 4),
+      _GroupEntry(
+        icon: Symbols.format_size,
+        title: '文字样式',
+        subtitle: '字号、粗细、描边',
+        groupId: 'desktop-style',
+      ),
+      SizedBox(height: 8),
+      _GroupEntry(
+        icon: Symbols.palette,
+        title: '颜色',
+        subtitle: '主题色或自定义',
+        groupId: 'desktop-color',
+      ),
+    ];
   }
 }
 
@@ -1960,130 +2001,7 @@ class _DesktopLyricPreview extends StatelessWidget {
       customPlayedColor: settings.desktopPlayedColor,
       customUnplayedColor: settings.desktopUnplayedColor,
     );
-    final played = colors.played;
-    final unplayed = colors.unplayed;
-    final weight = _weight(settings.desktopLyricFontWeight);
     final vertical = settings.desktopUseVerticalDisplayMode;
-    final doubleLine = settings.desktopShowDoubleLine;
-
-    final outlineColor = shouldUseLightDesktopLyricOutline(played)
-        ? Colors.white.withValues(alpha: 0.55)
-        : Colors.black.withValues(alpha: 0.85);
-    final shadows = settings.desktopEnableStroke
-        ? [
-            for (final (dx, dy) in const [
-              (1.0, 0.0),
-              (-1.0, 0.0),
-              (0.0, 1.0),
-              (0.0, -1.0),
-            ])
-              Shadow(
-                color: outlineColor,
-                offset: Offset(dx, dy),
-                blurRadius: 1,
-              ),
-          ]
-        : null;
-
-    TextStyle mainStyle(Color color) => TextStyle(
-      fontSize: settings.desktopLyricFontSize,
-      color: color,
-      fontWeight: weight,
-      height: 1.1,
-      shadows: shadows,
-    );
-    TextStyle subStyle(Color color) => TextStyle(
-      fontSize: settings.desktopTranslationFontSize,
-      color: color,
-      fontWeight: weight,
-      height: 1.1,
-      shadows: shadows,
-    );
-
-    final hasRoman = settings.showDesktopLyricRoman;
-    final hasTranslation = settings.desktopShowTranslation;
-    final translationPosition = vertical
-        ? settings.desktopLyricTranslationPosition
-        : 1;
-    final romanPosition =
-        hasTranslation || settings.desktopLyricRomanPosition != 2
-        ? settings.desktopLyricRomanPosition
-        : 1;
-
-    List<Widget> lineChildren(
-      String lyric,
-      String roman,
-      String translation,
-      Color color,
-    ) => [
-      if (hasRoman && romanPosition == 0)
-        _lineText(roman, subStyle(color), vertical),
-      if (hasTranslation && translationPosition == 0)
-        _lineText(translation, subStyle(color), vertical),
-      _lineText(lyric, mainStyle(color), vertical),
-      if (hasRoman && romanPosition == 1)
-        _lineText(roman, subStyle(color), vertical),
-      if (hasTranslation && translationPosition == 1)
-        _lineText(translation, subStyle(color), vertical),
-      if (hasRoman && romanPosition == 2)
-        _lineText(roman, subStyle(color), vertical),
-    ];
-
-    Widget lineBlock(List<Widget> children, int alignment) {
-      final crossAxis = switch (alignment) {
-        0 => CrossAxisAlignment.start,
-        1 => CrossAxisAlignment.center,
-        _ => CrossAxisAlignment.end,
-      };
-      final line = Flex(
-        direction: vertical ? Axis.horizontal : Axis.vertical,
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: crossAxis,
-        children: children,
-      );
-      return Align(
-        alignment: vertical
-            ? switch (alignment) {
-                0 => Alignment.topCenter,
-                1 => Alignment.center,
-                _ => Alignment.bottomCenter,
-              }
-            : switch (alignment) {
-                0 => Alignment.centerLeft,
-                1 => Alignment.center,
-                _ => Alignment.centerRight,
-              },
-        child: line,
-      );
-    }
-
-    final current = lineChildren(_mainLyric, _romanLyric, _translation, played);
-    final currentAlign = settings.desktopLyricTextAlign == 3
-        ? 0
-        : settings.desktopLyricTextAlign;
-    final nextAlign = settings.desktopLyricTextAlign == 3
-        ? 2
-        : settings.desktopLyricTextAlign;
-    final inner = doubleLine
-        ? Flex(
-            direction: vertical ? Axis.horizontal : Axis.vertical,
-            children: [
-              Expanded(child: lineBlock(current, currentAlign)),
-              Expanded(
-                child: lineBlock(
-                  lineChildren(
-                    _nextLyric,
-                    _nextRomanLyric,
-                    _nextTranslation,
-                    unplayed,
-                  ),
-                  nextAlign,
-                ),
-              ),
-            ],
-          )
-        : lineBlock(current, currentAlign);
-
     return Container(
       height: vertical ? 190 : 130,
       clipBehavior: Clip.antiAlias,
@@ -2100,10 +2018,182 @@ class _DesktopLyricPreview extends StatelessWidget {
           child: SizedBox(
             width: vertical ? 110 : 320,
             height: vertical ? 150 : 80,
-            child: inner,
+            child: _previewInner(settings, colors.played, colors.unplayed),
           ),
         ),
       ),
+    );
+  }
+
+  List<Shadow>? _strokeShadows(Color played) {
+    if (!AppSettings.instance.desktopEnableStroke) return null;
+    final outlineColor = shouldUseLightDesktopLyricOutline(played)
+        ? Colors.white.withValues(alpha: 0.55)
+        : Colors.black.withValues(alpha: 0.85);
+    return [
+      for (final (dx, dy) in const [
+        (1.0, 0.0),
+        (-1.0, 0.0),
+        (0.0, 1.0),
+        (0.0, -1.0),
+      ])
+        Shadow(color: outlineColor, offset: Offset(dx, dy), blurRadius: 1),
+    ];
+  }
+
+  TextStyle _previewStyle(Color color, double fontSize, List<Shadow>? shadows) {
+    return TextStyle(
+      fontSize: fontSize,
+      color: color,
+      fontWeight: _weight(AppSettings.instance.desktopLyricFontWeight),
+      height: 1.1,
+      shadows: shadows,
+    );
+  }
+
+  List<Widget> _lineChildren(Color color) {
+    final settings = AppSettings.instance;
+    final vertical = settings.desktopUseVerticalDisplayMode;
+    final shadows = _strokeShadows(color);
+    final mainStyle = _previewStyle(
+      color,
+      settings.desktopLyricFontSize,
+      shadows,
+    );
+    final subStyle = _previewStyle(
+      color,
+      settings.desktopTranslationFontSize,
+      shadows,
+    );
+    final hasRoman = settings.showDesktopLyricRoman;
+    final hasTranslation = settings.desktopShowTranslation;
+    final translationPosition = vertical
+        ? settings.desktopLyricTranslationPosition
+        : 1;
+    final romanPosition =
+        hasTranslation || settings.desktopLyricRomanPosition != 2
+        ? settings.desktopLyricRomanPosition
+        : 1;
+    return _lineChildrenFor(
+      _mainLyric,
+      _romanLyric,
+      _translation,
+      vertical,
+      hasRoman,
+      hasTranslation,
+      romanPosition,
+      translationPosition,
+      mainStyle,
+      subStyle,
+    );
+  }
+
+  List<Widget> _nextLineChildren(Color color) {
+    final settings = AppSettings.instance;
+    final vertical = settings.desktopUseVerticalDisplayMode;
+    final shadows = _strokeShadows(color);
+    final mainStyle = _previewStyle(
+      color,
+      settings.desktopLyricFontSize,
+      shadows,
+    );
+    final subStyle = _previewStyle(
+      color,
+      settings.desktopTranslationFontSize,
+      shadows,
+    );
+    final hasRoman = settings.showDesktopLyricRoman;
+    final hasTranslation = settings.desktopShowTranslation;
+    final translationPosition = vertical
+        ? settings.desktopLyricTranslationPosition
+        : 1;
+    final romanPosition =
+        hasTranslation || settings.desktopLyricRomanPosition != 2
+        ? settings.desktopLyricRomanPosition
+        : 1;
+    return _lineChildrenFor(
+      _nextLyric,
+      _nextRomanLyric,
+      _nextTranslation,
+      vertical,
+      hasRoman,
+      hasTranslation,
+      romanPosition,
+      translationPosition,
+      mainStyle,
+      subStyle,
+    );
+  }
+
+  List<Widget> _lineChildrenFor(
+    String lyric,
+    String roman,
+    String translation,
+    bool vertical,
+    bool hasRoman,
+    bool hasTranslation,
+    int romanPosition,
+    int translationPosition,
+    TextStyle mainStyle,
+    TextStyle subStyle,
+  ) {
+    return [
+      if (hasRoman && romanPosition == 0) _lineText(roman, subStyle, vertical),
+      if (hasTranslation && translationPosition == 0)
+        _lineText(translation, subStyle, vertical),
+      _lineText(lyric, mainStyle, vertical),
+      if (hasRoman && romanPosition == 1) _lineText(roman, subStyle, vertical),
+      if (hasTranslation && translationPosition == 1)
+        _lineText(translation, subStyle, vertical),
+      if (hasRoman && romanPosition == 2) _lineText(roman, subStyle, vertical),
+    ];
+  }
+
+  Widget _lineBlock(List<Widget> children, int alignment, bool vertical) {
+    final crossAxis = switch (alignment) {
+      0 => CrossAxisAlignment.start,
+      1 => CrossAxisAlignment.center,
+      _ => CrossAxisAlignment.end,
+    };
+    return Align(
+      alignment: vertical
+          ? switch (alignment) {
+              0 => Alignment.topCenter,
+              1 => Alignment.center,
+              _ => Alignment.bottomCenter,
+            }
+          : switch (alignment) {
+              0 => Alignment.centerLeft,
+              1 => Alignment.center,
+              _ => Alignment.centerRight,
+            },
+      child: Flex(
+        direction: vertical ? Axis.horizontal : Axis.vertical,
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: crossAxis,
+        children: children,
+      ),
+    );
+  }
+
+  Widget _previewInner(AppSettings settings, Color played, Color unplayed) {
+    final vertical = settings.desktopUseVerticalDisplayMode;
+    final currentAlign = settings.desktopLyricTextAlign == 3
+        ? 0
+        : settings.desktopLyricTextAlign;
+    final nextAlign = settings.desktopLyricTextAlign == 3
+        ? 2
+        : settings.desktopLyricTextAlign;
+    final current = _lineBlock(_lineChildren(played), currentAlign, vertical);
+    if (!settings.desktopShowDoubleLine) return current;
+    return Flex(
+      direction: vertical ? Axis.horizontal : Axis.vertical,
+      children: [
+        Expanded(child: current),
+        Expanded(
+          child: _lineBlock(_nextLineChildren(unplayed), nextAlign, vertical),
+        ),
+      ],
     );
   }
 }
@@ -2149,30 +2239,7 @@ class _DesktopColorSetting extends StatelessWidget {
       action: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          InkWell(
-            onTap: onPickColor,
-            borderRadius: AppRadius.smCircular,
-            child: Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                color: (displayColor ?? scheme.primary).withValues(
-                  alpha: opacity,
-                ),
-                borderRadius: AppRadius.xsCircular,
-                border: displayColor == null
-                    ? Border.all(color: scheme.outline.withValues(alpha: 0.4))
-                    : null,
-              ),
-              child: displayColor == null
-                  ? Icon(
-                      Icons.not_interested,
-                      size: 16,
-                      color: scheme.onSurfaceVariant,
-                    )
-                  : null,
-            ),
-          ),
+          _swatch(scheme, displayColor),
           const SizedBox(width: 8),
           OutlinedButton(
             onPressed: onPickColor,
@@ -2186,6 +2253,32 @@ class _DesktopColorSetting extends StatelessWidget {
       ),
     );
   }
+
+  Widget _swatch(ColorScheme scheme, Color? displayColor) {
+    return InkWell(
+      onTap: onPickColor,
+      borderRadius: AppRadius.smCircular,
+      child: Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          color: (displayColor ?? scheme.primary).withValues(alpha: opacity),
+          borderRadius: AppRadius.xsCircular,
+          border: displayColor == null
+              ? Border.all(color: scheme.outline.withValues(alpha: 0.4))
+              : null,
+        ),
+        child: displayColor == null
+            ? Icon(
+                Icons.not_interested,
+                size: 16,
+                color: scheme.onSurfaceVariant,
+              )
+            : null,
+      ),
+    );
+  }
+
 }
 
 class _DesktopColorResult {
@@ -2252,7 +2345,6 @@ class _DesktopColorPickerDialogState extends State<_DesktopColorPickerDialog> {
     final size = MediaQuery.of(context).size;
     final dialogWidth = (size.width - 64).clamp(260.0, 360.0).toDouble();
     final pickerSize = (dialogWidth - 32).clamp(220.0, 300.0).toDouble();
-
     return AlertDialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       title: Text(widget.label),
@@ -2262,149 +2354,157 @@ class _DesktopColorPickerDialogState extends State<_DesktopColorPickerDialog> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              ClipRRect(
-                borderRadius: AppRadius.smCircular,
-                child: SizedBox(
-                  width: pickerSize,
-                  height: pickerSize * 0.7,
-                  child: _HsvPicker(hsv: _hsv, onChanged: _updateColor),
-                ),
-              ),
+              _hsvBoard(pickerSize),
               const SizedBox(height: 12),
-              Row(
-                children: [
-                  Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: color.withValues(alpha: _opacity),
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: scheme.outline.withValues(alpha: 0.4),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ClipRRect(
-                      borderRadius: AppRadius.smCircular,
-                      child: SizedBox(
-                        height: 20,
-                        child: _HueSlider(
-                          hue: _hsv.hue,
-                          onChanged: (hue) => _updateColor(_hsv.withHue(hue)),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+              _hueRow(scheme, color),
               const SizedBox(height: 16),
-              Row(
-                children: [
-                  Text(
-                    '#',
-                    style: TextStyle(
-                      color: scheme.onSurface,
-                      fontSize: AppType.sectionTitle,
-                      fontWeight: AppType.weightMedium,
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Focus(
-                      onFocusChange: HotkeysHelper.onFocusChanges,
-                      child: TextField(
-                        controller: _hexCtrl,
-                        decoration: InputDecoration(
-                          isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
-                          border: OutlineInputBorder(
-                            borderRadius: AppRadius.smCircular,
-                          ),
-                          hintText: 'RRGGBB',
-                          hintStyle: TextStyle(
-                            color: scheme.onSurfaceVariant.withValues(
-                              alpha: 0.5,
-                            ),
-                          ),
-                        ),
-                        style: const TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: AppType.subtitle,
-                          letterSpacing: 1.2,
-                        ),
-                        textCapitalization: TextCapitalization.characters,
-                        inputFormatters: [
-                          UpperCaseTextFormatter(),
-                          LengthLimitingTextInputFormatter(6),
-                          FilteringTextInputFormatter.allow(
-                            RegExp(r'[0-9A-Fa-f]'),
-                          ),
-                        ],
-                        onSubmitted: _onHexSubmitted,
-                        onChanged: (text) {
-                          if (text.length == 6) {
-                            _onHexSubmitted(text);
-                          } else {
-                            setState(() {});
-                          }
-                        },
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+              _hexField(scheme),
             ],
           ),
         ),
       ),
-      actions: [
-        Row(
-          children: [
-            const SizedBox(width: 4),
-            Text(
-              '不透明度',
-              style: TextStyle(
-                fontSize: AppType.caption,
-                color: scheme.onSurfaceVariant,
+      actions: [_opacityActions(scheme, color)],
+    );
+  }
+
+  Widget _hsvBoard(double pickerSize) {
+    return ClipRRect(
+      borderRadius: AppRadius.smCircular,
+      child: SizedBox(
+        width: pickerSize,
+        height: pickerSize * 0.7,
+        child: _HsvPicker(hsv: _hsv, onChanged: _updateColor),
+      ),
+    );
+  }
+
+  Widget _hueRow(ColorScheme scheme, Color color) {
+    return Row(
+      children: [
+        Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: _opacity),
+            shape: BoxShape.circle,
+            border: Border.all(color: scheme.outline.withValues(alpha: 0.4)),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: ClipRRect(
+            borderRadius: AppRadius.smCircular,
+            child: SizedBox(
+              height: 20,
+              child: _HueSlider(
+                hue: _hsv.hue,
+                onChanged: (hue) => _updateColor(_hsv.withHue(hue)),
               ),
             ),
-            Expanded(
-              child: Slider(
-                value: _opacity,
-                min: 0,
-                max: 1,
-                divisions: 20,
-                onChanged: (v) => setState(() => _opacity = v),
-              ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _hexField(ColorScheme scheme) {
+    return Row(
+      children: [
+        Text(
+          '#',
+          style: TextStyle(
+            color: scheme.onSurface,
+            fontSize: AppType.sectionTitle,
+            fontWeight: AppType.weightMedium,
+          ),
+        ),
+        const SizedBox(width: 4),
+        Expanded(child: _hexTextField(scheme)),
+      ],
+    );
+  }
+
+  Widget _hexTextField(ColorScheme scheme) {
+    return Focus(
+      onFocusChange: HotkeysHelper.onFocusChanges,
+      child: TextField(
+        controller: _hexCtrl,
+        decoration: InputDecoration(
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 8,
+          ),
+          border: OutlineInputBorder(borderRadius: AppRadius.smCircular),
+          hintText: 'RRGGBB',
+          hintStyle: TextStyle(
+            color: scheme.onSurfaceVariant.withValues(alpha: 0.5),
+          ),
+        ),
+        style: const TextStyle(
+          fontFamily: 'monospace',
+          fontSize: AppType.subtitle,
+          letterSpacing: 1.2,
+        ),
+        textCapitalization: TextCapitalization.characters,
+        inputFormatters: [
+          UpperCaseTextFormatter(),
+          LengthLimitingTextInputFormatter(6),
+          FilteringTextInputFormatter.allow(RegExp(r'[0-9A-Fa-f]')),
+        ],
+        onSubmitted: _onHexSubmitted,
+        onChanged: (text) {
+          if (text.length == 6) {
+            _onHexSubmitted(text);
+          } else {
+            setState(() {});
+          }
+        },
+      ),
+    );
+  }
+
+  Widget _opacityActions(ColorScheme scheme, Color color) {
+    return Row(
+      children: [
+        const SizedBox(width: 4),
+        Text(
+          '不透明度',
+          style: TextStyle(
+            fontSize: AppType.caption,
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        Expanded(
+          child: Slider(
+            value: _opacity,
+            min: 0,
+            max: 1,
+            divisions: 20,
+            onChanged: (v) => setState(() => _opacity = v),
+          ),
+        ),
+        SizedBox(
+          width: 36,
+          child: Text(
+            '${(_opacity * 100).round()}%',
+            style: TextStyle(
+              fontSize: AppType.caption,
+              color: scheme.onSurfaceVariant,
             ),
-            SizedBox(
-              width: 36,
-              child: Text(
-                '${(_opacity * 100).round()}%',
-                style: TextStyle(
-                  fontSize: AppType.caption,
-                  color: scheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: _hasValidHex
-                  ? () => Navigator.of(
-                      context,
-                    ).pop(_DesktopColorResult(color, _opacity))
-                  : null,
-              child: const Text('确定'),
-            ),
-          ],
+          ),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _hasValidHex
+              ? () => Navigator.of(
+                  context,
+                ).pop(_DesktopColorResult(color, _opacity))
+              : null,
+          child: const Text('确定'),
         ),
       ],
     );
@@ -2760,7 +2860,6 @@ class _FontPickerTileState extends State<_FontPickerTile> {
         showTextOnSnackBar('无法获取字体', variant: ToastVariant.error);
         return;
       }
-
       final theme = ThemeProvider.instance;
       final selection = await showDialog<_FontSelection>(
         context: context,
@@ -2770,63 +2869,73 @@ class _FontPickerTileState extends State<_FontPickerTile> {
         ),
       );
       if (!mounted || selection == null) return;
-
-      final settings = AppSettings.instance;
-      final oldFontFamily = widget.target == _FontTarget.ui
-          ? settings.fontFamily
-          : settings.lyricFontFamily;
-      final oldFontPath = widget.target == _FontTarget.ui
-          ? settings.fontPath
-          : settings.lyricFontPath;
-      final selectedFont = selection.font;
-      if (selectedFont == null) {
-        try {
-          _setBusyLabel('恢复默认');
-          _applyTheme(null);
-          _setBusyLabel('保存中');
-          _writeSettings(family: null, path: null);
-          final saved = await settings.saveSettings();
-          if (!saved) {
-            _writeSettings(family: oldFontFamily, path: oldFontPath);
-            _applyTheme(oldFontFamily);
-            showTextOnSnackBar('保存字体设置失败', variant: ToastVariant.error);
-          } else if (mounted) {
-            showTextOnSnackBar('已恢复默认字体', variant: ToastVariant.success);
-          }
-        } catch (err, trace) {
-          log.settings.error('legacy', '恢复默认字体失败', error: err, stackTrace: trace);
-          if (mounted) {
-            showTextOnSnackBar('恢复默认字体失败，请查看日志');
-          }
-        }
+      if (selection.font == null) {
+        await _restoreDefaultFont();
         return;
       }
-
-      try {
-        _setBusyLabel('应用中');
-        await loadAppFontFile(
-          family: selectedFont.fullName,
-          path: selectedFont.path,
-        );
-        _applyTheme(selectedFont.fullName);
-        _setBusyLabel('保存中');
-        _writeSettings(family: selectedFont.fullName, path: selectedFont.path);
-        final saved = await settings.saveSettings();
-        if (!saved) {
-          _writeSettings(family: oldFontFamily, path: oldFontPath);
-          _applyTheme(oldFontFamily);
-          showTextOnSnackBar('保存字体设置失败');
-        } else if (mounted) {
-          showTextOnSnackBar('已应用字体');
-        }
-      } catch (err, trace) {
-        log.settings.error('legacy', '应用字体失败', error: err, stackTrace: trace);
-        if (mounted) {
-          showTextOnSnackBar('应用字体失败，请查看日志');
-        }
-      }
+      await _applySelectedFont(selection.font!);
     } finally {
       _setBusyLabel(null);
+    }
+  }
+
+  ({String? family, String? path}) _currentFontSettings() {
+    final settings = AppSettings.instance;
+    if (widget.target == _FontTarget.ui) {
+      return (family: settings.fontFamily, path: settings.fontPath);
+    }
+    return (family: settings.lyricFontFamily, path: settings.lyricFontPath);
+  }
+
+  Future<void> _restoreDefaultFont() async {
+    final settings = AppSettings.instance;
+    final old = _currentFontSettings();
+    try {
+      _setBusyLabel('恢复默认');
+      _applyTheme(null);
+      _setBusyLabel('保存中');
+      _writeSettings(family: null, path: null);
+      final saved = await settings.saveSettings();
+      if (!saved) {
+        _writeSettings(family: old.family, path: old.path);
+        _applyTheme(old.family);
+        showTextOnSnackBar('保存字体设置失败', variant: ToastVariant.error);
+      } else if (mounted) {
+        showTextOnSnackBar('已恢复默认字体', variant: ToastVariant.success);
+      }
+    } catch (err, trace) {
+      log.settings.error('legacy', '恢复默认字体失败', error: err, stackTrace: trace);
+      if (mounted) {
+        showTextOnSnackBar('恢复默认字体失败，请查看日志');
+      }
+    }
+  }
+
+  Future<void> _applySelectedFont(InstalledFont selectedFont) async {
+    final settings = AppSettings.instance;
+    final old = _currentFontSettings();
+    try {
+      _setBusyLabel('应用中');
+      await loadAppFontFile(
+        family: selectedFont.fullName,
+        path: selectedFont.path,
+      );
+      _applyTheme(selectedFont.fullName);
+      _setBusyLabel('保存中');
+      _writeSettings(family: selectedFont.fullName, path: selectedFont.path);
+      final saved = await settings.saveSettings();
+      if (!saved) {
+        _writeSettings(family: old.family, path: old.path);
+        _applyTheme(old.family);
+        showTextOnSnackBar('保存字体设置失败');
+      } else if (mounted) {
+        showTextOnSnackBar('已应用字体');
+      }
+    } catch (err, trace) {
+      log.settings.error('legacy', '应用字体失败', error: err, stackTrace: trace);
+      if (mounted) {
+        showTextOnSnackBar('应用字体失败，请查看日志');
+      }
     }
   }
 
@@ -2898,11 +3007,6 @@ class _FontSelectorState extends State<_FontSelector> {
     final size = MediaQuery.sizeOf(context);
     final width = (size.width - 48.0).clamp(300.0, 520.0).toDouble();
     final height = (size.height - 96.0).clamp(320.0, 560.0).toDouble();
-    final currentFont = widget.currentFont;
-    final filtered = _filtered;
-    final showDefault = _showDefault;
-    final itemCount = (showDefault ? 1 : 0) + filtered.length;
-
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(
         horizontal: 24.0,
@@ -2917,171 +3021,171 @@ class _FontSelectorState extends State<_FontSelector> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Padding(
-                padding: const EdgeInsets.only(bottom: 12.0),
-                child: Wrap(
-                  spacing: 8.0,
-                  runSpacing: 8.0,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Text(
-                      '选择字体',
-                      style: TextStyle(
-                        color: scheme.onSurface,
-                        fontSize: AppType.sectionTitle,
-                        fontWeight: AppType.weightBold,
-                      ),
-                    ),
-                    _CurrentFontPill(label: currentFont ?? '默认'),
-                  ],
-                ),
-              ),
-              Focus(
-                onFocusChange: HotkeysHelper.onFocusChanges,
-                child: TextField(
-                  controller: _queryController,
-                  onChanged: (value) => setState(() => _query = value),
-                  decoration: InputDecoration(
-                    isDense: true,
-                    hintText: '搜索字体',
-                    prefixIcon: const Icon(Symbols.search, size: 20),
-                    prefixIconConstraints: const BoxConstraints(
-                      minWidth: 40,
-                      minHeight: 36,
-                    ),
-                    suffixIcon: _query.isEmpty
-                        ? null
-                        : IconButton(
-                            icon: const Icon(Symbols.close, size: 18),
-                            onPressed: () {
-                              _queryController.clear();
-                              setState(() => _query = '');
-                            },
-                          ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: AppRadius.smCircular,
-                    ),
-                  ),
-                ),
-              ),
+              _fontDialogHeader(scheme),
+              _fontSearchField(),
               const SizedBox(height: 12.0),
-              Expanded(
-                child: itemCount == 0
-                    ? Center(
-                        child: Text(
-                          '没有匹配的字体',
-                          style: TextStyle(
-                            color: scheme.onSurfaceVariant,
-                            fontSize: AppType.body,
-                          ),
-                        ),
-                      )
-                    : Material(
-                        type: MaterialType.transparency,
-                        child: ListView.builder(
-                          itemCount: itemCount,
-                          itemExtent: 56.0,
-                          itemBuilder: (context, i) {
-                            if (showDefault && i == 0) {
-                              final selected = currentFont == null;
-                              return ListTile(
-                                selected: selected,
-                                selectedTileColor: scheme.secondaryContainer
-                                    .withValues(alpha: 0.45),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: AppRadius.mdCircular,
-                                ),
-                                leading: Icon(
-                                  selected
-                                      ? Symbols.check_circle
-                                      : Symbols.format_clear,
-                                  color: selected
-                                      ? scheme.primary
-                                      : scheme.onSurfaceVariant,
-                                ),
-                                title: const Text('默认字体'),
-                                trailing: selected
-                                    ? const Icon(Symbols.check)
-                                    : null,
-                                onTap:
-                                    !canResetOptionalSetting<String>(
-                                      current: currentFont,
-                                      isSaving: false,
-                                    )
-                                    ? null
-                                    : () => Navigator.pop(
-                                        context,
-                                        const _FontSelection(null),
-                                      ),
-                              );
-                            }
-
-                            final font = filtered[showDefault ? i - 1 : i];
-                            final selected = font.fullName == currentFont;
-                            final loaded = isAppFontLoaded(font.fullName);
-                            return ListTile(
-                              selected: selected,
-                              selectedTileColor: scheme.secondaryContainer
-                                  .withValues(alpha: 0.45),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: AppRadius.mdCircular,
-                              ),
-                              leading: Icon(
-                                selected
-                                    ? Symbols.check_circle
-                                    : Symbols.text_fields,
-                                color: selected
-                                    ? scheme.primary
-                                    : scheme.onSurfaceVariant,
-                              ),
-                              title: Text(
-                                font.fullName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: loaded
-                                    ? TextStyle(
-                                        fontFamily: font.fullName,
-                                        fontFamilyFallback:
-                                            appFontFamilyFallback(
-                                              font.fullName,
-                                            ),
-                                      )
-                                    : null,
-                              ),
-                              trailing: selected
-                                  ? const Icon(Symbols.check)
-                                  : null,
-                              onTap: selected
-                                  ? null
-                                  : () => Navigator.pop(
-                                      context,
-                                      _FontSelection(font),
-                                    ),
-                            );
-                          },
-                        ),
-                      ),
-              ),
+              Expanded(child: _fontList(scheme)),
               const SizedBox(height: 16.0),
-              OverflowBar(
-                alignment: MainAxisAlignment.end,
-                spacing: 8.0,
-                overflowSpacing: 8.0,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('取消'),
-                  ),
-                ],
-              ),
+              _fontDialogActions(),
+
             ],
           ),
         ),
       ),
+    );
+  }
+
+
+  Widget _fontDialogActions() {
+    return OverflowBar(
+      alignment: MainAxisAlignment.end,
+      spacing: 8.0,
+      overflowSpacing: 8.0,
+      children: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+      ],
+    );
+  }
+
+  Widget _fontDialogHeader(ColorScheme scheme) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12.0),
+      child: Wrap(
+        spacing: 8.0,
+        runSpacing: 8.0,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          Text(
+            '选择字体',
+            style: TextStyle(
+              color: scheme.onSurface,
+              fontSize: AppType.sectionTitle,
+              fontWeight: AppType.weightBold,
+            ),
+          ),
+          _CurrentFontPill(label: widget.currentFont ?? '默认'),
+        ],
+      ),
+    );
+  }
+
+  Widget _fontSearchField() {
+    return Focus(
+      onFocusChange: HotkeysHelper.onFocusChanges,
+      child: TextField(
+        controller: _queryController,
+        onChanged: (value) => setState(() => _query = value),
+        decoration: InputDecoration(
+          isDense: true,
+          hintText: '搜索字体',
+          prefixIcon: const Icon(Symbols.search, size: 20),
+          prefixIconConstraints: const BoxConstraints(
+            minWidth: 40,
+            minHeight: 36,
+          ),
+          suffixIcon: _query.isEmpty ? null : _clearQueryButton(),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 8,
+          ),
+          border: OutlineInputBorder(borderRadius: AppRadius.smCircular),
+        ),
+      ),
+    );
+  }
+
+
+  Widget _clearQueryButton() {
+    return IconButton(
+      icon: const Icon(Symbols.close, size: 18),
+      onPressed: () {
+        _queryController.clear();
+        setState(() => _query = '');
+      },
+    );
+  }
+
+  Widget _fontList(ColorScheme scheme) {
+    final showDefault = _showDefault;
+    final itemCount = (showDefault ? 1 : 0) + _filtered.length;
+    if (itemCount == 0) {
+      return Center(
+        child: Text(
+          '没有匹配的字体',
+          style: TextStyle(
+            color: scheme.onSurfaceVariant,
+            fontSize: AppType.body,
+          ),
+        ),
+      );
+    }
+    return Material(
+      type: MaterialType.transparency,
+      child: ListView.builder(
+        itemCount: itemCount,
+        itemExtent: 56.0,
+        itemBuilder: (context, i) {
+          if (showDefault && i == 0) {
+            return _defaultFontTile(scheme);
+          }
+          return _fontTile(scheme, _filtered[showDefault ? i - 1 : i]);
+        },
+      ),
+    );
+  }
+
+  Widget _defaultFontTile(ColorScheme scheme) {
+    final currentFont = widget.currentFont;
+    final selected = currentFont == null;
+    return ListTile(
+      selected: selected,
+      selectedTileColor: scheme.secondaryContainer.withValues(alpha: 0.45),
+      shape: RoundedRectangleBorder(borderRadius: AppRadius.mdCircular),
+      leading: Icon(
+        selected ? Symbols.check_circle : Symbols.format_clear,
+        color: selected ? scheme.primary : scheme.onSurfaceVariant,
+      ),
+      title: const Text('默认字体'),
+      trailing: selected ? const Icon(Symbols.check) : null,
+      onTap:
+          !canResetOptionalSetting<String>(
+            current: currentFont,
+            isSaving: false,
+          )
+          ? null
+          : () => Navigator.pop(context, const _FontSelection(null)),
+    );
+  }
+
+  Widget _fontTile(ColorScheme scheme, InstalledFont font) {
+    final selected = font.fullName == widget.currentFont;
+    final loaded = isAppFontLoaded(font.fullName);
+    return ListTile(
+      selected: selected,
+      selectedTileColor: scheme.secondaryContainer.withValues(alpha: 0.45),
+      shape: RoundedRectangleBorder(borderRadius: AppRadius.mdCircular),
+      leading: Icon(
+        selected ? Symbols.check_circle : Symbols.text_fields,
+        color: selected ? scheme.primary : scheme.onSurfaceVariant,
+      ),
+      title: Text(
+        font.fullName,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: loaded
+            ? TextStyle(
+                fontFamily: font.fullName,
+                fontFamilyFallback: appFontFamilyFallback(font.fullName),
+              )
+            : null,
+      ),
+      trailing: selected ? const Icon(Symbols.check) : null,
+      onTap: selected
+          ? null
+          : () => Navigator.pop(context, _FontSelection(font)),
     );
   }
 }
@@ -3160,30 +3264,28 @@ class _DefaultLyricSourceControlState extends State<DefaultLyricSourceControl> {
           const SizedBox(height: 12),
           Padding(
             padding: const EdgeInsets.only(left: 16),
-            child: SettingsTile(
-              description: '默认在线源',
-              action: SegmentedButton<LyricSourceType>(
-                showSelectedIcon: false,
-                segments: const [
-                  ButtonSegment(value: LyricSourceType.qq, label: Text('QQ')),
-                  ButtonSegment(
-                    value: LyricSourceType.kugou,
-                    label: Text('酷狗'),
-                  ),
-                  ButtonSegment(value: LyricSourceType.ne, label: Text('网易')),
-                  ButtonSegment(
-                    value: LyricSourceType.amll,
-                    label: Text('AMLL'),
-                  ),
-                ],
-                selected: {settings.preferredOnlineSource},
-                onSelectionChanged: (newSelection) =>
-                    _setPreferredOnlineSource(newSelection.first),
-              ),
-            ),
+            child: _onlineSourceTile(),
           ),
         ],
       ],
+    );
+  }
+
+  Widget _onlineSourceTile() {
+    return SettingsTile(
+      description: '默认在线源',
+      action: SegmentedButton<LyricSourceType>(
+        showSelectedIcon: false,
+        segments: const [
+          ButtonSegment(value: LyricSourceType.qq, label: Text('QQ')),
+          ButtonSegment(value: LyricSourceType.kugou, label: Text('酷狗')),
+          ButtonSegment(value: LyricSourceType.ne, label: Text('网易')),
+          ButtonSegment(value: LyricSourceType.amll, label: Text('AMLL')),
+        ],
+        selected: {settings.preferredOnlineSource},
+        onSelectionChanged: (newSelection) =>
+            _setPreferredOnlineSource(newSelection.first),
+      ),
     );
   }
 }
@@ -3214,33 +3316,37 @@ class SettingsEmptyState extends StatelessWidget {
         children: [
           Icon(icon, color: scheme.onSurfaceVariant),
           const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: TextStyle(
-                    color: scheme.onSurface,
-                    fontSize: AppType.subtitle,
-                    fontWeight: AppType.weightSemibold,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    color: scheme.onSurfaceVariant,
-                    fontSize: AppType.body,
-                  ),
-                ),
-              ],
-            ),
-          ),
+          Expanded(child: _texts(scheme)),
         ],
       ),
     );
   }
+
+  Widget _texts(ColorScheme scheme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: TextStyle(
+            color: scheme.onSurface,
+            fontSize: AppType.subtitle,
+            fontWeight: AppType.weightSemibold,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          subtitle,
+          style: TextStyle(
+            color: scheme.onSurfaceVariant,
+            fontSize: AppType.body,
+          ),
+        ),
+      ],
+    );
+  }
+
+
 }
 
 /// 设置分组入口行，点击进入对应二级页面
@@ -3842,117 +3948,134 @@ class _LyricWritingGroupState extends State<_LyricWritingGroup> {
             subtitle: '当前版本未开放此项',
           )
         else ...[
-          SettingsTile(
-            description: '写入格式',
-            subtitle: '写入标签或导出 LRC 时的格式',
-            action: SegmentedButton<LyricTagWordFormat>(
-              showSelectedIcon: false,
-              segments: const [
-                ButtonSegment(
-                  value: LyricTagWordFormat.standard,
-                  label: Text('标准 LRC'),
-                ),
-                ButtonSegment(
-                  value: LyricTagWordFormat.wordByWord,
-                  label: Text('逐字 LRC'),
-                ),
-                ButtonSegment(
-                  value: LyricTagWordFormat.enhanced,
-                  label: Text('增强 LRC'),
-                ),
-              ],
-              selected: {settings.lyricTagWordFormat},
-              onSelectionChanged: (selection) {
-                setState(() => settings.lyricTagWordFormat = selection.first);
-                settings.saveSettings();
-              },
-            ),
-          ),
-          const SizedBox(height: 16.0),
-          SettingsTile(
-            description: '写入翻译',
-            subtitle: '写入时包含翻译行',
-            action: Switch(
-              value: settings.lyricTagIncludeTranslation,
-              onChanged: (value) {
-                setState(() => settings.lyricTagIncludeTranslation = value);
-                settings.saveSettings();
-              },
-            ),
-          ),
-          const SizedBox(height: 16.0),
-          SettingsTile(
-            description: '写入罗马音',
-            subtitle: '写入时包含罗马音行',
-            action: Switch(
-              value: settings.lyricTagIncludeRomanization,
-              onChanged: (value) {
-                setState(() => settings.lyricTagIncludeRomanization = value);
-                settings.saveSettings();
-              },
-            ),
-          ),
+          ..._writeFormatTiles(),
           const SizedBox(height: 24.0),
           const SettingsSectionHeader('自动写入'),
           const SizedBox(height: 4.0),
-          SettingsTile(
-            description: '自动写入标签',
-            subtitle: '获取后自动写入，不再询问',
-            action: Switch(
-              value: settings.autoWriteLyricToTag,
-              onChanged: (value) {
-                setState(() => settings.autoWriteLyricToTag = value);
-                settings.saveSettings();
-                PlayService.instance.lyricService.resetLyricWritePrompts();
-              },
-            ),
-          ),
-          const SizedBox(height: 16.0),
-          SettingsTile(
-            description: settings.autoWriteLyricToTag ? '自动写入延迟' : '提示延迟',
-            subtitle: settings.autoWriteLyricToTag
-                ? '获取后等待 ${settings.autoWriteLyricToTagDelay} 秒再写入'
-                : '获取后等待 ${settings.promptWriteLyricToTagDelay} 秒再提示',
-            action: SizedBox(
-              width: 140,
-              child: Slider(
-                value:
-                    (settings.autoWriteLyricToTag
-                            ? settings.autoWriteLyricToTagDelay
-                            : settings.promptWriteLyricToTagDelay)
-                        .toDouble(),
-                min: settings.autoWriteLyricToTag ? 10 : 5,
-                max: settings.autoWriteLyricToTag ? 120 : 60,
-                divisions: 11,
-                label:
-                    '${settings.autoWriteLyricToTag ? settings.autoWriteLyricToTagDelay : settings.promptWriteLyricToTagDelay}秒',
-                onChanged: (value) {
-                  setState(() {
-                    if (settings.autoWriteLyricToTag) {
-                      settings.autoWriteLyricToTagDelay = value.round();
-                    } else {
-                      settings.promptWriteLyricToTagDelay = value.round();
-                    }
-                  });
-                  settings.saveSettings();
-                },
-              ),
-            ),
-          ),
-          const SizedBox(height: 16.0),
-          SettingsTile(
-            description: '自动保存外部 LRC',
-            subtitle: '保存到歌曲目录，覆盖前备份原文件',
-            action: Switch(
-              value: settings.autoSaveExternalLyric,
-              onChanged: (value) {
-                setState(() => settings.autoSaveExternalLyric = value);
-                settings.saveSettings();
-              },
-            ),
-          ),
+          ..._autoWriteTiles(),
         ],
       ],
+    );
+  }
+
+  List<Widget> _writeFormatTiles() {
+    return [
+      _writeFormatTile(),
+      const SizedBox(height: 16.0),
+      SettingsTile(
+        description: '写入翻译',
+        subtitle: '写入时包含翻译行',
+        action: Switch(
+          value: settings.lyricTagIncludeTranslation,
+          onChanged: (value) {
+            setState(() => settings.lyricTagIncludeTranslation = value);
+            settings.saveSettings();
+          },
+        ),
+      ),
+      const SizedBox(height: 16.0),
+      SettingsTile(
+        description: '写入罗马音',
+        subtitle: '写入时包含罗马音行',
+        action: Switch(
+          value: settings.lyricTagIncludeRomanization,
+          onChanged: (value) {
+            setState(() => settings.lyricTagIncludeRomanization = value);
+            settings.saveSettings();
+          },
+        ),
+      ),
+    ];
+  }
+
+  Widget _writeFormatTile() {
+    return SettingsTile(
+      description: '写入格式',
+      subtitle: '写入标签或导出 LRC 时的格式',
+      action: SegmentedButton<LyricTagWordFormat>(
+        showSelectedIcon: false,
+        segments: const [
+          ButtonSegment(
+            value: LyricTagWordFormat.standard,
+            label: Text('标准 LRC'),
+          ),
+          ButtonSegment(
+            value: LyricTagWordFormat.wordByWord,
+            label: Text('逐字 LRC'),
+          ),
+          ButtonSegment(
+            value: LyricTagWordFormat.enhanced,
+            label: Text('增强 LRC'),
+          ),
+        ],
+        selected: {settings.lyricTagWordFormat},
+        onSelectionChanged: (selection) {
+          setState(() => settings.lyricTagWordFormat = selection.first);
+          settings.saveSettings();
+        },
+      ),
+    );
+  }
+
+  List<Widget> _autoWriteTiles() {
+    return [
+      SettingsTile(
+        description: '自动写入标签',
+        subtitle: '获取后自动写入，不再询问',
+        action: Switch(
+          value: settings.autoWriteLyricToTag,
+          onChanged: (value) {
+            setState(() => settings.autoWriteLyricToTag = value);
+            settings.saveSettings();
+            PlayService.instance.lyricService.resetLyricWritePrompts();
+          },
+        ),
+      ),
+      const SizedBox(height: 16.0),
+      _writeDelayTile(),
+      const SizedBox(height: 16.0),
+      SettingsTile(
+        description: '自动保存外部 LRC',
+        subtitle: '保存到歌曲目录，覆盖前备份原文件',
+        action: Switch(
+          value: settings.autoSaveExternalLyric,
+          onChanged: (value) {
+            setState(() => settings.autoSaveExternalLyric = value);
+            settings.saveSettings();
+          },
+        ),
+      ),
+    ];
+  }
+
+  Widget _writeDelayTile() {
+    final auto = settings.autoWriteLyricToTag;
+    final delay = auto
+        ? settings.autoWriteLyricToTagDelay
+        : settings.promptWriteLyricToTagDelay;
+    return SettingsTile(
+      description: auto ? '自动写入延迟' : '提示延迟',
+      subtitle: auto ? '获取后等待 $delay 秒再写入' : '获取后等待 $delay 秒再提示',
+      action: SizedBox(
+        width: 140,
+        child: Slider(
+          value: delay.toDouble(),
+          min: auto ? 10 : 5,
+          max: auto ? 120 : 60,
+          divisions: 11,
+          label: '$delay秒',
+          onChanged: (value) {
+            setState(() {
+              if (settings.autoWriteLyricToTag) {
+                settings.autoWriteLyricToTagDelay = value.round();
+              } else {
+                settings.promptWriteLyricToTagDelay = value.round();
+              }
+            });
+            settings.saveSettings();
+          },
+        ),
+      ),
     );
   }
 }
@@ -4129,6 +4252,169 @@ class _DesktopDisplayGroupState extends State<_DesktopDisplayGroup>
 
   @override
   Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 96.0, right: 20),
+      children: [
+        const SettingsSectionHeader('布局与动画'),
+        const SizedBox(height: 4.0),
+        ..._translationPositionTiles(),
+        ..._romanPositionTiles(),
+        const SizedBox(height: 16),
+        ..._layoutSwitchTiles(),
+        ..._lineGapTiles(),
+        _alignTile(),
+        ..._switchAnimationTiles(),
+        ..._multiLineTiles(),
+      ],
+    );
+  }
+
+  List<Widget> _translationPositionTiles() {
+    if (!(settings.desktopShowTranslation &&
+        settings.desktopUseVerticalDisplayMode)) {
+      return const [];
+    }
+    return [
+      SettingsTile(
+        description: '翻译位置',
+        action: SegmentedButton<int>(
+          showSelectedIcon: false,
+          segments: const [
+            ButtonSegment(value: 0, label: Text('原文之前')),
+            ButtonSegment(value: 1, label: Text('原文之后')),
+          ],
+          selected: {settings.desktopLyricTranslationPosition},
+          onSelectionChanged: (v) => updateDesktopLyricConfig(
+            () => settings.desktopLyricTranslationPosition = v.first,
+          ),
+        ),
+      ),
+      const SizedBox(height: 16),
+    ];
+  }
+
+  List<Widget> _romanPositionTiles() {
+    if (!settings.showDesktopLyricRoman) return const [];
+    return [
+      SettingsTile(
+        description: '注音位置',
+        action: SegmentedButton<int>(
+          showSelectedIcon: false,
+          segments: [
+            const ButtonSegment(value: 0, label: Text('歌词上方')),
+            const ButtonSegment(value: 1, label: Text('歌词下方')),
+            if (settings.desktopShowTranslation)
+              const ButtonSegment(value: 2, label: Text('翻译下方')),
+          ],
+          selected: {
+            settings.desktopShowTranslation ||
+                    settings.desktopLyricRomanPosition != 2
+                ? settings.desktopLyricRomanPosition
+                : 1,
+          },
+          onSelectionChanged: (v) => updateDesktopLyricConfig(
+            () => settings.desktopLyricRomanPosition = v.first,
+          ),
+        ),
+      ),
+      const SizedBox(height: 16),
+    ];
+  }
+
+  List<Widget> _layoutSwitchTiles() {
+    return [
+      SettingsTile(
+        description: '竖排显示',
+        subtitle: '歌词逐字竖排，英文和数字横排旋转',
+        action: Switch(
+          value: settings.desktopUseVerticalDisplayMode,
+          onChanged: (v) => updateDesktopLyricConfig(
+            () => settings.desktopUseVerticalDisplayMode = v,
+          ),
+        ),
+      ),
+      const SizedBox(height: 16),
+      SettingsTile(
+        description: '双行显示',
+        subtitle: '同时显示当前行和下一行歌词',
+        action: Switch(
+          value: settings.desktopShowDoubleLine,
+          onChanged: (v) => updateDesktopLyricConfig(() {
+            settings.desktopShowDoubleLine = v;
+            if (v) settings.desktopUseMultiLineMode = false;
+            if (!v && settings.desktopLyricTextAlign == 3) {
+              settings.desktopLyricTextAlign = 1;
+            }
+          }),
+        ),
+      ),
+      const SizedBox(height: 16),
+      SettingsTile(
+        description: '多行模式',
+        action: Switch(
+          value: settings.desktopUseMultiLineMode,
+          onChanged: (v) => updateDesktopLyricConfig(() {
+            settings.desktopUseMultiLineMode = v;
+            if (v) settings.desktopShowDoubleLine = false;
+          }),
+        ),
+      ),
+      const SizedBox(height: 16),
+    ];
+  }
+
+  List<Widget> _lineGapTiles() {
+    if (!settings.desktopUseMultiLineMode) return const [];
+    return [
+      SettingsTile(
+        description: '歌词行距',
+        subtitle: '${settings.desktopLineGap.toStringAsFixed(0)}px',
+        action: SizedBox(
+          width: 180,
+          child: Slider(
+            value: settings.desktopLineGap,
+            min: 0,
+            max: 16,
+            divisions: 16,
+            label: '${settings.desktopLineGap.toStringAsFixed(0)}px',
+            onChanged: (v) {
+              setState(() => settings.desktopLineGap = v);
+              syncDesktopLyricConfig(context);
+            },
+            onChangeEnd: (_) => settings.saveSettings(),
+          ),
+        ),
+      ),
+      const SizedBox(height: 16),
+    ];
+  }
+
+  Widget _alignTile() {
+    return SettingsTile(
+      description: '文字对齐',
+      action: SegmentedButton<int>(
+        showSelectedIcon: false,
+        segments: [
+          const ButtonSegment(value: 0, label: Text('左')),
+          const ButtonSegment(value: 1, label: Text('中')),
+          const ButtonSegment(value: 2, label: Text('右')),
+          if (settings.desktopShowDoubleLine)
+            const ButtonSegment(value: 3, label: Text('交错')),
+        ],
+        selected: {
+          settings.desktopShowDoubleLine || settings.desktopLyricTextAlign != 3
+              ? settings.desktopLyricTextAlign
+              : 1,
+        },
+        onSelectionChanged: (v) => updateDesktopLyricConfig(
+          () => settings.desktopLyricTextAlign = v.first,
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _switchAnimationTiles() {
+    if (settings.desktopUseMultiLineMode) return const [];
     const animationItems = {
       DesktopLyricAnimation.slideUp: '上划',
       DesktopLyricAnimation.slideDown: '下划',
@@ -4137,204 +4423,64 @@ class _DesktopDisplayGroupState extends State<_DesktopDisplayGroup>
       DesktopLyricAnimation.fade: '淡入淡出',
       DesktopLyricAnimation.absorb: '吸收',
     };
-    final showTranslationPosition =
-        settings.desktopShowTranslation &&
-        settings.desktopUseVerticalDisplayMode;
-    final showRomanPosition = settings.showDesktopLyricRoman;
-    final showLineGap = settings.desktopUseMultiLineMode;
-    return ListView(
-      padding: const EdgeInsets.only(bottom: 96.0, right: 20),
-      children: [
-        const SettingsSectionHeader('布局与动画'),
-        const SizedBox(height: 4.0),
-        if (showTranslationPosition) ...[
-          SettingsTile(
-            description: '翻译位置',
-            action: SegmentedButton<int>(
-              showSelectedIcon: false,
-              segments: const [
-                ButtonSegment(value: 0, label: Text('原文之前')),
-                ButtonSegment(value: 1, label: Text('原文之后')),
-              ],
-              selected: {settings.desktopLyricTranslationPosition},
-              onSelectionChanged: (v) => updateDesktopLyricConfig(
-                () => settings.desktopLyricTranslationPosition = v.first,
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-        ],
-        if (showRomanPosition) ...[
-          SettingsTile(
-            description: '注音位置',
-            action: SegmentedButton<int>(
-              showSelectedIcon: false,
-              segments: [
-                const ButtonSegment(value: 0, label: Text('歌词上方')),
-                const ButtonSegment(value: 1, label: Text('歌词下方')),
-                if (settings.desktopShowTranslation)
-                  const ButtonSegment(value: 2, label: Text('翻译下方')),
-              ],
-              selected: {
-                settings.desktopShowTranslation ||
-                        settings.desktopLyricRomanPosition != 2
-                    ? settings.desktopLyricRomanPosition
-                    : 1,
-              },
-              onSelectionChanged: (v) => updateDesktopLyricConfig(
-                () => settings.desktopLyricRomanPosition = v.first,
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-        ],
-        const SizedBox(height: 16),
-        SettingsTile(
-          description: '竖排显示',
-          subtitle: '歌词逐字竖排，英文和数字横排旋转',
-          action: Switch(
-            value: settings.desktopUseVerticalDisplayMode,
-            onChanged: (v) => updateDesktopLyricConfig(
-              () => settings.desktopUseVerticalDisplayMode = v,
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        SettingsTile(
-          description: '双行显示',
-          subtitle: '同时显示当前行和下一行歌词',
-          action: Switch(
-            value: settings.desktopShowDoubleLine,
-            onChanged: (v) => updateDesktopLyricConfig(() {
-              settings.desktopShowDoubleLine = v;
-              if (v) settings.desktopUseMultiLineMode = false;
-              if (!v && settings.desktopLyricTextAlign == 3) {
-                settings.desktopLyricTextAlign = 1;
-              }
-            }),
-          ),
-        ),
-        const SizedBox(height: 16),
-        SettingsTile(
-          description: '多行模式',
-          action: Switch(
-            value: settings.desktopUseMultiLineMode,
-            onChanged: (v) => updateDesktopLyricConfig(() {
-              settings.desktopUseMultiLineMode = v;
-              if (v) settings.desktopShowDoubleLine = false;
-            }),
-          ),
-        ),
-        const SizedBox(height: 16),
-        if (showLineGap) ...[
-          SettingsTile(
-            description: '歌词行距',
-            subtitle: '${settings.desktopLineGap.toStringAsFixed(0)}px',
-            action: SizedBox(
-              width: 180,
-              child: Slider(
-                value: settings.desktopLineGap,
-                min: 0,
-                max: 16,
-                divisions: 16,
-                label: '${settings.desktopLineGap.toStringAsFixed(0)}px',
-                onChanged: (v) {
-                  setState(() => settings.desktopLineGap = v);
-                  syncDesktopLyricConfig(context);
-                },
-                onChangeEnd: (_) => settings.saveSettings(),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-        ],
-        SettingsTile(
-          description: '文字对齐',
-          action: SegmentedButton<int>(
-            showSelectedIcon: false,
-            segments: [
-              const ButtonSegment(value: 0, label: Text('左')),
-              const ButtonSegment(value: 1, label: Text('中')),
-              const ButtonSegment(value: 2, label: Text('右')),
-              if (settings.desktopShowDoubleLine)
-                const ButtonSegment(value: 3, label: Text('交错')),
-            ],
-            selected: {
-              settings.desktopShowDoubleLine ||
-                      settings.desktopLyricTextAlign != 3
-                  ? settings.desktopLyricTextAlign
-                  : 1,
-            },
-            onSelectionChanged: (v) => updateDesktopLyricConfig(
-              () => settings.desktopLyricTextAlign = v.first,
-            ),
-          ),
-        ),
-        if (!settings.desktopUseMultiLineMode) ...[
-          const SizedBox(height: 16),
-          SettingsTile(
-            description: '切换动画',
-            action: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: SegmentedButton<DesktopLyricAnimation>(
-                    segments: [
-                      for (final entry in animationItems.entries)
-                        ButtonSegment(
-                          value: entry.key,
-                          label: Text(entry.value),
-                        ),
-                    ],
-                    selected: {settings.desktopLyricAnimation},
-                    onSelectionChanged: (value) => updateDesktopLyricConfig(
-                      () => settings.desktopLyricAnimation = value.first,
-                    ),
-                    showSelectedIcon: false,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-        if (settings.desktopUseMultiLineMode) ...[
-          const SizedBox(height: 16),
-          SettingsTile(
-            description: '隐藏已播放歌词',
-            action: Switch(
-              value: settings.desktopHidePlayedLines,
-              onChanged: (value) => updateDesktopLyricConfig(
-                () => settings.desktopHidePlayedLines = value,
-              ),
-            ),
-          ),
-          if (!settings.desktopShowDoubleLine) ...[
-            const SizedBox(height: 16),
-            SettingsTile(
-              description: '行切换动画',
-              action: SegmentedButton<LyricStaggerStyle>(
-                segments: const [
-                  ButtonSegment(
-                    value: LyricStaggerStyle.smooth,
-                    label: Text('平滑'),
-                  ),
-                  ButtonSegment(
-                    value: LyricStaggerStyle.spring,
-                    label: Text('弹簧'),
-                  ),
+    return [
+      const SizedBox(height: 16),
+      SettingsTile(
+        description: '切换动画',
+        action: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SegmentedButton<DesktopLyricAnimation>(
+                segments: [
+                  for (final entry in animationItems.entries)
+                    ButtonSegment(value: entry.key, label: Text(entry.value)),
                 ],
-                selected: {settings.desktopMultiLineAnimation},
+                selected: {settings.desktopLyricAnimation},
                 onSelectionChanged: (value) => updateDesktopLyricConfig(
-                  () => settings.desktopMultiLineAnimation = value.first,
+                  () => settings.desktopLyricAnimation = value.first,
                 ),
                 showSelectedIcon: false,
               ),
             ),
           ],
-        ],
+        ),
+      ),
+    ];
+  }
+
+  List<Widget> _multiLineTiles() {
+    if (!settings.desktopUseMultiLineMode) return const [];
+    return [
+      const SizedBox(height: 16),
+      SettingsTile(
+        description: '隐藏已播放歌词',
+        action: Switch(
+          value: settings.desktopHidePlayedLines,
+          onChanged: (value) => updateDesktopLyricConfig(
+            () => settings.desktopHidePlayedLines = value,
+          ),
+        ),
+      ),
+      if (!settings.desktopShowDoubleLine) ...[
+        const SizedBox(height: 16),
+        SettingsTile(
+          description: '行切换动画',
+          action: SegmentedButton<LyricStaggerStyle>(
+            segments: const [
+              ButtonSegment(value: LyricStaggerStyle.smooth, label: Text('平滑')),
+              ButtonSegment(value: LyricStaggerStyle.spring, label: Text('弹簧')),
+            ],
+            selected: {settings.desktopMultiLineAnimation},
+            onSelectionChanged: (value) => updateDesktopLyricConfig(
+              () => settings.desktopMultiLineAnimation = value.first,
+            ),
+            showSelectedIcon: false,
+          ),
+        ),
       ],
-    );
+    ];
   }
 }
 
@@ -4422,84 +4568,7 @@ class _DesktopStyleGroupState extends State<_DesktopStyleGroup>
         const SettingsSectionHeader('文字样式'),
         const SizedBox(height: 8),
         const _DesktopLyricPreview(),
-        const SizedBox(height: 16),
-        SettingsTile(
-          description: '歌词字号',
-          subtitle: '${settings.desktopLyricFontSize.toStringAsFixed(0)}px',
-          action: SizedBox(
-            width: 160,
-            child: Slider(
-              value: settings.desktopLyricFontSize,
-              min: 14,
-              max: 48,
-              divisions: 34,
-              label: '${settings.desktopLyricFontSize.toStringAsFixed(0)}px',
-              onChanged: (v) => setState(() {
-                settings.desktopLyricFontSize = v;
-                settings.desktopTranslationFontSize = (v - 4).clamp(10, 44);
-              }),
-              onChangeEnd: (_) => _saveAndSync(),
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        SettingsTile(
-          description: '翻译/注音字号',
-          subtitle:
-              '${settings.desktopTranslationFontSize.toStringAsFixed(0)}px',
-          action: SizedBox(
-            width: 160,
-            child: Slider(
-              value: settings.desktopTranslationFontSize,
-              min: 10,
-              max: 44,
-              divisions: 34,
-              label:
-                  '${settings.desktopTranslationFontSize.toStringAsFixed(0)}px',
-              onChanged: (v) =>
-                  setState(() => settings.desktopTranslationFontSize = v),
-              onChangeEnd: (_) => _saveAndSync(),
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        SettingsTile(
-          description: '字重',
-          subtitle: '${settings.desktopLyricFontWeight}',
-          action: SizedBox(
-            width: 160,
-            child: Slider(
-              value: settings.desktopLyricFontWeight.toDouble(),
-              min: 100,
-              max: 900,
-              divisions: 8,
-              label: '${settings.desktopLyricFontWeight}',
-              onChanged: (v) =>
-                  setState(() => settings.desktopLyricFontWeight = v.round()),
-              onChangeEnd: (_) => _saveAndSync(),
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        SettingsTile(
-          description: '文字透明度',
-          subtitle: '${(settings.desktopFontOpacity * 100).round()}%',
-          action: SizedBox(
-            width: 160,
-            child: Slider(
-              value: settings.desktopFontOpacity,
-              min: 0,
-              max: 1,
-              divisions: 20,
-              label: '${(settings.desktopFontOpacity * 100).round()}%',
-              onChanged: (value) {
-                setState(() => settings.desktopFontOpacity = value);
-                syncDesktopLyricConfig(context);
-              },
-              onChangeEnd: (_) => settings.saveSettings(),
-            ),
-          ),
-        ),
+        ..._styleSliderTiles(),
         const SizedBox(height: 16),
         SettingsTile(
           description: '文字描边',
@@ -4511,6 +4580,105 @@ class _DesktopStyleGroupState extends State<_DesktopStyleGroup>
           ),
         ),
       ],
+    );
+  }
+
+  List<Widget> _styleSliderTiles() {
+    return [..._fontSizeSliderTiles(), ..._weightOpacitySliderTiles()];
+  }
+
+  List<Widget> _fontSizeSliderTiles() {
+    return [
+      const SizedBox(height: 16),
+      _styleSlider(
+        description: '歌词字号',
+        subtitle: '${settings.desktopLyricFontSize.toStringAsFixed(0)}px',
+        value: settings.desktopLyricFontSize,
+        min: 14,
+        max: 48,
+        divisions: 34,
+        label: '${settings.desktopLyricFontSize.toStringAsFixed(0)}px',
+        onChanged: (v) => setState(() {
+          settings.desktopLyricFontSize = v;
+          settings.desktopTranslationFontSize = (v - 4).clamp(10, 44);
+        }),
+        onChangeEnd: (_) => _saveAndSync(),
+      ),
+      const SizedBox(height: 16),
+      _styleSlider(
+        description: '翻译/注音字号',
+        subtitle: '${settings.desktopTranslationFontSize.toStringAsFixed(0)}px',
+        value: settings.desktopTranslationFontSize,
+        min: 10,
+        max: 44,
+        divisions: 34,
+        label: '${settings.desktopTranslationFontSize.toStringAsFixed(0)}px',
+        onChanged: (v) =>
+            setState(() => settings.desktopTranslationFontSize = v),
+        onChangeEnd: (_) => _saveAndSync(),
+      ),
+    ];
+  }
+
+  List<Widget> _weightOpacitySliderTiles() {
+    return [
+      const SizedBox(height: 16),
+      _styleSlider(
+        description: '字重',
+        subtitle: '${settings.desktopLyricFontWeight}',
+        value: settings.desktopLyricFontWeight.toDouble(),
+        min: 100,
+        max: 900,
+        divisions: 8,
+        label: '${settings.desktopLyricFontWeight}',
+        onChanged: (v) =>
+            setState(() => settings.desktopLyricFontWeight = v.round()),
+        onChangeEnd: (_) => _saveAndSync(),
+      ),
+      const SizedBox(height: 16),
+      _styleSlider(
+        description: '文字透明度',
+        subtitle: '${(settings.desktopFontOpacity * 100).round()}%',
+        value: settings.desktopFontOpacity,
+        min: 0,
+        max: 1,
+        divisions: 20,
+        label: '${(settings.desktopFontOpacity * 100).round()}%',
+        onChanged: (value) {
+          setState(() => settings.desktopFontOpacity = value);
+          syncDesktopLyricConfig(context);
+        },
+        onChangeEnd: (_) => settings.saveSettings(),
+      ),
+    ];
+  }
+
+  Widget _styleSlider({
+    required String description,
+    required String subtitle,
+    required double value,
+    required double min,
+    required double max,
+    required int divisions,
+    required String label,
+    required ValueChanged<double> onChanged,
+    required ValueChanged<double> onChangeEnd,
+  }) {
+    return SettingsTile(
+      description: description,
+      subtitle: subtitle,
+      action: SizedBox(
+        width: 160,
+        child: Slider(
+          value: value,
+          min: min,
+          max: max,
+          divisions: divisions,
+          label: label,
+          onChanged: onChanged,
+          onChangeEnd: onChangeEnd,
+        ),
+      ),
     );
   }
 }
@@ -4597,62 +4765,70 @@ class _DesktopColorGroupState extends State<_DesktopColorGroup> {
             }),
           ),
         ),
-        if (!settings.desktopFollowThemeColor) ...[
-          const SizedBox(height: 16),
-          SettingsTile(
-            description: '明暗配色',
-            action: SegmentedButton<DesktopLyricBrightnessMode>(
-              showSelectedIcon: false,
-              segments: const [
-                ButtonSegment(
-                  value: DesktopLyricBrightnessMode.follow,
-                  label: Text('跟随'),
-                ),
-                ButtonSegment(
-                  value: DesktopLyricBrightnessMode.light,
-                  label: Text('浅色'),
-                ),
-                ButtonSegment(
-                  value: DesktopLyricBrightnessMode.dark,
-                  label: Text('深色'),
-                ),
-              ],
-              selected: {settings.desktopLyricBrightnessMode},
-              onSelectionChanged: (value) => _update(() {
-                settings.desktopLyricBrightnessMode = value.first;
-                settings.desktopPlayedColor = null;
-                settings.desktopUnplayedColor = null;
-                _playedOpacity = 1.0;
-                _unplayedOpacity = 1.0;
-              }),
-            ),
+        if (!settings.desktopFollowThemeColor) ..._customDesktopColorTiles(),
+      ],
+    );
+  }
+
+  List<Widget> _customDesktopColorTiles() {
+    return [
+      const SizedBox(height: 16),
+      _brightnessModeTile(),
+      const SizedBox(height: 16),
+      _DesktopColorSetting(
+        label: '已播放颜色',
+        color: settings.desktopPlayedColor,
+        opacity: _playedOpacity,
+        onPickColor: () => _pickDesktopColor(
+          settings.desktopPlayedColor,
+          _playedOpacity,
+          (color) => settings.desktopPlayedColor = color,
+          (opacity) => _playedOpacity = opacity,
+        ),
+      ),
+      const SizedBox(height: 16),
+      _DesktopColorSetting(
+        label: '未播放颜色',
+        color: settings.desktopUnplayedColor,
+        opacity: _unplayedOpacity,
+        onPickColor: () => _pickDesktopColor(
+          settings.desktopUnplayedColor,
+          _unplayedOpacity,
+          (color) => settings.desktopUnplayedColor = color,
+          (opacity) => _unplayedOpacity = opacity,
+        ),
+      ),
+    ];
+  }
+
+  Widget _brightnessModeTile() {
+    return SettingsTile(
+      description: '明暗配色',
+      action: SegmentedButton<DesktopLyricBrightnessMode>(
+        showSelectedIcon: false,
+        segments: const [
+          ButtonSegment(
+            value: DesktopLyricBrightnessMode.follow,
+            label: Text('跟随'),
           ),
-          const SizedBox(height: 16),
-          _DesktopColorSetting(
-            label: '已播放颜色',
-            color: settings.desktopPlayedColor,
-            opacity: _playedOpacity,
-            onPickColor: () => _pickDesktopColor(
-              settings.desktopPlayedColor,
-              _playedOpacity,
-              (color) => settings.desktopPlayedColor = color,
-              (opacity) => _playedOpacity = opacity,
-            ),
+          ButtonSegment(
+            value: DesktopLyricBrightnessMode.light,
+            label: Text('浅色'),
           ),
-          const SizedBox(height: 16),
-          _DesktopColorSetting(
-            label: '未播放颜色',
-            color: settings.desktopUnplayedColor,
-            opacity: _unplayedOpacity,
-            onPickColor: () => _pickDesktopColor(
-              settings.desktopUnplayedColor,
-              _unplayedOpacity,
-              (color) => settings.desktopUnplayedColor = color,
-              (opacity) => _unplayedOpacity = opacity,
-            ),
+          ButtonSegment(
+            value: DesktopLyricBrightnessMode.dark,
+            label: Text('深色'),
           ),
         ],
-      ],
+        selected: {settings.desktopLyricBrightnessMode},
+        onSelectionChanged: (value) => _update(() {
+          settings.desktopLyricBrightnessMode = value.first;
+          settings.desktopPlayedColor = null;
+          settings.desktopUnplayedColor = null;
+          _playedOpacity = 1.0;
+          _unplayedOpacity = 1.0;
+        }),
+      ),
     );
   }
 }

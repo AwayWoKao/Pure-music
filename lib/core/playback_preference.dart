@@ -73,51 +73,64 @@ class PlaybackPreference {
 
   factory PlaybackPreference.fromMap(Object? value) {
     final map = value is Map ? value : const <String, dynamic>{};
-    final lastPlaylistPaths = _normalizedPathStringList(
-      map['lastPlaylistPaths'],
-    );
-    final lastPlaylistIndex = _normalizedBoundedInt(
-      map['lastPlaylistIndex'],
-      defaultValue: 0,
-      min: 0,
-      max: lastPlaylistPaths.isEmpty ? 0 : lastPlaylistPaths.length - 1,
-    );
-    final lastOriginalPlaylistPaths = _normalizedPathStringList(
-      map['lastOriginalPlaylistPaths'],
-    );
-    final storedEqBandVersion = _normalizedBoundedInt(
-      map['eqBandModelVersion'],
-      defaultValue: legacyEqBandModelVersion,
-      min: legacyEqBandModelVersion,
-      max: currentEqBandModelVersion,
-    );
+    final session = _sessionFromMap(map);
+    final eq = _eqFromMap(map);
+    final transition = _transitionFromMap(map);
     return PlaybackPreference(
       _playModeFromStoredValue(map['playMode']) ?? PlayMode.forward,
       _normalizedVolumeDsp(map['volumeDsp']),
-      migrateEqGains(map['eqGains'], fromVersion: storedEqBandVersion),
-      _eqPresetsFromStoredValue(map['eqPresets']),
+      eq.gains,
+      eq.presets,
       eqBandModelVersion: currentEqBandModelVersion,
-      eqEnabled: _normalizedBool(map['eqEnabled'], defaultValue: true),
-      audioDspSettings: AudioDspSettings.fromMap(map['audioDspSettings']),
-      eqPreampDb: normalizedEqPreampDb(map['eqPreampDb']),
-      eqAutoGainEnabled: _normalizedBool(
-        map['eqAutoGainEnabled'],
-        defaultValue: true,
-      ),
-      eqAutoHeadroomDb: _normalizedBoundedDouble(
-        map['eqAutoHeadroomDb'],
-        defaultValue: 1.0,
-        min: 0.0,
-        max: 24.0,
-      ),
+      eqEnabled: eq.enabled,
+      audioDspSettings: eq.dsp,
+      eqPreampDb: eq.preampDb,
+      eqAutoGainEnabled: eq.autoGainEnabled,
+      eqAutoHeadroomDb: eq.autoHeadroomDb,
+      lastAudioPath: session.lastAudioPath,
+      lastPlaylistPaths: session.lastPlaylistPaths,
+      lastPlaylistIndex: session.lastPlaylistIndex,
+      lastShuffleActive: session.lastShuffleActive,
+      lastOriginalPlaylistPaths: session.lastOriginalPlaylistPaths,
+      lastPositionSeconds: session.lastPositionSeconds,
+      reinitOnSetSource: session.reinitOnSetSource,
+      replayGainEnabled: session.replayGainEnabled,
+      transitionMode: transition.mode,
+      transitionFadeOutMs: transition.fadeOutMs,
+      transitionFadeInMs: transition.fadeInMs,
+    );
+  }
+
+  static ({
+    String lastAudioPath,
+    List<String> lastPlaylistPaths,
+    int lastPlaylistIndex,
+    bool lastShuffleActive,
+    List<String> lastOriginalPlaylistPaths,
+    double lastPositionSeconds,
+    bool reinitOnSetSource,
+    bool replayGainEnabled,
+  })
+  _sessionFromMap(Map map) {
+    final lastPlaylistPaths = _normalizedPathStringList(
+      map['lastPlaylistPaths'],
+    );
+    return (
       lastAudioPath: _normalizedPathString(map['lastAudioPath']),
       lastPlaylistPaths: lastPlaylistPaths,
-      lastPlaylistIndex: lastPlaylistIndex,
+      lastPlaylistIndex: _normalizedBoundedInt(
+        map['lastPlaylistIndex'],
+        defaultValue: 0,
+        min: 0,
+        max: lastPlaylistPaths.isEmpty ? 0 : lastPlaylistPaths.length - 1,
+      ),
       lastShuffleActive: _normalizedBool(
         map['lastShuffleActive'],
         defaultValue: false,
       ),
-      lastOriginalPlaylistPaths: lastOriginalPlaylistPaths,
+      lastOriginalPlaylistPaths: _normalizedPathStringList(
+        map['lastOriginalPlaylistPaths'],
+      ),
       lastPositionSeconds: _normalizedBoundedDouble(
         map['lastPositionSeconds'],
         defaultValue: 0.0,
@@ -132,19 +145,66 @@ class PlaybackPreference {
         map['replayGainEnabled'],
         defaultValue: false,
       ),
-      transitionMode: _transitionModeFromStored(map),
-      transitionFadeOutMs: _normalizedBoundedInt(
+    );
+  }
+
+  static ({
+    List<double> gains,
+    List<EqPreset> presets,
+    bool enabled,
+    AudioDspSettings dsp,
+    double preampDb,
+    bool autoGainEnabled,
+    double autoHeadroomDb,
+  })
+  _eqFromMap(Map map) {
+    return (
+      gains: migrateEqGains(
+        map['eqGains'],
+        fromVersion: _storedEqBandVersion(map),
+      ),
+      presets: _eqPresetsFromStoredValue(map['eqPresets']),
+      enabled: _normalizedBool(map['eqEnabled'], defaultValue: true),
+      dsp: AudioDspSettings.fromMap(map['audioDspSettings']),
+      preampDb: normalizedEqPreampDb(map['eqPreampDb']),
+      autoGainEnabled: _normalizedBool(
+        map['eqAutoGainEnabled'],
+        defaultValue: true,
+      ),
+      autoHeadroomDb: _normalizedBoundedDouble(
+        map['eqAutoHeadroomDb'],
+        defaultValue: 1.0,
+        min: 0.0,
+        max: 24.0,
+      ),
+    );
+  }
+
+  static ({TransitionMode mode, int fadeOutMs, int fadeInMs})
+  _transitionFromMap(Map map) {
+    return (
+      mode: _transitionModeFromStored(map),
+      fadeOutMs: _normalizedBoundedInt(
         map['transitionFadeOutMs'],
         defaultValue: 300,
         min: 0,
         max: 10000,
       ),
-      transitionFadeInMs: _normalizedBoundedInt(
+      fadeInMs: _normalizedBoundedInt(
         map['transitionFadeInMs'],
         defaultValue: 200,
         min: 0,
         max: 10000,
       ),
+    );
+  }
+
+  static int _storedEqBandVersion(Map map) {
+    return _normalizedBoundedInt(
+      map['eqBandModelVersion'],
+      defaultValue: legacyEqBandModelVersion,
+      min: legacyEqBandModelVersion,
+      max: currentEqBandModelVersion,
     );
   }
 }

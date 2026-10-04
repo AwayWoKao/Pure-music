@@ -116,7 +116,14 @@ class AppPreference {
 
   void applyStoredMap(Map prefMap) {
     _rawPrefMap = prefMap;
+    _applyPagePrefs(prefMap);
+    _applyChromePrefs(prefMap);
+    _applyNowPlayingPrefs(prefMap);
+    _applyUpdatePrefs(prefMap);
+    _applyFolderPrefs(prefMap);
+  }
 
+  void _applyPagePrefs(Map prefMap) {
     audiosPagePref = PagePreference.fromMap(prefMap['audiosPagePref']);
     artistsPagePref = PagePreference.fromMap(prefMap['artistsPagePref']);
     artistDetailPagePref = PagePreference.fromMap(
@@ -134,6 +141,9 @@ class AppPreference {
     playlistDetailPagePref = PagePreference.fromMap(
       prefMap['playlistDetailPagePref'],
     );
+  }
+
+  void _applyChromePrefs(Map prefMap) {
     startPage = _normalizedBoundedInt(
       prefMap['startPage'],
       defaultValue: 0,
@@ -160,6 +170,9 @@ class AppPreference {
       min: 0.5,
       max: 2.0,
     );
+  }
+
+  void _applyNowPlayingPrefs(Map prefMap) {
     playbackPref = PlaybackPreference.fromMap(prefMap['playbackPref']);
     nowPlayingPagePref = NowPlayingPagePreference.fromMap(
       prefMap['nowPlayingPagePref'],
@@ -170,6 +183,9 @@ class AppPreference {
         nowPlayingPagePref.dynamicFlowingLight;
     _nowPlayingAudioReactiveFlowNotifier?.value =
         nowPlayingPagePref.audioReactiveFlow;
+  }
+
+  void _applyUpdatePrefs(Map prefMap) {
     customCpFeedbackKey = _normalizedString(prefMap['customCpFeedbackKey']);
     updateRepoSlug = _normalizedNonEmptyString(
       prefMap['updateRepoSlug'],
@@ -190,6 +206,9 @@ class AppPreference {
     updateCheckUrls = storedUpdateUrls.isEmpty
         ? List.of(defaultUpdateCheckUrls)
         : storedUpdateUrls;
+  }
+
+  void _applyFolderPrefs(Map prefMap) {
     userFolders = _normalizedFolderPathList(prefMap['userFolders']);
     excludedFolderPaths = _normalizedFolderPathList(
       prefMap['excludedFolderPaths'],
@@ -299,7 +318,10 @@ class AppPreference {
       await instance.loadPlaybackOnly();
 
       if (instance.userFolders.isEmpty) {
-        log.settings.info('legacy', 'userFolders is empty, will be set after first folder scan');
+        log.settings.info(
+          'legacy',
+          'userFolders is empty, will be set after first folder scan',
+        );
       }
     } catch (err, trace) {
       log.settings.error('legacy', err.toString(), stackTrace: trace);

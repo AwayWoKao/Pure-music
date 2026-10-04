@@ -105,6 +105,64 @@ class WindowLifecycleService with WindowListener, TrayListener {
     desktopLyric.addListener(_refreshTrayContent);
   }
 
+  String _trayModeText(bool shuffle, PlayMode? playMode) {
+    return switch (true) {
+      _ when shuffle => '随机播放',
+      _ when playMode == PlayMode.singleLoop => '单曲循环',
+      _ => '顺序播放',
+    };
+  }
+
+  String _trayStatusText(Audio? nowPlaying) {
+    if (nowPlaying == null) {
+      return '未在播放';
+    }
+    return '${nowPlaying.title} - ${nowPlaying.artist}';
+  }
+
+  String _trayToolTip(bool hasSession, String statusText) {
+    if (!hasSession) return 'Pure Music';
+    if (statusText.length <= 127) return statusText;
+    return '${statusText.substring(0, 126)}…';
+  }
+
+  Menu _trayMenu({
+    required String statusText,
+    required bool hasSession,
+    required bool isPlaying,
+    required bool desktopLyricRunning,
+    required bool desktopLyricLocked,
+    required String modeText,
+  }) {
+    return Menu(
+      items: [
+      MenuItem(key: 'now_playing', label: statusText, disabled: !hasSession),
+      MenuItem.separator(),
+      MenuItem(key: 'show_window', label: '显示主窗口'),
+      MenuItem(
+        key: 'toggle_desktop_lyric',
+        label: desktopLyricRunning ? '关闭桌面歌词' : '打开桌面歌词',
+      ),
+      if (desktopLyricRunning && desktopLyricLocked)
+        MenuItem(key: 'unlock_desktop_lyric', label: '解锁桌面歌词'),
+      MenuItem(
+        key: 'cycle_play_mode',
+        label: '播放模式：$modeText',
+        disabled: !hasSession,
+      ),
+      MenuItem(key: 'prev', label: '上一曲', disabled: !hasSession),
+      MenuItem(
+        key: 'play_pause',
+        label: isPlaying ? '暂停' : '播放',
+        disabled: !hasSession,
+      ),
+      MenuItem(key: 'next', label: '下一曲', disabled: !hasSession),
+      MenuItem.separator(),
+      MenuItem(key: 'exit_app', label: '退出'),
+      ],
+    );
+  }
+
   void _refreshTrayContent({bool popUpMenu = false}) {
     _bindPlaybackListenersIfAvailable();
     _bindDesktopLyricListenersIfAvailable();
@@ -115,47 +173,19 @@ class WindowLifecycleService with WindowListener, TrayListener {
     final desktopLyric = PlayService.existingDesktopLyricService;
     final desktopLyricRunning = desktopLyric?.isRunning ?? false;
     final desktopLyricLocked = desktopLyric?.isLocked ?? false;
-    final shuffle = playback?.shuffle.value ?? false;
-    final playMode = playback?.playMode.value;
-    final modeText = switch (true) {
-      _ when shuffle => '随机播放',
-      _ when playMode == PlayMode.singleLoop => '单曲循环',
-      _ => '顺序播放',
-    };
-    final statusText = nowPlaying == null
-        ? '未在播放'
-        : '${nowPlaying.title} - ${nowPlaying.artist}';
-    final toolTip = hasSession
-        ? (statusText.length <= 127
-              ? statusText
-              : '${statusText.substring(0, 126)}…')
-        : 'Pure Music';
-    final menu = Menu(
-      items: [
-        MenuItem(key: 'now_playing', label: statusText, disabled: !hasSession),
-        MenuItem.separator(),
-        MenuItem(key: 'show_window', label: '显示主窗口'),
-        MenuItem(
-          key: 'toggle_desktop_lyric',
-          label: desktopLyricRunning ? '关闭桌面歌词' : '打开桌面歌词',
-        ),
-        if (desktopLyricRunning && desktopLyricLocked)
-          MenuItem(key: 'unlock_desktop_lyric', label: '解锁桌面歌词'),
-        MenuItem(
-          key: 'cycle_play_mode',
-          label: '播放模式：$modeText',
-          disabled: !hasSession,
-        ),
-        MenuItem(key: 'prev', label: '上一曲', disabled: !hasSession),
-        MenuItem(
-          key: 'play_pause',
-          label: isPlaying ? '暂停' : '播放',
-          disabled: !hasSession,
-        ),
-        MenuItem(key: 'next', label: '下一曲', disabled: !hasSession),
-        MenuItem.separator(),
-        MenuItem(key: 'exit_app', label: '退出'),
-      ],
+    final statusText = _trayStatusText(nowPlaying);
+    final modeText = _trayModeText(
+      playback?.shuffle.value ?? false,
+      playback?.playMode.value,
+    );
+    final toolTip = _trayToolTip(hasSession, statusText);
+    final menu = _trayMenu(
+      statusText: statusText,
+      hasSession: hasSession,
+      isPlaying: isPlaying,
+      desktopLyricRunning: desktopLyricRunning,
+      desktopLyricLocked: desktopLyricLocked,
+      modeText: modeText,
     );
     _trayOperation = _trayOperation.catchError((_) {}).then((_) async {
       try {

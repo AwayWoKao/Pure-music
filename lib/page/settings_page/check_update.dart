@@ -31,24 +31,9 @@ Future<UpdateChannel?> _showUpdateChannelDialog(
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            RadioGroup<UpdateChannel>(
-              groupValue: current,
+            _UpdateChannelList(
+              current: current,
               onChanged: (value) => setDialogState(() => current = value),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  RadioListTile<UpdateChannel>(
-                    value: UpdateChannel.github,
-                    title: Text(UpdateChannel.github.label),
-                    subtitle: const Text('从 GitHub 获取版本和安装包'),
-                  ),
-                  RadioListTile<UpdateChannel>(
-                    value: UpdateChannel.gitee,
-                    title: Text(UpdateChannel.gitee.label),
-                    subtitle: const Text('从 Gitee 获取版本和安装包'),
-                  ),
-                ],
-              ),
             ),
           ],
         ),
@@ -158,16 +143,9 @@ class _NewestUpdateViewState extends State<NewestUpdateView> {
       portableBuild: portableBuild,
     );
     if (downloadUrl == null || downloadUrl.isEmpty) {
-      if (_updateUrl != null) {
-        await _openReleasePage();
-        if (!mounted) return;
-        Navigator.pop(context);
-      } else if (mounted) {
-        showTextOnSnackBar('缺少下载地址', variant: ToastVariant.error);
-      }
+      await _missingDownloadUrl();
       return;
     }
-
     final cancelToken = CancelToken();
     _cancelToken = cancelToken;
     setState(() {
@@ -176,7 +154,22 @@ class _NewestUpdateViewState extends State<NewestUpdateView> {
       _received = 0;
       _total = _info.downloadSize(portableBuild: portableBuild) ?? 0;
     });
+    await _runInstaller(cancelToken);
+  }
 
+  Future<void> _missingDownloadUrl() async {
+    if (_updateUrl != null) {
+      await _openReleasePage();
+      if (!mounted) return;
+      Navigator.pop(context);
+      return;
+    }
+    if (mounted) {
+      showTextOnSnackBar('缺少下载地址', variant: ToastVariant.error);
+    }
+  }
+
+  Future<void> _runInstaller(CancelToken cancelToken) async {
     try {
       final outcome = await UpdateInstaller.run(
         info: _info,
@@ -189,22 +182,7 @@ class _NewestUpdateViewState extends State<NewestUpdateView> {
             if (total > 0) _total = total;
           });
         },
-        onPhase: (phase) {
-          if (!mounted) return;
-          setState(() {
-            if (phase == '正在解压更新') {
-              _phase = _UpdatePhase.preparing;
-            } else if (phase == '正在校验') {
-              _phase = _UpdatePhase.verifying;
-            } else if (phase == '正在启动安装程序') {
-              _phase = _UpdatePhase.installing;
-            } else if (phase == '正在切换版本') {
-              _phase = _UpdatePhase.installing;
-            } else {
-              _phase = _UpdatePhase.downloading;
-            }
-          });
-        },
+        onPhase: _applyInstallerPhase,
       );
       if (outcome == UpdateInstallOutcome.portableStarted && mounted) {
         Navigator.pop(context);
@@ -220,6 +198,21 @@ class _NewestUpdateViewState extends State<NewestUpdateView> {
     } catch (_) {
       await _fail('更新失败');
     }
+  }
+
+  void _applyInstallerPhase(String phase) {
+    if (!mounted) return;
+    setState(() {
+      if (phase == '正在解压更新') {
+        _phase = _UpdatePhase.preparing;
+      } else if (phase == '正在校验') {
+        _phase = _UpdatePhase.verifying;
+      } else if (phase == '正在启动安装程序' || phase == '正在切换版本') {
+        _phase = _UpdatePhase.installing;
+      } else {
+        _phase = _UpdatePhase.downloading;
+      }
+    });
   }
 
   Future<void> _openReleasePage() async {
@@ -244,33 +237,9 @@ class _NewestUpdateViewState extends State<NewestUpdateView> {
       _phase = _UpdatePhase.switchingChannel;
       _errorMessage = null;
     });
-
-    final preference = AppPreference.instance;
-    final previous = preference.updateChannel;
-    preference.updateChannel = target.name;
-    if (!await preference.save()) {
-      preference.updateChannel = previous;
-      if (mounted) {
-        setState(() {
-          _phase = _UpdatePhase.error;
-          _errorMessage = '保存更新渠道失败';
-        });
-      }
-      return;
-    }
-
+    if (!await _persistUpdateChannel(target)) return;
     try {
-      final newest = await UpdateChecker.checkForUpdate(channel: target);
-      if (newest == null ||
-          !UpdateChecker.hasNewVersion(newest.tagName, AppSettings.version)) {
-        throw UpdateInstallException('${target.label}暂未提供可用的新版本');
-      }
-      if (newest
-              .downloadUrl(channel: target, portableBuild: portableBuild)
-              ?.isNotEmpty !=
-          true) {
-        throw UpdateInstallException('${target.label}暂未提供对应安装包');
-      }
+      final newest = await _newestForChannel(target);
       if (!mounted) return;
       setState(() {
         _channel = target;
@@ -288,6 +257,36 @@ class _NewestUpdateViewState extends State<NewestUpdateView> {
             : '无法从${target.label}获取更新';
       });
     }
+  }
+
+  Future<bool> _persistUpdateChannel(UpdateChannel target) async {
+    final preference = AppPreference.instance;
+    final previous = preference.updateChannel;
+    preference.updateChannel = target.name;
+    if (await preference.save()) return true;
+    preference.updateChannel = previous;
+    if (mounted) {
+      setState(() {
+        _phase = _UpdatePhase.error;
+        _errorMessage = '保存更新渠道失败';
+      });
+    }
+    return false;
+  }
+
+  Future<UpdateInfo> _newestForChannel(UpdateChannel target) async {
+    final newest = await UpdateChecker.checkForUpdate(channel: target);
+    if (newest == null ||
+        !UpdateChecker.hasNewVersion(newest.tagName, AppSettings.version)) {
+      throw UpdateInstallException('${target.label}暂未提供可用的新版本');
+    }
+    if (newest
+            .downloadUrl(channel: target, portableBuild: portableBuild)
+            ?.isNotEmpty !=
+        true) {
+      throw UpdateInstallException('${target.label}暂未提供对应安装包');
+    }
+    return newest;
   }
 
   void _cancel() {
@@ -348,9 +347,6 @@ class _NewestUpdateViewState extends State<NewestUpdateView> {
     final size = MediaQuery.sizeOf(context);
     final width = (size.width - 48.0).clamp(320.0, 720.0).toDouble();
     final height = (size.height - 96.0).clamp(360.0, 640.0).toDouble();
-    final updateUrl = _updateUrl;
-    final hasUpdateUrl = updateUrl?.isNotEmpty == true;
-
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(
         horizontal: 24.0,
@@ -365,143 +361,196 @@ class _NewestUpdateViewState extends State<NewestUpdateView> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                '有新更新',
-                style: TextStyle(
-                  color: scheme.onSurface,
-                  fontSize: AppType.hero,
-                  fontWeight: AppType.weightBold,
-                  letterSpacing: -0.3,
-                ),
-              ),
-              const SizedBox(height: Spacing.xs),
-              Text(
-                '更新渠道：${_channel.label}',
-                style: TextStyle(
-                  color: scheme.onSurfaceVariant,
-                  fontSize: AppType.body,
-                ),
-              ),
+              _header(scheme),
               const SizedBox(height: Spacing.md),
-              Expanded(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: scheme.surfaceContainerHighest.withValues(
-                      alpha: 0.5,
-                    ),
-                    borderRadius: AppRadius.mdCircular,
-                    border: Border.all(color: scheme.outlineVariant),
-                  ),
-                  child: Markdown(
-                    data: _info.body?.trim().isNotEmpty == true
-                        ? _info.body!
-                        : '这个版本暂时没有更新说明。',
-                    onTapLink: (text, href, title) {
-                      if (href != null) {
-                        _launchBrowserUrl(href);
-                      }
-                    },
-                    padding: const EdgeInsets.all(Spacing.md),
-                    styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)),
-                  ),
-                ),
-              ),
-              if (_busy) ...[
-                const SizedBox(height: Spacing.md),
-                ClipRRect(
-                  borderRadius: AppRadius.smCircular,
-                  child: LinearProgressIndicator(
-                    value: _phase == _UpdatePhase.downloading && _total > 0
-                        ? (_received / _total).clamp(0.0, 1.0)
-                        : null,
-                    minHeight: 6,
-                  ),
-                ),
-                const SizedBox(height: Spacing.sm),
-                Text(
-                  _statusLabel,
-                  style: TextStyle(
-                    color: scheme.onSurfaceVariant,
-                    fontSize: AppType.body,
-                  ),
-                ),
-              ],
-              if (_phase == _UpdatePhase.error && _errorMessage != null) ...[
-                const SizedBox(height: Spacing.sm),
-                Text(
-                  _errorMessage!,
-                  style: TextStyle(color: scheme.error, fontSize: AppType.body),
-                ),
-              ],
+              Expanded(child: _changelog(context, scheme)),
+              if (_busy) ..._progress(scheme),
+              if (_phase == _UpdatePhase.error && _errorMessage != null)
+                ..._error(scheme),
               const SizedBox(height: Spacing.lg),
-              OverflowBar(
-                alignment: MainAxisAlignment.end,
-                spacing: Spacing.sm,
-                overflowSpacing: Spacing.sm,
-                children: [
-                  TextButton(
-                    onPressed: () {
-                      if (_busy) {
-                        _cancel();
-                        return;
-                      }
-                      Navigator.pop(context);
-                    },
-                    child: Text(_busy ? '取消' : '关闭'),
-                  ),
-                  if (_phase == _UpdatePhase.error)
-                    OutlinedButton.icon(
-                      onPressed: _switchChannelAndRetry,
-                      icon: const Icon(Symbols.swap_horiz, size: 18),
-                      label: Text('切换到${_channel.alternate.label}'),
-                    ),
-                  if (!_hasDownload && !hasUpdateUrl)
-                    FilledButton.icon(
-                      onPressed: null,
-                      icon: const Icon(Symbols.arrow_outward),
-                      label: const Text('获取更新'),
-                    )
-                  else if (_busy)
-                    FilledButton.icon(
-                      onPressed: null,
-                      icon: const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                      label: const Text('处理中'),
-                    )
-                  else
-                    FilledButton.icon(
-                      onPressed: _hasDownload
-                          ? _startUpdate
-                          : () async {
-                              await _openReleasePage();
-                              if (context.mounted) Navigator.pop(context);
-                            },
-                      icon: Icon(
-                        _hasDownload ? Symbols.download : Symbols.arrow_outward,
-                      ),
-                      label: Text(
-                        _hasDownload
-                            ? (portableBuild ? '下载更新' : '下载并安装')
-                            : '打开网页',
-                      ),
-                    ),
-                  if (hasUpdateUrl && _hasDownload && !_busy)
-                    TextButton.icon(
-                      onPressed: () async {
-                        await _openReleasePage();
-                        if (context.mounted) Navigator.pop(context);
-                      },
-                      icon: const Icon(Symbols.arrow_outward, size: 18),
-                      label: const Text('打开网页'),
-                    ),
-                ],
-              ),
+              _actions(context),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _header(ColorScheme scheme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '有新更新',
+          style: TextStyle(
+            color: scheme.onSurface,
+            fontSize: AppType.hero,
+            fontWeight: AppType.weightBold,
+            letterSpacing: -0.3,
+          ),
+        ),
+        const SizedBox(height: Spacing.xs),
+        Text(
+          '更新渠道：${_channel.label}',
+          style: TextStyle(
+            color: scheme.onSurfaceVariant,
+            fontSize: AppType.body,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _changelog(BuildContext context, ColorScheme scheme) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        borderRadius: AppRadius.mdCircular,
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Markdown(
+        data: _info.body?.trim().isNotEmpty == true
+            ? _info.body!
+            : '这个版本暂时没有更新说明。',
+        onTapLink: (text, href, title) {
+          if (href != null) {
+            _launchBrowserUrl(href);
+          }
+        },
+        padding: const EdgeInsets.all(Spacing.md),
+        styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)),
+      ),
+    );
+  }
+
+  List<Widget> _progress(ColorScheme scheme) {
+    return [
+      const SizedBox(height: Spacing.md),
+      ClipRRect(
+        borderRadius: AppRadius.smCircular,
+        child: LinearProgressIndicator(
+          value: _phase == _UpdatePhase.downloading && _total > 0
+              ? (_received / _total).clamp(0.0, 1.0)
+              : null,
+          minHeight: 6,
+        ),
+      ),
+      const SizedBox(height: Spacing.sm),
+      Text(
+        _statusLabel,
+        style: TextStyle(
+          color: scheme.onSurfaceVariant,
+          fontSize: AppType.body,
+        ),
+      ),
+    ];
+  }
+
+  List<Widget> _error(ColorScheme scheme) {
+    return [
+      const SizedBox(height: Spacing.sm),
+      Text(
+        _errorMessage!,
+        style: TextStyle(color: scheme.error, fontSize: AppType.body),
+      ),
+    ];
+  }
+
+  Widget _actions(BuildContext context) {
+    final updateUrl = _updateUrl;
+    final hasUpdateUrl = updateUrl?.isNotEmpty == true;
+    return OverflowBar(
+      alignment: MainAxisAlignment.end,
+      spacing: Spacing.sm,
+      overflowSpacing: Spacing.sm,
+      children: [
+        TextButton(
+          onPressed: () {
+            if (_busy) {
+              _cancel();
+              return;
+            }
+            Navigator.pop(context);
+          },
+          child: Text(_busy ? '取消' : '关闭'),
+        ),
+        if (_phase == _UpdatePhase.error)
+          OutlinedButton.icon(
+            onPressed: _switchChannelAndRetry,
+            icon: const Icon(Symbols.swap_horiz, size: 18),
+            label: Text('切换到${_channel.alternate.label}'),
+          ),
+        _primaryAction(context, hasUpdateUrl),
+        if (hasUpdateUrl && _hasDownload && !_busy)
+          TextButton.icon(
+            onPressed: () async {
+              await _openReleasePage();
+              if (context.mounted) Navigator.pop(context);
+            },
+            icon: const Icon(Symbols.arrow_outward, size: 18),
+            label: const Text('打开网页'),
+          ),
+      ],
+    );
+  }
+
+  Widget _primaryAction(BuildContext context, bool hasUpdateUrl) {
+    if (!_hasDownload && !hasUpdateUrl) {
+      return FilledButton.icon(
+        onPressed: null,
+        icon: const Icon(Symbols.arrow_outward),
+        label: const Text('获取更新'),
+      );
+    }
+    if (_busy) {
+      return FilledButton.icon(
+        onPressed: null,
+        icon: const SizedBox(
+          width: 16,
+          height: 16,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+        label: const Text('处理中'),
+      );
+    }
+    return FilledButton.icon(
+      onPressed: _hasDownload
+          ? _startUpdate
+          : () async {
+              await _openReleasePage();
+              if (context.mounted) Navigator.pop(context);
+            },
+      icon: Icon(_hasDownload ? Symbols.download : Symbols.arrow_outward),
+      label: Text(_hasDownload ? (portableBuild ? '下载更新' : '下载并安装') : '打开网页'),
+    );
+  }
+}
+
+class _UpdateChannelList extends StatelessWidget {
+  const _UpdateChannelList({required this.current, required this.onChanged});
+
+  final UpdateChannel? current;
+  final ValueChanged<UpdateChannel?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return RadioGroup<UpdateChannel>(
+      groupValue: current,
+      onChanged: onChanged,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          RadioListTile<UpdateChannel>(
+            value: UpdateChannel.github,
+            title: Text(UpdateChannel.github.label),
+            subtitle: const Text('从 GitHub 获取版本和安装包'),
+          ),
+          RadioListTile<UpdateChannel>(
+            value: UpdateChannel.gitee,
+            title: Text(UpdateChannel.gitee.label),
+            subtitle: const Text('从 Gitee 获取版本和安装包'),
+          ),
+        ],
       ),
     );
   }

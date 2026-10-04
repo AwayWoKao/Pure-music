@@ -383,10 +383,13 @@ class _UniPageState<T> extends State<UniPage<T>> {
     final indexStopwatch = Stopwatch()..start();
     _rememberPreparedPageOrder();
     indexStopwatch.stop();
-    log.library.debug('legacy', '[perf] page prepare title=${widget.title} reason=$reason '
-      'items=${widget.contentList.length} '
-      'sort=${sortStopwatch.elapsedMicroseconds}us '
-      'pathIndex=${indexStopwatch.elapsedMicroseconds}us',);
+    log.library.debug(
+      'legacy',
+      '[perf] page prepare title=${widget.title} reason=$reason '
+          'items=${widget.contentList.length} '
+          'sort=${sortStopwatch.elapsedMicroseconds}us '
+          'pathIndex=${indexStopwatch.elapsedMicroseconds}us',
+    );
   }
 
   void _cancelBackgroundSort() {
@@ -408,52 +411,7 @@ class _UniPageState<T> extends State<UniPage<T>> {
     _backgroundSortWorkerActive = true;
     try {
       while (mounted && _backgroundSortPending) {
-        _backgroundSortPending = false;
-        final request = _sortRequest;
-        final backgroundMethod = currSortMethod?.backgroundMethod;
-        if (backgroundMethod == null ||
-            widget.contentList.length < _backgroundSortItemThreshold) {
-          continue;
-        }
-        final reason = _pendingSortReason;
-        final order = currSortOrder;
-        final source = widget.contentList;
-        final sortStopwatch = Stopwatch()..start();
-        late final List<T>? sorted;
-        try {
-          sorted = await backgroundMethod(
-            source,
-            order,
-            PageSortControl(
-              isCurrent: () => mounted && request == _sortRequest,
-              batchSize: () => libraryObjectBatchSizeFor(
-                processorBudget: applicationProcessorBudget,
-                hasPlaybackSession: PlayService.instance.hasPlaybackSession,
-              ),
-            ),
-          );
-        } catch (error, trace) {
-          log.library.error('legacy', '后台页面排序失败', error: error, stackTrace: trace);
-          if (!mounted || request != _sortRequest) continue;
-          setState(() => _prepareContent(reason));
-          continue;
-        }
-        sortStopwatch.stop();
-        if (!mounted || request != _sortRequest) continue;
-        if (sorted == null || sorted.length != widget.contentList.length) {
-          setState(() => _prepareContent(reason));
-          continue;
-        }
-        final indexStopwatch = Stopwatch()..start();
-        widget.contentList.setAll(0, sorted);
-        _updateAlphabetSections();
-        _rememberPreparedPageOrder();
-        indexStopwatch.stop();
-        setState(() {});
-        log.library.debug('legacy', '[perf] page prepare title=${widget.title} reason=$reason '
-          'items=${widget.contentList.length} '
-          'sort=${sortStopwatch.elapsedMicroseconds}us '
-          'pathIndex=${indexStopwatch.elapsedMicroseconds}us background=true',);
+        await _runOneBackgroundSort();
       }
     } finally {
       _backgroundSortWorkerActive = false;
@@ -461,6 +419,86 @@ class _UniPageState<T> extends State<UniPage<T>> {
         unawaited(_runBackgroundSortWorker());
       }
     }
+  }
+
+  Future<void> _runOneBackgroundSort() async {
+    _backgroundSortPending = false;
+    final request = _sortRequest;
+    final backgroundMethod = currSortMethod?.backgroundMethod;
+    if (backgroundMethod == null ||
+        widget.contentList.length < _backgroundSortItemThreshold) {
+      return;
+    }
+    final reason = _pendingSortReason;
+    final order = currSortOrder;
+    final source = widget.contentList;
+    final sortStopwatch = Stopwatch()..start();
+    final sorted = await _invokeBackgroundSort(
+      backgroundMethod,
+      source,
+      order,
+      request,
+    );
+    sortStopwatch.stop();
+    if (!mounted || request != _sortRequest) return;
+    if (sorted == null || sorted.length != widget.contentList.length) {
+      _applyBackgroundSortFallback(request, reason);
+      return;
+    }
+    _applyBackgroundSortSuccess(
+      sorted: sorted,
+      reason: reason,
+      sortStopwatch: sortStopwatch,
+    );
+  }
+
+  Future<List<T>?> _invokeBackgroundSort(
+    BackgroundSortMethod<T> backgroundMethod,
+    List<T> source,
+    SortOrder order,
+    int request,
+  ) async {
+    try {
+      return await backgroundMethod(
+        source,
+        order,
+        PageSortControl(
+          isCurrent: () => mounted && request == _sortRequest,
+          batchSize: () => libraryObjectBatchSizeFor(
+            processorBudget: applicationProcessorBudget,
+            hasPlaybackSession: PlayService.instance.hasPlaybackSession,
+          ),
+        ),
+      );
+    } catch (error, trace) {
+      log.library.error('legacy', '后台页面排序失败', error: error, stackTrace: trace);
+      return null;
+    }
+  }
+
+  void _applyBackgroundSortFallback(int request, String reason) {
+    if (!mounted || request != _sortRequest) return;
+    setState(() => _prepareContent(reason));
+  }
+
+  void _applyBackgroundSortSuccess({
+    required List<T> sorted,
+    required String reason,
+    required Stopwatch sortStopwatch,
+  }) {
+    final indexStopwatch = Stopwatch()..start();
+    widget.contentList.setAll(0, sorted);
+    _updateAlphabetSections();
+    _rememberPreparedPageOrder();
+    indexStopwatch.stop();
+    setState(() {});
+    log.library.debug(
+      'legacy',
+      '[perf] page prepare title=${widget.title} reason=$reason '
+          'items=${widget.contentList.length} '
+          'sort=${sortStopwatch.elapsedMicroseconds}us '
+          'pathIndex=${indexStopwatch.elapsedMicroseconds}us background=true',
+    );
   }
 
   void _prepareIncomingContent(String reason) {
@@ -471,9 +509,12 @@ class _UniPageState<T> extends State<UniPage<T>> {
     final indexStopwatch = Stopwatch()..start();
     _updateAlphabetSections();
     indexStopwatch.stop();
-    log.library.debug('legacy', '[perf] page prepare title=${widget.title} reason=$reason '
-      'items=${widget.contentList.length} sort=0us '
-      'pathIndex=${indexStopwatch.elapsedMicroseconds}us cached=true',);
+    log.library.debug(
+      'legacy',
+      '[perf] page prepare title=${widget.title} reason=$reason '
+          'items=${widget.contentList.length} sort=0us '
+          'pathIndex=${indexStopwatch.elapsedMicroseconds}us cached=true',
+    );
   }
 
   void _updateAlphabetSections() {
@@ -782,111 +823,138 @@ class _UniPageState<T> extends State<UniPage<T>> {
       if (widget.contentList.isEmpty) {
         return _UniPageEmptyState(title: widget.title);
       }
-
-      final enableListMotion =
-          AppSettings.instance.enableStackedScrollEffect &&
-          !MediaQuery.disableAnimationsOf(context);
-      final enableStackedEffect =
+      final stacked =
           widget.enableStackedEffect &&
           AppSettings.instance.enableStackedScrollEffect;
-      final listView = enableStackedEffect
-          ? StackedListView(
-              controller: listScrollController,
-              itemExtent: 64,
-              itemCount: widget.contentList.length,
-              padding: const EdgeInsets.only(bottom: 96.0, right: 20),
-              itemBuilder: (context, i) => widget.contentBuilder(
-                context,
-                widget.contentList[i],
-                i,
-                multiSelectController,
-                ContentView.list,
-              ),
-            )
-          : ListView.builder(
-              controller: listScrollController,
-              physics: enableListMotion ? const SmoothScrollPhysics() : null,
-              padding: const EdgeInsets.only(bottom: 96.0, right: 20),
-              itemCount: widget.contentList.length,
-              itemExtent: 64,
-              itemBuilder: (context, i) => widget.contentBuilder(
-                context,
-                widget.contentList[i],
-                i,
-                multiSelectController,
-                ContentView.list,
-              ),
-            );
-      final tableView = enableStackedEffect
-          ? StackedGridView(
-              controller: tableScrollController,
-              gridDelegate:
-                  (widget.gridDelegate ?? gridDelegate)
-                      as SliverGridDelegateWithMaxCrossAxisExtent,
-              itemCount: widget.contentList.length,
-              padding: const EdgeInsets.only(bottom: 96.0, right: 20),
-              itemBuilder: (context, i) => widget.contentBuilder(
-                context,
-                widget.contentList[i],
-                i,
-                multiSelectController,
-                ContentView.table,
-              ),
-            )
-          : SidebarGridTransition(
-              controller: tableScrollController,
-              physics: enableListMotion ? const SmoothScrollPhysics() : null,
-              padding: const EdgeInsets.only(bottom: 96.0, right: 20),
-              gridDelegate: widget.gridDelegate ?? gridDelegate,
-              revision: (widget.contentRevision, currSortMethod, currSortOrder),
-              itemCount: widget.contentList.length,
-              itemBuilder: (context, i) => widget.contentBuilder(
-                context,
-                widget.contentList[i],
-                i,
-                multiSelectController,
-                ContentView.table,
-              ),
-            );
-      final tableMotionView = enableStackedEffect
-          ? SidebarFrozenViewport(child: tableView)
-          : tableView;
-
-      return LayoutBuilder(
-        builder: (context, constraints) {
-          final showAlphabetIndex = _alphabetSectionIndexes.length >= 3;
-          _contentCrossAxisExtent =
-              constraints.maxWidth - (showAlphabetIndex ? 32 : 0);
-          return Row(
-            children: [
-              Expanded(
-                child: MultiSelectPointerRegion<T>(
-                  controller: multiSelectController,
-                  child: widget.enableContentViewSwitch
-                      ? DirectionalTabView(
-                          index: currContentView == ContentView.list ? 0 : 1,
-                          children: [listView, tableMotionView],
-                        )
-                      : tableMotionView,
-                ),
-              ),
-              if (showAlphabetIndex)
-                AlphabetIndexBar(
-                  controller: scrollController,
-                  sectionIndexes: _alphabetSectionIndexes,
-                  indexForOffset: _indexForOffset,
-                  onSelectIndex: _jumpToIndex,
-                  onWheel: _forwardWheelToList,
-                  descending: currSortOrder == SortOrder.decending,
-                ),
-            ],
-          );
-        },
+      final listMotion =
+          AppSettings.instance.enableStackedScrollEffect &&
+          !MediaQuery.disableAnimationsOf(context);
+      final listView = _contentListView(
+        multiSelectController,
+        stacked,
+        listMotion,
+      );
+      final tableView = _contentTableView(
+        multiSelectController,
+        stacked,
+        listMotion,
+      );
+      return _contentRow(
+        multiSelectController,
+        listView,
+        SidebarFrozenViewport(child: tableView),
       );
     } finally {
       stopwatch.stop();
       uniPageContentAreaMicros += stopwatch.elapsed.inMicroseconds;
     }
+  }
+
+  Widget _contentListView(
+    MultiSelectController<T>? multiSelectController,
+    bool stacked,
+    bool listMotion,
+  ) {
+    Widget itemBuilder(BuildContext context, int i) => widget.contentBuilder(
+      context,
+      widget.contentList[i],
+      i,
+      multiSelectController,
+      ContentView.list,
+    );
+    if (stacked) {
+      return StackedListView(
+        controller: listScrollController,
+        itemExtent: 64,
+        itemCount: widget.contentList.length,
+        padding: const EdgeInsets.only(bottom: 96.0, right: 20),
+        itemBuilder: itemBuilder,
+      );
+    }
+    return ListView.builder(
+      controller: listScrollController,
+      physics: listMotion ? const SmoothScrollPhysics() : null,
+      padding: const EdgeInsets.only(bottom: 96.0, right: 20),
+      itemCount: widget.contentList.length,
+      itemExtent: 64,
+      itemBuilder: itemBuilder,
+    );
+  }
+
+  Widget _contentTableView(
+    MultiSelectController<T>? multiSelectController,
+    bool stacked,
+    bool listMotion,
+  ) {
+    Widget itemBuilder(BuildContext context, int i) => widget.contentBuilder(
+      context,
+      widget.contentList[i],
+      i,
+      multiSelectController,
+      ContentView.table,
+    );
+    if (stacked) {
+      return StackedGridView(
+        controller: tableScrollController,
+        gridDelegate:
+            (widget.gridDelegate ?? gridDelegate)
+                as SliverGridDelegateWithMaxCrossAxisExtent,
+        itemCount: widget.contentList.length,
+        padding: const EdgeInsets.only(bottom: 96.0, right: 20),
+        itemBuilder: itemBuilder,
+      );
+    }
+    return SidebarGridTransition(
+      controller: tableScrollController,
+      physics: listMotion ? const SmoothScrollPhysics() : null,
+      padding: const EdgeInsets.only(bottom: 96.0, right: 20),
+      gridDelegate: widget.gridDelegate ?? gridDelegate,
+      revision: (widget.contentRevision, currSortMethod, currSortOrder),
+      itemCount: widget.contentList.length,
+      itemBuilder: itemBuilder,
+    );
+  }
+
+
+  Widget _contentSwitcher(Widget listView, Widget tableMotionView) {
+    if (!widget.enableContentViewSwitch) return tableMotionView;
+    return DirectionalTabView(
+      index: currContentView == ContentView.list ? 0 : 1,
+      children: [listView, tableMotionView],
+    );
+  }
+
+  Widget _contentRow(
+    MultiSelectController<T>? multiSelectController,
+    Widget listView,
+    Widget tableMotionView,
+  ) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final showAlphabetIndex = _alphabetSectionIndexes.length >= 3;
+        _contentCrossAxisExtent =
+            constraints.maxWidth - (showAlphabetIndex ? 32 : 0);
+        return Row(
+          children: [
+            Expanded(
+              child: MultiSelectPointerRegion<T>(
+                controller: multiSelectController,
+                child: _contentSwitcher(listView, tableMotionView),
+              ),
+            ),
+            if (showAlphabetIndex)
+              AlphabetIndexBar(
+                controller: scrollController,
+                sectionIndexes: _alphabetSectionIndexes,
+                indexForOffset: _indexForOffset,
+                onSelectIndex: _jumpToIndex,
+                onWheel: _forwardWheelToList,
+                descending: currSortOrder == SortOrder.decending,
+              ),
+          ],
+        );
+      },
+    );
   }
 
   Widget result(
@@ -911,26 +979,7 @@ class _UniPageState<T> extends State<UniPage<T>> {
           child: Stack(
             children: [
               _buildContentArea(multiSelectController),
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                child: IgnorePointer(
-                  child: Container(
-                    height: 48,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.transparent,
-                          scheme.surfaceContainer.withValues(alpha: 0.06),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
+              _bottomFade(scheme),
               ListLocateButtons(
                 controller: scrollController,
                 locateTargetAt: _locateTargetAt,
@@ -938,6 +987,29 @@ class _UniPageState<T> extends State<UniPage<T>> {
                 onWheel: _forwardWheelToList,
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _bottomFade(ColorScheme scheme) {
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 0,
+      child: IgnorePointer(
+        child: Container(
+          height: 48,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Colors.transparent,
+                scheme.surfaceContainer.withValues(alpha: 0.06),
+              ],
+            ),
           ),
         ),
       ),

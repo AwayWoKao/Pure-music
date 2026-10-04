@@ -20,6 +20,69 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:pure_music/core/paths.dart' as app_paths;
 import 'package:path/path.dart' as p;
 
+void _sortFoldersByOrder(
+  List<AudioFolder> list,
+  SortOrder order,
+  int Function(AudioFolder a, AudioFolder b) compare,
+) {
+  switch (order) {
+    case SortOrder.ascending:
+      list.sort(compare);
+    case SortOrder.decending:
+      list.sort((a, b) => compare(b, a));
+  }
+}
+
+List<SortMethodDesc<AudioFolder>> _foldersSortMethods() {
+  return [
+    SortMethodDesc<AudioFolder>(
+      icon: Symbols.title,
+      name: '名称',
+      method: (list, order) => _sortFoldersByOrder(
+        list,
+        order,
+        (a, b) => a.displayName.localeCompareTo(b.displayName),
+      ),
+      backgroundMethod: (list, order, control) => sortPageByLocaleInBackground(
+        list,
+        (folder) => folder.displayName,
+        descending: order == SortOrder.decending,
+        control: control,
+      ),
+    ),
+    SortMethodDesc<AudioFolder>(
+      icon: Symbols.edit,
+      name: '修改日期',
+      method: (list, order) => _sortFoldersByOrder(
+        list,
+        order,
+        (a, b) => a.modified.compareTo(b.modified),
+      ),
+      backgroundMethod: (list, order, control) => sortPageByIntegerInBackground(
+        list,
+        (folder) => folder.modified,
+        descending: order == SortOrder.decending,
+        control: control,
+      ),
+    ),
+    SortMethodDesc<AudioFolder>(
+      icon: Symbols.music_note,
+      name: '歌曲数量',
+      method: (list, order) => _sortFoldersByOrder(
+        list,
+        order,
+        (a, b) => a.audios.length.compareTo(b.audios.length),
+      ),
+      backgroundMethod: (list, order, control) => sortPageByIntegerInBackground(
+        list,
+        (folder) => folder.audios.length,
+        descending: order == SortOrder.decending,
+        control: control,
+      ),
+    ),
+  ];
+}
+
 class FoldersPage extends StatefulWidget {
   const FoldersPage({super.key});
 
@@ -64,7 +127,10 @@ class _FoldersPageState extends State<FoldersPage> {
           (path) => AudioLibrary.instance.audioByPath(path) != null,
         );
       } else {
-        log.library.debug('legacy', '[perf] library refresh reload=skipped indexUnchanged=true');
+        log.library.debug(
+          'legacy',
+          '[perf] library refresh reload=skipped indexUnchanged=true',
+        );
       }
       if (mounted) {
         showTextOnSnackBar('已刷新');
@@ -84,38 +150,7 @@ class _FoldersPageState extends State<FoldersPage> {
       subtitle: '${contentList.length} 个文件夹',
       contentList: contentList,
       contentRevision: AudioLibrary.libraryVersion.value,
-      primaryAction: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (_updating)
-            const SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          else
-            OutlinedButton.icon(
-              onPressed: _refreshIndex,
-              icon: const Icon(Symbols.refresh, size: 18),
-              label: const Text('刷新'),
-              style: const ButtonStyle(
-                fixedSize: WidgetStatePropertyAll(Size.fromHeight(40)),
-              ),
-            ),
-          const SizedBox(width: 8),
-          FilledButton.icon(
-            onPressed: () async {
-              await showFolderManagerDialog(context);
-              setState(_invalidateContentList);
-            },
-            icon: const Icon(Symbols.folder),
-            label: const Text('文件夹管理'),
-            style: const ButtonStyle(
-              fixedSize: WidgetStatePropertyAll(Size.fromHeight(40)),
-            ),
-          ),
-        ],
-      ),
+      primaryAction: _foldersPrimaryAction(),
       contentBuilder: (context, item, i, multiSelectController, view) =>
           AudioFolderTile(
             audioFolder: item,
@@ -126,73 +161,40 @@ class _FoldersPageState extends State<FoldersPage> {
       enableSortMethod: true,
       enableSortOrder: true,
       enableContentViewSwitch: true,
-      sortMethods: [
-        SortMethodDesc<AudioFolder>(
-          icon: Symbols.title,
-          name: '名称',
-          method: (list, order) {
-            switch (order) {
-              case SortOrder.ascending:
-                list.sort(
-                  (a, b) => a.displayName.localeCompareTo(b.displayName),
-                );
-                break;
-              case SortOrder.decending:
-                list.sort(
-                  (a, b) => b.displayName.localeCompareTo(a.displayName),
-                );
-                break;
-            }
+      sortMethods: _foldersSortMethods(),
+    );
+  }
+
+  Widget _foldersPrimaryAction() {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (_updating)
+          const SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        else
+          OutlinedButton.icon(
+            onPressed: _refreshIndex,
+            icon: const Icon(Symbols.refresh, size: 18),
+            label: const Text('刷新'),
+            style: const ButtonStyle(
+              fixedSize: WidgetStatePropertyAll(Size.fromHeight(40)),
+            ),
+          ),
+        const SizedBox(width: 8),
+        FilledButton.icon(
+          onPressed: () async {
+            await showFolderManagerDialog(context);
+            setState(_invalidateContentList);
           },
-          backgroundMethod: (list, order, control) =>
-              sortPageByLocaleInBackground(
-                list,
-                (folder) => folder.displayName,
-                descending: order == SortOrder.decending,
-                control: control,
-              ),
-        ),
-        SortMethodDesc<AudioFolder>(
-          icon: Symbols.edit,
-          name: '修改日期',
-          method: (list, order) {
-            switch (order) {
-              case SortOrder.ascending:
-                list.sort((a, b) => a.modified.compareTo(b.modified));
-                break;
-              case SortOrder.decending:
-                list.sort((a, b) => b.modified.compareTo(a.modified));
-                break;
-            }
-          },
-          backgroundMethod: (list, order, control) =>
-              sortPageByIntegerInBackground(
-                list,
-                (folder) => folder.modified,
-                descending: order == SortOrder.decending,
-                control: control,
-              ),
-        ),
-        SortMethodDesc<AudioFolder>(
-          icon: Symbols.music_note,
-          name: '歌曲数量',
-          method: (list, order) {
-            switch (order) {
-              case SortOrder.ascending:
-                list.sort((a, b) => a.audios.length.compareTo(b.audios.length));
-                break;
-              case SortOrder.decending:
-                list.sort((a, b) => b.audios.length.compareTo(a.audios.length));
-                break;
-            }
-          },
-          backgroundMethod: (list, order, control) =>
-              sortPageByIntegerInBackground(
-                list,
-                (folder) => folder.audios.length,
-                descending: order == SortOrder.decending,
-                control: control,
-              ),
+          icon: const Icon(Symbols.folder),
+          label: const Text('文件夹管理'),
+          style: const ButtonStyle(
+            fixedSize: WidgetStatePropertyAll(Size.fromHeight(40)),
+          ),
         ),
       ],
     );
@@ -275,90 +277,106 @@ class AudioFolderTile extends StatelessWidget {
       child: MenuAnchor(
         consumeOutsideTap: true,
         style: appMenuStyle,
-        menuChildren: [
-          MenuItemButton(
-            style: appMenuItemStyle,
-            onPressed: () => _editAlias(context),
-            leadingIcon: const Icon(Symbols.label),
-            child: Text(
-              audioFolder.alias?.isNotEmpty == true ? '修改别名' : '设置别名',
+        menuChildren: _menuChildren(context),
+        builder: (context, controller, _) =>
+            _folderTile(context, controller, scheme),
+      ),
+    );
+  }
+
+
+  Widget _folderTile(
+    BuildContext context,
+    MenuController controller,
+    ColorScheme scheme,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8.0),
+      child: DirectionalListItemEntrance(
+        identity: audioFolder,
+        child: InteractiveSurfaceMotion(
+          enabled:
+              view == ContentView.table &&
+              AppSettings.instance.enableInteractiveSurfaceMotion,
+          child: InkWell(
+            borderRadius: AppRadius.smCircular,
+            onTap: () => context.push(
+              app_paths.FOLDER_DETAIL_PAGE,
+              extra: audioFolder,
+            ),
+            onSecondaryTapDown: (details) {
+              controller.open(position: details.localPosition);
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16.0,
+                vertical: 10.0,
+              ),
+              child: _row(scheme),
             ),
           ),
-          if (audioFolder.alias?.isNotEmpty == true)
-            MenuItemButton(
-              style: appMenuItemStyle,
-              onPressed: () => _clearAlias(context),
-              leadingIcon: const Icon(Symbols.label_off),
-              child: const Text('移除别名'),
-            ),
-        ],
-        builder: (context, controller, _) {
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8.0),
-            child: DirectionalListItemEntrance(
-              identity: audioFolder,
-              child: InteractiveSurfaceMotion(
-                enabled:
-                    view == ContentView.table &&
-                    AppSettings.instance.enableInteractiveSurfaceMotion,
-                child: InkWell(
-                  borderRadius: AppRadius.smCircular,
-                  onTap: () => context.push(
-                    app_paths.FOLDER_DETAIL_PAGE,
-                    extra: audioFolder,
-                  ),
-                  onSecondaryTapDown: (details) {
-                    controller.open(position: details.localPosition);
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16.0,
-                      vertical: 10.0,
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Symbols.folder, color: scheme.onSurfaceVariant),
-                        const SizedBox(width: 16.0),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                audioFolder.displayName,
-                                softWrap: false,
-                                maxLines: 1,
-                                style: TextStyle(color: scheme.onSurface),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                p.dirname(audioFolder.path),
-                                softWrap: false,
-                                maxLines: 1,
-                                style: TextStyle(
-                                  color: scheme.onSurfaceVariant,
-                                  fontSize: AppType.body,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Text(
-                          '${audioFolder.audios.length} 首',
-                          style: TextStyle(
-                            color: scheme.onSurfaceVariant,
-                            fontSize: AppType.body,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          );
-        },
+        ),
       ),
+    );
+  }
+
+  List<Widget> _menuChildren(BuildContext context) {
+    return [
+      MenuItemButton(
+        style: appMenuItemStyle,
+        onPressed: () => _editAlias(context),
+        leadingIcon: const Icon(Symbols.label),
+        child: Text(audioFolder.alias?.isNotEmpty == true ? '修改别名' : '设置别名'),
+      ),
+      if (audioFolder.alias?.isNotEmpty == true)
+        MenuItemButton(
+          style: appMenuItemStyle,
+          onPressed: () => _clearAlias(context),
+          leadingIcon: const Icon(Symbols.label_off),
+          child: const Text('移除别名'),
+        ),
+    ];
+  }
+
+  Widget _row(ColorScheme scheme) {
+    return Row(
+      children: [
+        Icon(Symbols.folder, color: scheme.onSurfaceVariant),
+        const SizedBox(width: 16.0),
+        Expanded(child: _texts(scheme)),
+        const SizedBox(width: 12),
+        Text(
+          '${audioFolder.audios.length} 首',
+          style: TextStyle(
+            color: scheme.onSurfaceVariant,
+            fontSize: AppType.body,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _texts(ColorScheme scheme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          audioFolder.displayName,
+          softWrap: false,
+          maxLines: 1,
+          style: TextStyle(color: scheme.onSurface),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          p.dirname(audioFolder.path),
+          softWrap: false,
+          maxLines: 1,
+          style: TextStyle(
+            color: scheme.onSurfaceVariant,
+            fontSize: AppType.body,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -434,7 +452,6 @@ class _FolderAliasDialogState extends State<_FolderAliasDialog> {
     final width = (MediaQuery.sizeOf(context).width - 48.0)
         .clamp(280.0, 360.0)
         .toDouble();
-
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(
         horizontal: 24.0,
@@ -449,48 +466,60 @@ class _FolderAliasDialogState extends State<_FolderAliasDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Padding(
-                padding: const EdgeInsets.only(bottom: 16.0),
-                child: Text(
-                  '设置文件夹别名',
-                  style: TextStyle(
-                    color: scheme.onSurface,
-                    fontSize: AppType.sectionTitle,
-                    fontWeight: AppType.weightBold,
-                  ),
-                ),
-              ),
-              TextField(
-                autofocus: true,
-                controller: _editingController,
-                onChanged: _onAliasChanged,
-                onSubmitted: (value) => _submit(),
-                decoration: InputDecoration(
-                  labelText: '别名（留空则清除）',
-                  border: const OutlineInputBorder(),
-                  errorText: _errorText,
-                ),
-              ),
+              _title(scheme),
+              _field(),
               const SizedBox(height: 16.0),
-              OverflowBar(
-                alignment: MainAxisAlignment.end,
-                spacing: 8.0,
-                overflowSpacing: 8.0,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('取消'),
-                  ),
-                  FilledButton(
-                    onPressed: _canSubmit ? _submit : null,
-                    child: const Text('确认'),
-                  ),
-                ],
-              ),
+              _actions(context),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _title(ColorScheme scheme) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16.0),
+      child: Text(
+        '设置文件夹别名',
+        style: TextStyle(
+          color: scheme.onSurface,
+          fontSize: AppType.sectionTitle,
+          fontWeight: AppType.weightBold,
+        ),
+      ),
+    );
+  }
+
+  Widget _field() {
+    return TextField(
+      autofocus: true,
+      controller: _editingController,
+      onChanged: _onAliasChanged,
+      onSubmitted: (value) => _submit(),
+      decoration: InputDecoration(
+        labelText: '别名（留空则清除）',
+        border: const OutlineInputBorder(),
+        errorText: _errorText,
+      ),
+    );
+  }
+
+  Widget _actions(BuildContext context) {
+    return OverflowBar(
+      alignment: MainAxisAlignment.end,
+      spacing: 8.0,
+      overflowSpacing: 8.0,
+      children: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _canSubmit ? _submit : null,
+          child: const Text('确认'),
+        ),
+      ],
     );
   }
 }

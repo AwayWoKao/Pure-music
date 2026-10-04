@@ -138,88 +138,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
     if (_isImportingFolder) return;
     setState(() => _isImportingFolder = true);
     try {
-      final paths = pickMultipleDirectories(title: '选择歌单文件夹');
-      if (paths.isEmpty) return;
-      if (!mounted) return;
-
-      final folderPath = paths.first;
-      final dir = Directory(folderPath);
-      if (!dir.existsSync()) {
-        showTextOnSnackBar('文件夹不存在', variant: ToastVariant.error);
-        return;
-      }
-
-      final audioFiles = <String>[];
-      final audioExtensions = <String>{
-        'mp3',
-        'flac',
-        'wav',
-        'ogg',
-        'ape',
-        'm4a',
-        'wma',
-        'opus',
-        'aiff',
-        'aac',
-      };
-
-      await for (final entity in dir.list(recursive: true)) {
-        if (entity is File) {
-          final ext = p
-              .extension(entity.path)
-              .toLowerCase()
-              .replaceFirst('.', '');
-          if (audioExtensions.contains(ext)) {
-            audioFiles.add(entity.path);
-          }
-        }
-      }
-
-      if (audioFiles.isEmpty) {
-        showTextOnSnackBar('文件夹中没有找到音乐文件');
-        return;
-      }
-
-      final resolved = <String>[];
-      final collection = AudioLibrary.instance.audioCollection;
-      for (final raw in audioFiles) {
-        if (collection.any((a) => a.path == raw)) {
-          resolved.add(raw);
-          continue;
-        }
-        final matchedPath = findImportedPlaylistLibraryPath(
-          rawPath: raw,
-          libraryPaths: collection.map((a) => a.path),
-        );
-        if (matchedPath != null) resolved.add(matchedPath);
-      }
-
-      if (resolved.isEmpty) {
-        showTextOnSnackBar('文件夹中的音乐不在曲库中');
-        return;
-      }
-
-      final folderName = p.basename(folderPath);
-      final pl = Playlist(folderName, resolved);
-      if (hasEquivalentPlaylistName(
-        existingNames: playlists.map((p) => p.name),
-        targetName: pl.name,
-      )) {
-        showTextOnSnackBar('歌单已存在');
-        return;
-      }
-
-      setState(() => playlists.add(pl));
-      final saved = await savePlaylists();
-      if (!saved) {
-        playlists.remove(pl);
-        if (!mounted) return;
-        setState(() {});
-        showTextOnSnackBar('保存歌单失败', variant: ToastVariant.error);
-        return;
-      }
-      if (!mounted) return;
-      showTextOnSnackBar('已导入歌单', variant: ToastVariant.success);
+      await _importFolderAsPlaylistBody();
     } catch (err) {
       if (!mounted) return;
       showTextOnSnackBar('导入文件夹歌单失败', variant: ToastVariant.error);
@@ -228,6 +147,100 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
         setState(() => _isImportingFolder = false);
       }
     }
+  }
+
+  Future<void> _importFolderAsPlaylistBody() async {
+    final paths = pickMultipleDirectories(title: '选择歌单文件夹');
+    if (paths.isEmpty) return;
+    if (!mounted) return;
+    final folderPath = paths.first;
+    final dir = Directory(folderPath);
+    if (!dir.existsSync()) {
+      showTextOnSnackBar('文件夹不存在', variant: ToastVariant.error);
+      return;
+    }
+    final audioFiles = await _collectFolderAudioFiles(dir);
+    if (audioFiles.isEmpty) {
+      showTextOnSnackBar('文件夹中没有找到音乐文件');
+      return;
+    }
+    final resolved = _resolveImportedFolderTracks(audioFiles);
+    if (resolved.isEmpty) {
+      showTextOnSnackBar('文件夹中的音乐不在曲库中');
+      return;
+    }
+    await _saveImportedFolderPlaylist(folderPath, resolved);
+  }
+
+  Future<List<String>> _collectFolderAudioFiles(Directory dir) async {
+    final audioFiles = <String>[];
+    final audioExtensions = <String>{
+      'mp3',
+      'flac',
+      'wav',
+      'ogg',
+      'ape',
+      'm4a',
+      'wma',
+      'opus',
+      'aiff',
+      'aac',
+    };
+    await for (final entity in dir.list(recursive: true)) {
+      if (entity is File) {
+        final ext = p
+            .extension(entity.path)
+            .toLowerCase()
+            .replaceFirst('.', '');
+        if (audioExtensions.contains(ext)) {
+          audioFiles.add(entity.path);
+        }
+      }
+    }
+    return audioFiles;
+  }
+
+  List<String> _resolveImportedFolderTracks(List<String> audioFiles) {
+    final resolved = <String>[];
+    final collection = AudioLibrary.instance.audioCollection;
+    for (final raw in audioFiles) {
+      if (collection.any((a) => a.path == raw)) {
+        resolved.add(raw);
+        continue;
+      }
+      final matchedPath = findImportedPlaylistLibraryPath(
+        rawPath: raw,
+        libraryPaths: collection.map((a) => a.path),
+      );
+      if (matchedPath != null) resolved.add(matchedPath);
+    }
+    return resolved;
+  }
+
+  Future<void> _saveImportedFolderPlaylist(
+    String folderPath,
+    List<String> resolved,
+  ) async {
+    final folderName = p.basename(folderPath);
+    final pl = Playlist(folderName, resolved);
+    if (hasEquivalentPlaylistName(
+      existingNames: playlists.map((p) => p.name),
+      targetName: pl.name,
+    )) {
+      showTextOnSnackBar('歌单已存在');
+      return;
+    }
+    setState(() => playlists.add(pl));
+    final saved = await savePlaylists();
+    if (!saved) {
+      playlists.remove(pl);
+      if (!mounted) return;
+      setState(() {});
+      showTextOnSnackBar('保存歌单失败', variant: ToastVariant.error);
+      return;
+    }
+    if (!mounted) return;
+    showTextOnSnackBar('已导入歌单', variant: ToastVariant.success);
   }
 
   bool _isExportingPlaylist(Playlist playlist) {
@@ -345,380 +358,577 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
   }
 
   @override
+  @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final menuStyle = appMenuStyle;
-    final menuItemStyle = appMenuItemStyle;
     final canSortPlaylists = hasEnoughItemsToSort(playlists.length);
     final canSwitchContentView = canShowContentViewSwitch(playlists.length);
-
     return UniPage<Playlist>(
       pref: AppPreference.instance.playlistsPagePref,
       title: '歌单',
       subtitle: '${playlists.length} 个歌单',
       contentList: playlists,
-      contentBuilder: (context, item, i, multiSelectController, view) {
-        final playlist = playlists[i];
-        final isSelected =
-            multiSelectController?.selected.contains(playlist) == true;
-        final isMultiSelectView =
-            multiSelectController?.enableMultiSelectView == true;
-        final isDeleting = _isDeletingPlaylist(playlist);
-        final isExporting = _isExportingPlaylist(playlist);
-        final isBusy = isDeleting || isExporting;
-        return MenuTheme(
-          data: MenuThemeData(style: menuStyle),
-          child: MenuAnchor(
-            consumeOutsideTap: true,
-            style: menuStyle,
-            menuChildren: [
-              MenuItemButton(
-                style: menuItemStyle,
-                onPressed: isBusy
-                    ? null
-                    : () => context.push(
-                        app_paths.PLAYLIST_DETAIL_PAGE,
-                        extra: playlist,
-                      ),
-                leadingIcon: const Icon(Symbols.open_in_new),
-                child: const Text('打开'),
-              ),
-              MenuItemButton(
-                style: menuItemStyle,
-                onPressed: isBusy
-                    ? null
-                    : () => editPlaylist(context, playlist),
-                leadingIcon: const Icon(Symbols.edit),
-                child: const Text('编辑'),
-              ),
-              MenuItemButton(
-                style: menuItemStyle,
-                onPressed: isBusy
-                    ? null
-                    : () async {
-                        await showCoverPicker(context, playlist);
-                        if (mounted) setState(() {});
-                      },
-                leadingIcon: const Icon(Symbols.brush),
-                child: const Text('更换封面'),
-              ),
-              MenuItemButton(
-                style: menuItemStyle,
-                onPressed: isBusy ? null : () => _deletePlaylist(playlist),
-                leadingIcon: isDeleting
-                    ? const SizedBox(
-                        width: 18.0,
-                        height: 18.0,
-                        child: CircularProgressIndicator(strokeWidth: 2.0),
-                      )
-                    : Icon(Symbols.delete, color: scheme.error),
-                child: Text(isDeleting ? '删除中' : '删除'),
-              ),
-              MenuItemButton(
-                style: menuItemStyle,
-                onPressed: isBusy ? null : () => _exportPlaylist(playlist),
-                leadingIcon: isExporting
-                    ? const SizedBox(
-                        width: 18.0,
-                        height: 18.0,
-                        child: CircularProgressIndicator(strokeWidth: 2.0),
-                      )
-                    : const Icon(Symbols.file_export),
-                child: Text(isExporting ? '导出中' : '导出'),
-              ),
-              if (multiSelectController != null)
-                MenuItemButton(
-                  style: menuItemStyle,
-                  onPressed: isBusy
-                      ? null
-                      : () {
-                          multiSelectController.useMultiSelectView(true);
-                          multiSelectController.select(playlist);
-                        },
-                  leadingIcon: const Icon(Symbols.select),
-                  child: const Text('多选'),
-                ),
-            ],
-            builder: (context, controller, _) => InteractiveSurfaceMotion(
-              enabled:
-                  view == ContentView.table &&
-                  AppSettings.instance.enableInteractiveSurfaceMotion,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? scheme.secondaryContainer
-                      : Colors.transparent,
-                  borderRadius: AppRadius.smCircular,
-                ),
-                child: Material(
-                  type: MaterialType.transparency,
-                  child: InkWell(
-                    borderRadius: AppRadius.smCircular,
-                    onTap: isBusy
-                        ? null
-                        : () {
-                            if (controller.isOpen) {
-                              controller.close();
-                              return;
-                            }
-                            if (!isMultiSelectView) {
-                              context.push(
-                                app_paths.PLAYLIST_DETAIL_PAGE,
-                                extra: playlist,
-                              );
-                              return;
-                            }
-                            if (isSelected) {
-                              multiSelectController?.unselect(playlist);
-                            } else {
-                              multiSelectController?.select(playlist);
-                            }
-                          },
-                    onLongPress: isBusy
-                        ? null
-                        : () {
-                            if (multiSelectController == null) return;
-                            if (isMultiSelectView) return;
-                            multiSelectController.useMultiSelectView(true);
-                            multiSelectController.select(playlist);
-                          },
-                    onSecondaryTapDown: (details) {
-                      if (isBusy || isMultiSelectView) return;
-                      controller.open(
-                        position: details.localPosition.translate(0, -240),
-                      );
-                    },
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                      child: Row(
-                        children: [
-                          _PlaylistCover(playlist: playlist),
-                          const SizedBox(width: 16.0),
-                          Expanded(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  playlist.name,
-                                  softWrap: false,
-                                  maxLines: 1,
-                                  style: const TextStyle(
-                                    fontSize: AppType.subtitle,
-                                  ),
-                                ),
-                                const SizedBox(height: 4.0),
-                                Text(
-                                  '${playlist.paths.length}首乐曲',
-                                  softWrap: false,
-                                  maxLines: 1,
-                                  style: TextStyle(
-                                    color: scheme.onSurface.withAlpha(153),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          if (isMultiSelectView)
-                            Checkbox(
-                              value: isSelected,
-                              onChanged: isBusy
-                                  ? null
-                                  : (v) {
-                                      if (v == true) {
-                                        multiSelectController?.select(playlist);
-                                      } else {
-                                        multiSelectController?.unselect(
-                                          playlist,
-                                        );
-                                      }
-                                    },
-                            )
-                          else ...[
-                            IconButton(
-                              tooltip: '编辑',
-                              onPressed: isBusy
-                                  ? null
-                                  : () => editPlaylist(context, playlist),
-                              icon: const Icon(Symbols.edit),
-                            ),
-                            const SizedBox(width: 8.0),
-                            IconButton(
-                              tooltip: '删除',
-                              onPressed: isBusy
-                                  ? null
-                                  : () => _deletePlaylist(playlist),
-                              color: scheme.error,
-                              icon: isDeleting
-                                  ? const SizedBox(
-                                      width: 20.0,
-                                      height: 20.0,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2.0,
-                                      ),
-                                    )
-                                  : const Icon(Symbols.delete),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-      primaryAction: MenuAnchor(
-        style: appMenuStyle,
-        menuChildren: [
-          MenuItemButton(
-            style: const ButtonStyle(
-              padding: WidgetStatePropertyAll(EdgeInsets.all(12)),
-            ),
-            leadingIcon: _isCreatingPlaylist
-                ? const SizedBox(
-                    width: 18.0,
-                    height: 18.0,
-                    child: CircularProgressIndicator(strokeWidth: 2.0),
-                  )
-                : const Icon(Symbols.add),
-            onPressed: _isCreatingPlaylist ? null : () => newPlaylist(context),
-            child: Text(_isCreatingPlaylist ? '创建中' : '新建歌单'),
-          ),
-          MenuItemButton(
-            style: const ButtonStyle(
-              padding: WidgetStatePropertyAll(EdgeInsets.all(12)),
-            ),
-            leadingIcon: _isImportingFolder
-                ? const SizedBox(
-                    width: 18.0,
-                    height: 18.0,
-                    child: CircularProgressIndicator(strokeWidth: 2.0),
-                  )
-                : const Icon(Symbols.folder_open),
-            onPressed: _isImportingFolder
-                ? null
-                : () => importFolderAsPlaylist(),
-            child: Text(_isImportingFolder ? '导入中' : '导入文件夹歌单'),
-          ),
-          MenuItemButton(
-            style: const ButtonStyle(
-              padding: WidgetStatePropertyAll(EdgeInsets.all(12)),
-            ),
-            leadingIcon: _isImportingPlaylist
-                ? const SizedBox(
-                    width: 18.0,
-                    height: 18.0,
-                    child: CircularProgressIndicator(strokeWidth: 2.0),
-                  )
-                : const Icon(Symbols.file_open),
-            onPressed: _isImportingPlaylist ? null : () => importPlaylist(),
-            child: Text(_isImportingPlaylist ? '导入中' : '导入歌单列表'),
-          ),
-        ],
-        builder: (context, menuController, _) {
-          return FilledButton.tonal(
-            onPressed: () {
-              if (menuController.isOpen) {
-                menuController.close();
-              } else {
-                menuController.open();
-              }
-            },
-            style: ButtonStyle(
-              fixedSize: const WidgetStatePropertyAll(Size.fromHeight(40)),
-              padding: const WidgetStatePropertyAll(
-                EdgeInsets.symmetric(horizontal: 16),
-              ),
-              shape: WidgetStatePropertyAll(
-                RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
-              ),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Symbols.queue_music, size: 20),
-                const SizedBox(width: 4.0),
-                const Text('管理歌单'),
-                const SizedBox(width: 4.0),
-                AnimatedRotation(
-                  duration: const Duration(milliseconds: 200),
-                  turns: menuController.isOpen ? 0.5 : 0.0,
-                  child: const Icon(Symbols.arrow_drop_down, size: 20),
-                ),
-              ],
-            ),
-          );
-        },
+      contentBuilder: _playlistItemBuilder,
+      primaryAction: _AddPlaylistMenu(
+        isCreating: _isCreatingPlaylist,
+        isImportingFolder: _isImportingFolder,
+        isImportingPlaylist: _isImportingPlaylist,
+        onCreate: () => newPlaylist(context),
+        onImportFolder: importFolderAsPlaylist,
+        onImportFile: importPlaylist,
       ),
       enableShufflePlay: false,
       enableSortMethod: canSortPlaylists,
       enableSortOrder: canSortPlaylists,
       enableContentViewSwitch: canSwitchContentView,
       multiSelectController: multiSelectController,
-      multiSelectViewActions: [
-        ListenableBuilder(
-          listenable: multiSelectController,
-          builder: (context, _) => IconButton.filled(
-            tooltip: '删除选中歌单',
-            iconSize: 20,
-            onPressed:
-                multiSelectController.selected.isEmpty || _isDeletingSelected
-                ? null
-                : _deleteSelectedPlaylists,
-            style: IconButton.styleFrom(
-              fixedSize: const Size(40, 40),
-              padding: EdgeInsets.zero,
-              backgroundColor: scheme.error,
-              foregroundColor: scheme.onError,
-              shape: RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
+      multiSelectViewActions: _multiSelectActions(scheme),
+      sortMethods: _playlistSortMethods(),
+    );
+  }
+
+  Widget _playlistItemBuilder(
+    BuildContext context,
+    Playlist item,
+    int i,
+    MultiSelectController<Playlist>? multiSelectController,
+    ContentView view,
+  ) {
+    return _PlaylistTile(
+      playlist: playlists[i],
+      view: view,
+      multiSelectController: multiSelectController,
+      isDeleting: _isDeletingPlaylist(playlists[i]),
+      isExporting: _isExportingPlaylist(playlists[i]),
+      onOpen: () =>
+          context.push(app_paths.PLAYLIST_DETAIL_PAGE, extra: playlists[i]),
+      onEdit: () => editPlaylist(context, playlists[i]),
+      onPickCover: () async {
+        await showCoverPicker(context, playlists[i]);
+        if (mounted) setState(() {});
+      },
+      onDelete: () => _deletePlaylist(playlists[i]),
+      onExport: () => _exportPlaylist(playlists[i]),
+    );
+  }
+
+  List<Widget> _multiSelectActions(ColorScheme scheme) {
+    return [
+      ListenableBuilder(
+        listenable: multiSelectController,
+        builder: (context, _) => IconButton.filled(
+          tooltip: '删除选中歌单',
+          iconSize: 20,
+          onPressed:
+              multiSelectController.selected.isEmpty || _isDeletingSelected
+              ? null
+              : _deleteSelectedPlaylists,
+          style: IconButton.styleFrom(
+            fixedSize: const Size(40, 40),
+            padding: EdgeInsets.zero,
+            backgroundColor: scheme.error,
+            foregroundColor: scheme.onError,
+            shape: RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
+          ),
+          icon: _isDeletingSelected
+              ? const SizedBox(
+                  width: 20.0,
+                  height: 20.0,
+                  child: CircularProgressIndicator(strokeWidth: 2.0),
+                )
+              : const Icon(Symbols.delete),
+        ),
+      ),
+      MultiSelectSelectOrClearAll(
+        multiSelectController: multiSelectController,
+        contentList: playlists,
+      ),
+      MultiSelectExit(multiSelectController: multiSelectController),
+    ];
+  }
+
+  List<SortMethodDesc<Playlist>> _playlistSortMethods() {
+    return [
+      SortMethodDesc(
+        icon: Symbols.title,
+        name: '名称',
+        method: (list, order) {
+          switch (order) {
+            case SortOrder.ascending:
+              list.sort((a, b) => a.name.naturalCompareTo(b.name));
+              break;
+            case SortOrder.decending:
+              list.sort((a, b) => b.name.naturalCompareTo(a.name));
+              break;
+          }
+        },
+      ),
+      SortMethodDesc(
+        icon: Symbols.music_note,
+        name: '歌曲数量',
+        method: (list, order) {
+          switch (order) {
+            case SortOrder.ascending:
+              list.sort((a, b) => a.paths.length.compareTo(b.paths.length));
+              break;
+            case SortOrder.decending:
+              list.sort((a, b) => b.paths.length.compareTo(a.paths.length));
+              break;
+          }
+        },
+      ),
+    ];
+  }
+}
+
+class _PlaylistTile extends StatelessWidget {
+  const _PlaylistTile({
+    required this.playlist,
+    required this.view,
+    required this.multiSelectController,
+    required this.isDeleting,
+    required this.isExporting,
+    required this.onOpen,
+    required this.onEdit,
+    required this.onPickCover,
+    required this.onDelete,
+    required this.onExport,
+  });
+
+  final Playlist playlist;
+  final ContentView view;
+  final MultiSelectController<Playlist>? multiSelectController;
+  final bool isDeleting;
+  final bool isExporting;
+  final VoidCallback onOpen;
+  final VoidCallback onEdit;
+  final Future<void> Function() onPickCover;
+  final VoidCallback onDelete;
+  final VoidCallback onExport;
+
+  bool get _isBusy => isDeleting || isExporting;
+  bool get _isSelected =>
+      multiSelectController?.selected.contains(playlist) == true;
+  bool get _isMultiSelectView =>
+      multiSelectController?.enableMultiSelectView == true;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return MenuTheme(
+      data: MenuThemeData(style: appMenuStyle),
+      child: MenuAnchor(
+        consumeOutsideTap: true,
+        style: appMenuStyle,
+        menuChildren: _menuChildren(scheme),
+        builder: (context, controller, _) =>
+            _tileSurface(context, controller, scheme),
+      ),
+    );
+  }
+
+
+  Widget _tileSurface(
+    BuildContext context,
+    MenuController controller,
+    ColorScheme scheme,
+  ) {
+    return InteractiveSurfaceMotion(
+      enabled:
+          view == ContentView.table &&
+          AppSettings.instance.enableInteractiveSurfaceMotion,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        decoration: BoxDecoration(
+          color: _isSelected ? scheme.secondaryContainer : Colors.transparent,
+          borderRadius: AppRadius.smCircular,
+        ),
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            borderRadius: AppRadius.smCircular,
+            onTap: _isBusy ? null : () => _onTap(context, controller),
+            onLongPress: _isBusy ? null : _onLongPress,
+            onSecondaryTapDown: (details) =>
+                _onSecondaryTap(controller, details),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8.0),
+              child: _row(context, scheme),
             ),
-            icon: _isDeletingSelected
-                ? const SizedBox(
-                    width: 20.0,
-                    height: 20.0,
-                    child: CircularProgressIndicator(strokeWidth: 2.0),
-                  )
-                : const Icon(Symbols.delete),
           ),
         ),
-        MultiSelectSelectOrClearAll(
-          multiSelectController: multiSelectController,
-          contentList: playlists,
+      ),
+    );
+  }
+
+  void _onTap(BuildContext context, MenuController controller) {
+    if (controller.isOpen) {
+      controller.close();
+      return;
+    }
+    if (!_isMultiSelectView) {
+      onOpen();
+      return;
+    }
+    if (_isSelected) {
+      multiSelectController?.unselect(playlist);
+    } else {
+      multiSelectController?.select(playlist);
+    }
+  }
+
+  void _onLongPress() {
+    if (multiSelectController == null) return;
+    if (_isMultiSelectView) return;
+    multiSelectController!.useMultiSelectView(true);
+    multiSelectController!.select(playlist);
+  }
+
+  void _onSecondaryTap(MenuController controller, TapDownDetails details) {
+    if (_isBusy || _isMultiSelectView) return;
+    controller.open(position: details.localPosition.translate(0, -240));
+  }
+
+  List<Widget> _menuChildren(ColorScheme scheme) {
+    return [
+      _menuItem(
+        onPressed: onOpen,
+        leadingIcon: const Icon(Symbols.open_in_new),
+        child: const Text('打开'),
+      ),
+      _menuItem(
+        onPressed: onEdit,
+        leadingIcon: const Icon(Symbols.edit),
+        child: const Text('编辑'),
+      ),
+      _menuItem(
+        onPressed: onPickCover,
+        leadingIcon: const Icon(Symbols.brush),
+        child: const Text('更换封面'),
+      ),
+      _menuItem(
+        onPressed: onDelete,
+        leadingIcon: isDeleting
+            ? _progressIcon()
+            : Icon(Symbols.delete, color: scheme.error),
+        child: Text(isDeleting ? '删除中' : '删除'),
+      ),
+      _menuItem(
+        onPressed: onExport,
+        leadingIcon: isExporting
+            ? _progressIcon()
+            : const Icon(Symbols.file_export),
+        child: Text(isExporting ? '导出中' : '导出'),
+      ),
+      if (multiSelectController != null)
+        _menuItem(
+          onPressed: _startMultiSelect,
+          leadingIcon: const Icon(Symbols.select),
+          child: const Text('多选'),
         ),
-        MultiSelectExit(multiSelectController: multiSelectController),
+    ];
+  }
+
+  void _startMultiSelect() {
+    multiSelectController!.useMultiSelectView(true);
+    multiSelectController!.select(playlist);
+  }
+
+  Widget _progressIcon() {
+    return const SizedBox(
+      width: 18.0,
+      height: 18.0,
+      child: CircularProgressIndicator(strokeWidth: 2.0),
+    );
+  }
+
+  MenuItemButton _menuItem({
+    required VoidCallback? onPressed,
+    required Widget leadingIcon,
+    required Widget child,
+  }) {
+    return MenuItemButton(
+      style: appMenuItemStyle,
+      onPressed: _isBusy ? null : onPressed,
+      leadingIcon: leadingIcon,
+      child: child,
+    );
+  }
+
+
+  Widget _selectBox() {
+    return Checkbox(
+      value: _isSelected,
+      onChanged: _isBusy
+          ? null
+          : (v) {
+              if (v == true) {
+                multiSelectController?.select(playlist);
+              } else {
+                multiSelectController?.unselect(playlist);
+              }
+            },
+    );
+  }
+
+
+  Widget _deleteIcon() {
+    if (!isDeleting) return const Icon(Symbols.delete);
+    return const SizedBox(
+      width: 20.0,
+      height: 20.0,
+      child: CircularProgressIndicator(strokeWidth: 2.0),
+    );
+  }
+
+  Widget _row(BuildContext context, ColorScheme scheme) {
+    return Row(
+      children: [
+        _PlaylistCover(playlist: playlist),
+        const SizedBox(width: 16.0),
+        Expanded(child: _texts(scheme)),
+        if (_isMultiSelectView)
+          _selectBox()
+        else ...[
+          IconButton(
+            tooltip: '编辑',
+            onPressed: _isBusy ? null : onEdit,
+            icon: const Icon(Symbols.edit),
+          ),
+          const SizedBox(width: 8.0),
+          IconButton(
+            tooltip: '删除',
+            onPressed: _isBusy ? null : onDelete,
+            color: scheme.error,
+            icon: _deleteIcon(),
+          ),
+        ],
       ],
-      sortMethods: [
-        SortMethodDesc(
-          icon: Symbols.title,
-          name: '名称',
-          method: (list, order) {
-            switch (order) {
-              case SortOrder.ascending:
-                list.sort((a, b) => a.name.naturalCompareTo(b.name));
-                break;
-              case SortOrder.decending:
-                list.sort((a, b) => b.name.naturalCompareTo(a.name));
-                break;
-            }
-          },
+    );
+  }
+
+  Widget _texts(ColorScheme scheme) {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          playlist.name,
+          softWrap: false,
+          maxLines: 1,
+          style: const TextStyle(fontSize: AppType.subtitle),
         ),
-        SortMethodDesc(
-          icon: Symbols.music_note,
-          name: '歌曲数量',
-          method: (list, order) {
-            switch (order) {
-              case SortOrder.ascending:
-                list.sort((a, b) => a.paths.length.compareTo(b.paths.length));
-                break;
-              case SortOrder.decending:
-                list.sort((a, b) => b.paths.length.compareTo(a.paths.length));
-                break;
-            }
-          },
+        const SizedBox(height: 4.0),
+        Text(
+          '${playlist.paths.length}首乐曲',
+          softWrap: false,
+          maxLines: 1,
+          style: TextStyle(color: scheme.onSurface.withAlpha(153)),
+        ),
+      ],
+    );
+  }
+}
+
+class _AddPlaylistMenu extends StatelessWidget {
+  const _AddPlaylistMenu({
+    required this.isCreating,
+    required this.isImportingFolder,
+    required this.isImportingPlaylist,
+    required this.onCreate,
+    required this.onImportFolder,
+    required this.onImportFile,
+  });
+
+  final bool isCreating;
+  final bool isImportingFolder;
+  final bool isImportingPlaylist;
+  final VoidCallback onCreate;
+  final VoidCallback onImportFolder;
+  final VoidCallback onImportFile;
+
+  @override
+  Widget build(BuildContext context) {
+    return MenuAnchor(
+      style: appMenuStyle,
+      menuChildren: [
+        _item(
+          busy: isCreating,
+          icon: Symbols.add,
+          onPressed: onCreate,
+          child: Text(isCreating ? '创建中' : '新建歌单'),
+        ),
+        _item(
+          busy: isImportingFolder,
+          icon: Symbols.folder_open,
+          onPressed: onImportFolder,
+          child: Text(isImportingFolder ? '导入中' : '导入文件夹歌单'),
+        ),
+        _item(
+          busy: isImportingPlaylist,
+          icon: Symbols.file_open,
+          onPressed: onImportFile,
+          child: Text(isImportingPlaylist ? '导入中' : '导入歌单列表'),
+        ),
+      ],
+      builder: (context, menuController, _) => _button(menuController),
+    );
+  }
+
+  Widget _item({
+    required bool busy,
+    required IconData icon,
+    required VoidCallback onPressed,
+    required Widget child,
+  }) {
+    return MenuItemButton(
+      style: const ButtonStyle(
+        padding: WidgetStatePropertyAll(EdgeInsets.all(12)),
+      ),
+      leadingIcon: busy
+          ? const SizedBox(
+              width: 18.0,
+              height: 18.0,
+              child: CircularProgressIndicator(strokeWidth: 2.0),
+            )
+          : Icon(icon),
+      onPressed: busy ? null : onPressed,
+      child: child,
+    );
+  }
+
+  Widget _button(MenuController menuController) {
+    return FilledButton.tonal(
+      onPressed: () {
+        if (menuController.isOpen) {
+          menuController.close();
+        } else {
+          menuController.open();
+        }
+      },
+      style: ButtonStyle(
+        fixedSize: const WidgetStatePropertyAll(Size.fromHeight(40)),
+        padding: const WidgetStatePropertyAll(
+          EdgeInsets.symmetric(horizontal: 16),
+        ),
+        shape: WidgetStatePropertyAll(
+          RoundedRectangleBorder(borderRadius: AppRadius.smCircular),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Symbols.queue_music, size: 20),
+          const SizedBox(width: 4.0),
+          const Text('管理歌单'),
+          const SizedBox(width: 4.0),
+          AnimatedRotation(
+            duration: const Duration(milliseconds: 200),
+            turns: menuController.isOpen ? 0.5 : 0.0,
+            child: const Icon(Symbols.arrow_drop_down, size: 20),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PlaylistNameDialogScaffold extends StatelessWidget {
+  const _PlaylistNameDialogScaffold({
+    required this.title,
+    required this.labelText,
+    required this.confirmText,
+    required this.controller,
+    required this.errorText,
+    required this.canSubmit,
+    required this.onChanged,
+    required this.onSubmit,
+  });
+
+  final String title;
+  final String labelText;
+  final String confirmText;
+  final TextEditingController controller;
+  final String? errorText;
+  final bool canSubmit;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onSubmit;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final width = (MediaQuery.sizeOf(context).width - 48.0)
+        .clamp(280.0, 360.0)
+        .toDouble();
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(
+        horizontal: 24.0,
+        vertical: 24.0,
+      ),
+      shape: RoundedRectangleBorder(borderRadius: AppRadius.mdCircular),
+      child: SizedBox(
+        width: width,
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _title(scheme),
+              _field(),
+              const SizedBox(height: 16.0),
+              _actions(context),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _title(ColorScheme scheme) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16.0),
+      child: Text(
+        title,
+        style: TextStyle(
+          color: scheme.onSurface,
+          fontSize: AppType.sectionTitle,
+          fontWeight: AppType.weightBold,
+        ),
+      ),
+    );
+  }
+
+  Widget _field() {
+    return Focus(
+      onFocusChange: HotkeysHelper.onFocusChanges,
+      child: TextField(
+        autofocus: true,
+        controller: controller,
+        onChanged: onChanged,
+        onSubmitted: (_) => onSubmit(),
+        decoration: InputDecoration(
+          labelText: labelText,
+          border: const OutlineInputBorder(),
+          errorText: errorText,
+        ),
+      ),
+    );
+  }
+
+  Widget _actions(BuildContext context) {
+    return OverflowBar(
+      alignment: MainAxisAlignment.end,
+      spacing: 8.0,
+      overflowSpacing: 8.0,
+      children: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: canSubmit ? onSubmit : null,
+          child: Text(confirmText),
         ),
       ],
     );
@@ -786,70 +996,15 @@ class _NewPlaylistDialogState extends State<_NewPlaylistDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final width = (MediaQuery.sizeOf(context).width - 48.0)
-        .clamp(280.0, 360.0)
-        .toDouble();
-
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(
-        horizontal: 24.0,
-        vertical: 24.0,
-      ),
-      shape: RoundedRectangleBorder(borderRadius: AppRadius.mdCircular),
-      child: SizedBox(
-        width: width,
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(bottom: 16.0),
-                child: Text(
-                  '新建歌单',
-                  style: TextStyle(
-                    color: scheme.onSurface,
-                    fontSize: AppType.sectionTitle,
-                    fontWeight: AppType.weightBold,
-                  ),
-                ),
-              ),
-              Focus(
-                onFocusChange: HotkeysHelper.onFocusChanges,
-                child: TextField(
-                  autofocus: true,
-                  controller: _editingController,
-                  onChanged: _onNameChanged,
-                  onSubmitted: (value) => _submit(),
-                  decoration: InputDecoration(
-                    labelText: '歌单名称',
-                    border: const OutlineInputBorder(),
-                    errorText: _errorText,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16.0),
-              OverflowBar(
-                alignment: MainAxisAlignment.end,
-                spacing: 8.0,
-                overflowSpacing: 8.0,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('取消'),
-                  ),
-                  FilledButton(
-                    onPressed: _canSubmit ? _submit : null,
-                    child: const Text('创建'),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
+    return _PlaylistNameDialogScaffold(
+      title: '新建歌单',
+      labelText: '歌单名称',
+      confirmText: '创建',
+      controller: _editingController,
+      errorText: _errorText,
+      canSubmit: _canSubmit,
+      onChanged: _onNameChanged,
+      onSubmit: _submit,
     );
   }
 }
@@ -923,70 +1078,15 @@ class _EditPlaylistDialogState extends State<_EditPlaylistDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final width = (MediaQuery.sizeOf(context).width - 48.0)
-        .clamp(280.0, 360.0)
-        .toDouble();
-
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(
-        horizontal: 24.0,
-        vertical: 24.0,
-      ),
-      shape: RoundedRectangleBorder(borderRadius: AppRadius.mdCircular),
-      child: SizedBox(
-        width: width,
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(bottom: 16.0),
-                child: Text(
-                  '修改歌单',
-                  style: TextStyle(
-                    color: scheme.onSurface,
-                    fontSize: AppType.sectionTitle,
-                    fontWeight: AppType.weightBold,
-                  ),
-                ),
-              ),
-              Focus(
-                onFocusChange: HotkeysHelper.onFocusChanges,
-                child: TextField(
-                  autofocus: true,
-                  controller: _editingController,
-                  onChanged: _onNameChanged,
-                  onSubmitted: (value) => _submit(),
-                  decoration: InputDecoration(
-                    labelText: '新歌单名称',
-                    border: const OutlineInputBorder(),
-                    errorText: _errorText,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16.0),
-              OverflowBar(
-                alignment: MainAxisAlignment.end,
-                spacing: 8.0,
-                overflowSpacing: 8.0,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('取消'),
-                  ),
-                  FilledButton(
-                    onPressed: _canSubmit ? _submit : null,
-                    child: const Text('确认'),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
+    return _PlaylistNameDialogScaffold(
+      title: '修改歌单',
+      labelText: '新歌单名称',
+      confirmText: '确认',
+      controller: _editingController,
+      errorText: _errorText,
+      canSubmit: _canSubmit,
+      onChanged: _onNameChanged,
+      onSubmit: _submit,
     );
   }
 }
@@ -1039,70 +1139,74 @@ class _PlaylistCoverState extends State<_PlaylistCover> {
     }
   }
 
+  Future<void> _pickCover() async {
+    setState(() => _isPickingCover = true);
+    try {
+      await showCoverPicker(context, widget.playlist);
+      _load();
+    } finally {
+      if (mounted) {
+        setState(() => _isPickingCover = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final overlayColor = scheme.onSurface.withValues(alpha: 0.25);
-
     return MouseRegion(
       onEnter: (_) => setState(() => _isHovered = true),
       onExit: (_) => setState(() => _isHovered = false),
       child: GestureDetector(
-        onTap: _isPickingCover
-            ? null
-            : () async {
-                setState(() => _isPickingCover = true);
-                try {
-                  await showCoverPicker(context, widget.playlist);
-                  _load();
-                } finally {
-                  if (mounted) {
-                    setState(() => _isPickingCover = false);
-                  }
-                }
-              },
+        onTap: _isPickingCover ? null : _pickCover,
         child: Stack(
           children: [
-            _cached != null
-                ? ClipRRect(
-                    borderRadius: AppRadius.smCircular,
-                    child: RepaintBoundary(
-                      child: Image(
-                        key: ValueKey(_cached),
-                        image: _cached!,
-                        width: 48.0,
-                        height: 48.0,
-                        fit: BoxFit.cover,
-                        gaplessPlayback: true,
-                        errorBuilder: (_, _, _) => _placeholder(context),
-                      ),
-                    ),
-                  )
-                : _placeholder(context),
-            if (_isHovered || _isPickingCover)
-              Container(
-                width: 48.0,
-                height: 48.0,
-                decoration: BoxDecoration(
-                  color: overlayColor,
-                  borderRadius: AppRadius.smCircular,
-                ),
-                child: _isPickingCover
-                    ? Center(
-                        child: SizedBox(
-                          width: 20.0,
-                          height: 20.0,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2.0,
-                            color: scheme.onSurface,
-                          ),
-                        ),
-                      )
-                    : Icon(Symbols.brush, size: 20, color: scheme.onSurface),
-              ),
+            _coverImage(context),
+            if (_isHovered || _isPickingCover) _coverOverlay(scheme),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _coverImage(BuildContext context) {
+    if (_cached == null) return _placeholder(context);
+    return ClipRRect(
+      borderRadius: AppRadius.smCircular,
+      child: RepaintBoundary(
+        child: Image(
+          key: ValueKey(_cached),
+          image: _cached!,
+          width: 48.0,
+          height: 48.0,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          errorBuilder: (_, _, _) => _placeholder(context),
+        ),
+      ),
+    );
+  }
+
+  Widget _coverOverlay(ColorScheme scheme) {
+    return Container(
+      width: 48.0,
+      height: 48.0,
+      decoration: BoxDecoration(
+        color: scheme.onSurface.withValues(alpha: 0.25),
+        borderRadius: AppRadius.smCircular,
+      ),
+      child: _isPickingCover
+          ? Center(
+              child: SizedBox(
+                width: 20.0,
+                height: 20.0,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.0,
+                  color: scheme.onSurface,
+                ),
+              ),
+            )
+          : Icon(Symbols.brush, size: 20, color: scheme.onSurface),
     );
   }
 

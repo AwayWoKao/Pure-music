@@ -30,53 +30,61 @@ class WelcomingPage extends StatelessWidget {
         child: _TitleBar(),
       ),
       body: LayoutBuilder(
-        builder: (context, constraints) {
-          final horizontalPadding = constraints.maxWidth < 520 ? 20.0 : 48.0;
-          return SingleChildScrollView(
-            padding: EdgeInsets.fromLTRB(
-              horizontalPadding,
-              24.0,
-              horizontalPadding,
-              24.0,
-            ),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                minHeight: (constraints.maxHeight - 48.0).clamp(
-                  0.0,
-                  double.infinity,
-                ),
-              ),
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 560.0),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        '你的音乐放在哪些文件夹呢？',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: scheme.onSurface,
-                          fontWeight: AppType.weightBold,
-                          fontSize: AppType.hero,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        '软件会扫描这些文件夹（包括所有子文件夹）下的音乐并建立索引。',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: scheme.onSurface),
-                      ),
-                      const SizedBox(height: 16),
-                      const FolderSelectorView(),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          );
-        },
+        builder: (context, constraints) => _welcomeBody(scheme, constraints),
       ),
+    );
+  }
+
+
+  Widget _welcomeBody(ColorScheme scheme, BoxConstraints constraints) {
+    final horizontalPadding = constraints.maxWidth < 520 ? 20.0 : 48.0;
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(
+        horizontalPadding,
+        24.0,
+        horizontalPadding,
+        24.0,
+      ),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          minHeight: (constraints.maxHeight - 48.0).clamp(0.0, double.infinity),
+        ),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _headline(scheme),
+                const SizedBox(height: 16),
+                const FolderSelectorView(),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _headline(ColorScheme scheme) {
+    return Column(
+      children: [
+        Text(
+          '你的音乐放在哪些文件夹呢？',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: scheme.onSurface,
+            fontWeight: AppType.weightBold,
+            fontSize: AppType.hero,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          '软件会扫描这些文件夹（包括所有子文件夹）下的音乐并建立索引。',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: scheme.onSurface),
+        ),
+      ],
     );
   }
 }
@@ -101,7 +109,6 @@ class _FolderSelectorViewState extends State<FolderSelectorView> {
     final viewSize = MediaQuery.sizeOf(context);
     final width = (viewSize.width - 80.0).clamp(280.0, 400.0).toDouble();
     final height = (viewSize.height - 260.0).clamp(260.0, 400.0).toDouble();
-
     return SizedBox(
       width: width,
       height: height,
@@ -109,54 +116,52 @@ class _FolderSelectorViewState extends State<FolderSelectorView> {
         duration: MotionDuration.xFast,
         switchInCurve: MotionCurve.standard,
         switchOutCurve: MotionCurve.standard,
-        child: selecting
-            ? folderSelector(scheme)
-            : FutureBuilder(
-                future: applicationSupportDirectory,
-                builder: (context, snapshot) {
-                  if (snapshot.data == null) {
-                    return const Center(
-                      child: Text('Fail to get app data dir.'),
-                    );
-                  }
-
-                  return BuildIndexStateView(
-                    indexPath: snapshot.data!,
-                    folders: folders,
-                    whenIndexBuilt: () async {
-                      final preference = AppPreference.instance;
-                      await Future.wait([
-                        AudioLibrary.initFromIndex(),
-                        readPlaylists(),
-                        readLyricSources(),
-                      ]);
-                      if (WindowLifecycleService.instance.isExiting) return;
-                      final settingsSaved = await AppSettings.instance
-                          .saveSettings();
-                      if (!settingsSaved) {
-                        throw StateError('保存应用设置失败');
-                      }
-                      if (WindowLifecycleService.instance.isExiting) return;
-                      final oldUserFolders = List<String>.from(
-                        preference.userFolders,
-                      );
-                      preference.userFolders = List.from(folders);
-                      final preferenceSaved = await preference.save();
-                      if (!preferenceSaved) {
-                        preference.userFolders = oldUserFolders;
-                        throw StateError('保存文件夹设置失败');
-                      }
-                      if (WindowLifecycleService.instance.isExiting) return;
-                      WindowLifecycleService.instance.markLibraryReady();
-                      if (context.mounted) {
-                        context.go(app_paths.AUDIOS_PAGE);
-                      }
-                    },
-                  );
-                },
-              ),
+        child: selecting ? folderSelector(scheme) : _indexBuilder(),
       ),
     );
+  }
+
+  Widget _indexBuilder() {
+    return FutureBuilder(
+      future: applicationSupportDirectory,
+      builder: (context, snapshot) {
+        if (snapshot.data == null) {
+          return const Center(child: Text('Fail to get app data dir.'));
+        }
+        return BuildIndexStateView(
+          indexPath: snapshot.data!,
+          folders: folders,
+          whenIndexBuilt: () => _onIndexBuilt(context),
+        );
+      },
+    );
+  }
+
+  Future<void> _onIndexBuilt(BuildContext context) async {
+    final preference = AppPreference.instance;
+    await Future.wait([
+      AudioLibrary.initFromIndex(),
+      readPlaylists(),
+      readLyricSources(),
+    ]);
+    if (WindowLifecycleService.instance.isExiting) return;
+    final settingsSaved = await AppSettings.instance.saveSettings();
+    if (!settingsSaved) {
+      throw StateError('保存应用设置失败');
+    }
+    if (WindowLifecycleService.instance.isExiting) return;
+    final oldUserFolders = List<String>.from(preference.userFolders);
+    preference.userFolders = List.from(folders);
+    final preferenceSaved = await preference.save();
+    if (!preferenceSaved) {
+      preference.userFolders = oldUserFolders;
+      throw StateError('保存文件夹设置失败');
+    }
+    if (WindowLifecycleService.instance.isExiting) return;
+    WindowLifecycleService.instance.markLibraryReady();
+    if (context.mounted) {
+      context.go(app_paths.AUDIOS_PAGE);
+    }
   }
 
   Widget folderSelector(ColorScheme scheme) {
@@ -167,151 +172,154 @@ class _FolderSelectorViewState extends State<FolderSelectorView> {
           runSpacing: 8.0,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            FilledButton.icon(
-              onPressed: _isCommittingChoice || _isPickingFolder
-                  ? null
-                  : () async {
-                      setState(() => _isPickingFolder = true);
-                      await Future<void>.delayed(Duration.zero);
-
-                      try {
-                        final paths = pickMultipleDirectories(title: '选择文件夹');
-                        if (paths.isEmpty || !mounted) return;
-
-                        final nextFolders = appendUniquePendingFolders(
-                          current: folders,
-                          incoming: paths,
-                        );
-                        setState(() {
-                          folders
-                            ..clear()
-                            ..addAll(nextFolders);
-                        });
-                      } finally {
-                        if (mounted) {
-                          setState(() => _isPickingFolder = false);
-                        }
-                      }
-                    },
-              icon: _isPickingFolder
-                  ? const SizedBox(
-                      width: 18.0,
-                      height: 18.0,
-                      child: CircularProgressIndicator(strokeWidth: 2.0),
-                    )
-                  : const Icon(Symbols.create_new_folder),
-              label: Text(_isPickingFolder ? '选择中' : '添加文件夹'),
-            ),
+            _addFolderButton(),
             if (folders.isNotEmpty) _FolderCountPill(count: folders.length),
-            if (folders.isEmpty)
-              FilledButton.tonalIcon(
-                onPressed: _isCommittingChoice || _isPickingFolder
-                    ? null
-                    : () async {
-                        setState(() => _isCommittingChoice = true);
-                        try {
-                          await Future.wait([
-                            readPlaylists(),
-                            readLyricSources(),
-                          ]);
-                          if (WindowLifecycleService.instance.isExiting) return;
-                          final preference = AppPreference.instance;
-                          final oldUserFolders = List<String>.from(
-                            preference.userFolders,
-                          );
-                          preference.userFolders = List.from(folders);
-                          final saved = await preference.save();
-                          if (!saved) {
-                            preference.userFolders = oldUserFolders;
-                            throw StateError('保存文件夹设置失败');
-                          }
-                          if (WindowLifecycleService.instance.isExiting) return;
-                          WindowLifecycleService.instance.markLibraryReady();
-                          if (mounted) {
-                            context.go(app_paths.AUDIOS_PAGE);
-                          }
-                        } finally {
-                          if (mounted) {
-                            setState(() => _isCommittingChoice = false);
-                          }
-                        }
-                      },
-                icon: _isCommittingChoice
-                    ? const SizedBox(
-                        width: 18.0,
-                        height: 18.0,
-                        child: CircularProgressIndicator(strokeWidth: 2.0),
-                      )
-                    : const Icon(Symbols.skip_next),
-                label: Text(_isCommittingChoice ? '准备中' : '跳过'),
-              )
-            else
-              FilledButton.icon(
-                onPressed: _isCommittingChoice || _isPickingFolder
-                    ? null
-                    : () async {
-                        setState(() => _isCommittingChoice = true);
-                        try {
-                          if (mounted) {
-                            setState(() {
-                              selecting = false;
-                            });
-                          }
-                        } finally {
-                          if (mounted && selecting) {
-                            setState(() => _isCommittingChoice = false);
-                          }
-                        }
-                      },
-                icon: _isCommittingChoice
-                    ? const SizedBox(
-                        width: 18.0,
-                        height: 18.0,
-                        child: CircularProgressIndicator(strokeWidth: 2.0),
-                      )
-                    : const Icon(Symbols.travel_explore),
-                label: Text(_isCommittingChoice ? '准备中' : '扫描'),
-              ),
+            if (folders.isEmpty) _skipButton() else _scanButton(),
           ],
         ),
         const SizedBox(height: 16.0),
-        Expanded(
-          child: folders.isEmpty
-              ? const _EmptyFolderState()
-              : ListView.builder(
-                  itemCount: folders.length,
-                  itemBuilder: (context, i) => ListTile(
-                    title: Text(
-                      AppPreference.instance.folderAliases[pendingFolderKey(
-                            folders[i],
-                          )] ??
-                          folders[i],
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: TextButton.icon(
-                      style: TextButton.styleFrom(
-                        foregroundColor: scheme.error,
-                        visualDensity: VisualDensity.compact,
-                      ),
-                      onPressed:
-                          canRemovePendingFolder(
-                            isCommitting: _isCommittingChoice,
-                            isPickingFolder: _isPickingFolder,
-                          )
-                          ? () {
-                              setState(() {
-                                folders.removeAt(i);
-                              });
-                            }
-                          : null,
-                      icon: const Icon(Symbols.remove_circle, size: 18),
-                      label: const Text('移除'),
-                    ),
-                  ),
-                ),
-        ),
+        Expanded(child: _folderList(scheme)),
       ],
+    );
+  }
+
+  Widget _addFolderButton() {
+    return FilledButton.icon(
+      onPressed: _isCommittingChoice || _isPickingFolder ? null : _pickFolders,
+      icon: _isPickingFolder
+          ? const SizedBox(
+              width: 18.0,
+              height: 18.0,
+              child: CircularProgressIndicator(strokeWidth: 2.0),
+            )
+          : const Icon(Symbols.create_new_folder),
+      label: Text(_isPickingFolder ? '选择中' : '添加文件夹'),
+    );
+  }
+
+  Future<void> _pickFolders() async {
+    setState(() => _isPickingFolder = true);
+    await Future<void>.delayed(Duration.zero);
+    try {
+      final paths = pickMultipleDirectories(title: '选择文件夹');
+      if (paths.isEmpty || !mounted) return;
+      final nextFolders = appendUniquePendingFolders(
+        current: folders,
+        incoming: paths,
+      );
+      setState(() {
+        folders
+          ..clear()
+          ..addAll(nextFolders);
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isPickingFolder = false);
+      }
+    }
+  }
+
+  Widget _skipButton() {
+    return FilledButton.tonalIcon(
+      onPressed: _isCommittingChoice || _isPickingFolder
+          ? null
+          : _skipWithoutScan,
+      icon: _isCommittingChoice
+          ? const SizedBox(
+              width: 18.0,
+              height: 18.0,
+              child: CircularProgressIndicator(strokeWidth: 2.0),
+            )
+          : const Icon(Symbols.skip_next),
+      label: Text(_isCommittingChoice ? '准备中' : '跳过'),
+    );
+  }
+
+  Future<void> _skipWithoutScan() async {
+    setState(() => _isCommittingChoice = true);
+    try {
+      await Future.wait([readPlaylists(), readLyricSources()]);
+      if (WindowLifecycleService.instance.isExiting) return;
+      final preference = AppPreference.instance;
+      final oldUserFolders = List<String>.from(preference.userFolders);
+      preference.userFolders = List.from(folders);
+      final saved = await preference.save();
+      if (!saved) {
+        preference.userFolders = oldUserFolders;
+        throw StateError('保存文件夹设置失败');
+      }
+      if (WindowLifecycleService.instance.isExiting) return;
+      WindowLifecycleService.instance.markLibraryReady();
+      if (mounted) {
+        context.go(app_paths.AUDIOS_PAGE);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isCommittingChoice = false);
+      }
+    }
+  }
+
+
+  Future<void> _beginScan() async {
+    setState(() => _isCommittingChoice = true);
+    try {
+      if (mounted) setState(() => selecting = false);
+    } finally {
+      if (mounted && selecting) {
+        setState(() => _isCommittingChoice = false);
+      }
+    }
+  }
+
+  Widget _scanIcon() {
+    if (!_isCommittingChoice) return const Icon(Symbols.travel_explore);
+    return const SizedBox(
+      width: 18.0,
+      height: 18.0,
+      child: CircularProgressIndicator(strokeWidth: 2.0),
+    );
+  }
+
+  Widget _scanButton() {
+    return FilledButton.icon(
+      onPressed: _isCommittingChoice || _isPickingFolder ? null : _beginScan,
+      icon: _scanIcon(),
+      label: Text(_isCommittingChoice ? '准备中' : '扫描'),
+    );
+  }
+
+
+  void _removeFolder(int i) {
+    setState(() => folders.removeAt(i));
+  }
+
+  Widget _folderList(ColorScheme scheme) {
+    if (folders.isEmpty) return const _EmptyFolderState();
+    return ListView.builder(
+      itemCount: folders.length,
+      itemBuilder: (context, i) => ListTile(
+        title: Text(
+          AppPreference.instance.folderAliases[pendingFolderKey(folders[i])] ??
+              folders[i],
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing: TextButton.icon(
+          style: TextButton.styleFrom(
+            foregroundColor: scheme.error,
+            visualDensity: VisualDensity.compact,
+          ),
+          onPressed: canRemovePendingFolder(
+                isCommitting: _isCommittingChoice,
+                isPickingFolder: _isPickingFolder,
+              )
+              ? () => _removeFolder(i)
+              : null,
+          icon: const Icon(Symbols.remove_circle, size: 18),
+          label: const Text('移除'),
+        ),
+      ),
     );
   }
 }
@@ -384,23 +392,7 @@ class _TitleBar extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Expanded(
-              child: Row(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                    child: Image.asset('app_icon.ico', width: 24, height: 24),
-                  ),
-                  Text(
-                    'Pure Music',
-                    style: TextStyle(
-                      color: scheme.onSurface,
-                      fontSize: AppType.subtitle,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            Expanded(child: _brand(scheme)),
             const SizedBox(width: 8.0),
             const _WindowControlls(),
           ],
@@ -408,6 +400,26 @@ class _TitleBar extends StatelessWidget {
       ),
     );
   }
+
+  Widget _brand(ColorScheme scheme) {
+    return Row(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8.0),
+          child: Image.asset('app_icon.ico', width: 24, height: 24),
+        ),
+        Text(
+          'Pure Music',
+          style: TextStyle(
+            color: scheme.onSurface,
+            fontSize: AppType.subtitle,
+          ),
+        ),
+      ],
+    );
+  }
+
+
 }
 
 class _WindowControlls extends StatefulWidget {

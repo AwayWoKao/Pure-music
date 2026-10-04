@@ -132,12 +132,18 @@ Map<String, String> _kgSignParams(Map<String, String> custom) {
   params.addAll(custom);
   final sorted = params.keys.toList()..sort();
   final sigInput = sorted.map((k) => '$k=${params[k]}').join('');
-  params['signature'] = md5.convert(utf8.encode('$_kgSalt$sigInput$_kgSalt')).toString();
+  params['signature'] = md5
+      .convert(utf8.encode('$_kgSalt$sigInput$_kgSalt'))
+      .toString();
   return params;
 }
 
 /// 用签名接口搜索酷狗，结果质量远高于 mobilecdn。
-Future<List<dynamic>> _kgSignedSearch(String keyword, int page, int pageSize) async {
+Future<List<dynamic>> _kgSignedSearch(
+  String keyword,
+  int page,
+  int pageSize,
+) async {
   final custom = {
     'keyword': keyword,
     'page': '$page',
@@ -145,7 +151,11 @@ Future<List<dynamic>> _kgSignedSearch(String keyword, int page, int pageSize) as
     'iscorrection': '1',
   };
   final signed = _kgSignParams(custom);
-  final qs = signed.entries.map((e) => '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}').join('&');
+  final qs = signed.entries
+      .map(
+        (e) => '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}',
+      )
+      .join('&');
   final url = '$_kgSearchSignedUrl?$qs';
   final body = await _httpGet(url, {}, {
     'User-Agent': 'Android14-1070-11070-201-0-SearchSong-wifi',
@@ -156,7 +166,10 @@ Future<List<dynamic>> _kgSignedSearch(String keyword, int page, int pageSize) as
     if ((data['error_code'] ?? 1) != 0) return [];
     final lists = data['data']?['lists'];
     if (lists is! List) return [];
-    return lists.whereType<Map>().map((item) => _kgNormalizeSignedItem(item)).toList();
+    return lists
+        .whereType<Map>()
+        .map((item) => _kgNormalizeSignedItem(item))
+        .toList();
   } catch (_) {
     return [];
   }
@@ -164,9 +177,14 @@ Future<List<dynamic>> _kgSignedSearch(String keyword, int page, int pageSize) as
 
 Map<String, dynamic> _kgNormalizeSignedItem(Map item) {
   final singers = item['Singers'] is List ? item['Singers'] as List : [];
-  final artist = singers.map((s) => s is Map ? (s['name'] ?? s['Name'] ?? '') : '').where((s) => s.toString().isNotEmpty).join('/');
+  final artist = singers
+      .map((s) => s is Map ? (s['name'] ?? s['Name'] ?? '') : '')
+      .where((s) => s.toString().isNotEmpty)
+      .join('/');
   final imgRaw = item['Image']?.toString() ?? '';
-  final picUrl = imgRaw.isNotEmpty ? imgRaw.replaceFirst('{size}', '480').replaceFirst('http:', 'https:') : '';
+  final picUrl = imgRaw.isNotEmpty
+      ? imgRaw.replaceFirst('{size}', '480').replaceFirst('http:', 'https:')
+      : '';
   return {
     'hash': item['FileHash']?.toString() ?? '',
     'id': item['ID']?.toString() ?? '',
@@ -179,30 +197,103 @@ Map<String, dynamic> _kgNormalizeSignedItem(Map item) {
 }
 
 Future<List<dynamic>> _kgSearchInIsolate(Map<String, dynamic> params) async {
-  // 优先用签名接口
   final keyword = params['text'].toString();
   final page = int.tryParse(params['offset'].toString()) ?? 1;
   final pageSize = int.tryParse(params['limit'].toString()) ?? 12;
   final signedResults = await _kgSignedSearch(keyword, page, pageSize);
   if (signedResults.isNotEmpty) return signedResults;
+  return _kgSearchFallbackResults(params);
+}
 
-  // 降级到现有无签名接口
-  final Map<String, String> queryParameters = {
+Map<String, String> _kgPrimaryQuery(Map<String, dynamic> params) {
+  final keyword = params['text'].toString();
+  final page = int.tryParse(params['offset'].toString()) ?? 1;
+  final pageSize = int.tryParse(params['limit'].toString()) ?? 12;
+  return {
     'format': 'json',
     'keyword': keyword,
     'page': '$page',
     'pagesize': '$pageSize',
     if (params['cacheBust'] != null) '_': params['cacheBust'].toString(),
   };
-  var body = await _httpGet(_kgSearchUrl, queryParameters, _kgApiHeaders);
+}
+
+Map<String, String> _kgSimpleQuery(Map<String, dynamic> params) {
+  return {
+    'keyword': params['text'].toString(),
+    'page': params['offset'].toString(),
+    'pagesize': params['limit'].toString(),
+    if (params['cacheBust'] != null) '_': params['cacheBust'].toString(),
+  };
+}
+
+Future<String?> _kgFallbackBody(Map<String, dynamic> params) {
+  return _httpGet(_kgSearchFallbackUrl, _kgSimpleQuery(params), _kgApiHeaders);
+}
+
+String _kgField(
+  Map item,
+  bool fallback,
+  String fallbackKey,
+  String primaryKey, [
+  String defaultValue = '',
+]) {
+  return (fallback ? item[fallbackKey] : item[primaryKey])?.toString() ??
+      defaultValue;
+}
+
+Map<String, dynamic>? _kgNormalizeFallbackItem(
+  Map item,
+  bool useFallbackShape,
+) {
+  final groupList = item['group'] is List ? item['group'] as List : null;
+  String? albumName;
+  if (groupList != null && groupList.isNotEmpty) {
+    final firstGroup = groupList.first;
+    if (firstGroup is Map) {
+      albumName = firstGroup['album_name']?.toString();
+    }
+  }
+  final hash = _kgField(item, useFallbackShape, 'FileHash', 'hash');
+  if (hash.isEmpty) return null;
+  return {
+    'hash': hash,
+    'id': _kgField(item, useFallbackShape, 'ID', 'id'),
+    'songname': _kgField(
+      item,
+      useFallbackShape,
+      'SongName',
+      'songname',
+      'UNKNOWN',
+    ),
+    'singername': _kgField(
+      item,
+      useFallbackShape,
+      'SingerName',
+      'singername',
+      'UNKNOWN',
+    ),
+    'album_name': albumName ??
+        _kgField(item, useFallbackShape, 'AlbumName', 'album_name'),
+    'duration': int.tryParse(
+          _kgField(item, useFallbackShape, 'Duration', 'duration', '0'),
+        ) ??
+        0,
+    'picUrl': _kgCoverUrl(item, groupList),
+  };
+}
+
+Future<List<dynamic>> _kgSearchFallbackResults(
+  Map<String, dynamic> params,
+) async {
+  var body = await _httpGet(
+    _kgSearchUrl,
+    _kgPrimaryQuery(params),
+    _kgApiHeaders,
+  );
   var useFallbackShape = false;
   if (body == null || body.isEmpty) {
-    body = await _httpGet(_kgSearchFallbackUrl, {
-      'keyword': params['text'].toString(),
-      'page': params['offset'].toString(),
-      'pagesize': params['limit'].toString(),
-      if (params['cacheBust'] != null) '_': params['cacheBust'].toString(),
-    }, _kgApiHeaders);
+    body = await _kgFallbackBody(params);
     useFallbackShape = true;
   }
   if (body == null || body.isEmpty) return [];
@@ -213,12 +304,7 @@ Future<List<dynamic>> _kgSearchInIsolate(Map<String, dynamic> params) async {
         ? (useFallbackShape ? dataBody['lists'] : dataBody['info'])
         : null;
     if ((songList is! List || songList.isEmpty) && !useFallbackShape) {
-      final fallbackBody = await _httpGet(_kgSearchFallbackUrl, {
-        'keyword': params['text'].toString(),
-        'page': params['offset'].toString(),
-        'pagesize': params['limit'].toString(),
-        if (params['cacheBust'] != null) '_': params['cacheBust'].toString(),
-      }, _kgApiHeaders);
+      final fallbackBody = await _kgFallbackBody(params);
       if (fallbackBody != null && fallbackBody.isNotEmpty) {
         data = jsonDecode(fallbackBody) as Map<String, dynamic>;
         dataBody = data['data'];
@@ -230,44 +316,8 @@ Future<List<dynamic>> _kgSearchInIsolate(Map<String, dynamic> params) async {
     final normalized = <Map<String, dynamic>>[];
     for (final rawItem in songList) {
       if (rawItem is! Map) continue;
-      final item = rawItem;
-      final groupList = item['group'] is List ? item['group'] as List : null;
-      String? albumName;
-      if (groupList != null && groupList.isNotEmpty) {
-        final firstGroup = groupList.first;
-        if (firstGroup is Map) {
-          albumName = firstGroup['album_name']?.toString();
-        }
-      }
-      final picUrl = _kgCoverUrl(item, groupList);
-      final result = <String, dynamic>{
-        'hash':
-            (useFallbackShape ? item['FileHash'] : item['hash'])?.toString() ??
-            '',
-        'id': (useFallbackShape ? item['ID'] : item['id'])?.toString() ?? '',
-        'songname':
-            (useFallbackShape ? item['SongName'] : item['songname'])
-                ?.toString() ??
-            'UNKNOWN',
-        'singername':
-            (useFallbackShape ? item['SingerName'] : item['singername'])
-                ?.toString() ??
-            'UNKNOWN',
-        'album_name':
-            albumName ??
-            (useFallbackShape ? item['AlbumName'] : item['album_name'])
-                ?.toString() ??
-            '',
-        'duration':
-            int.tryParse(
-              (useFallbackShape ? item['Duration'] : item['duration'])
-                      ?.toString() ??
-                  '0',
-            ) ??
-            0,
-        'picUrl': picUrl,
-      };
-      if ((result['hash'] as String).isNotEmpty) normalized.add(result);
+      final result = _kgNormalizeFallbackItem(rawItem, useFallbackShape);
+      if (result != null) normalized.add(result);
     }
     return normalized;
   } catch (_) {
@@ -501,6 +551,12 @@ Future<Map<String, String?>> neLyricIsolate({
 }
 
 Future<List<dynamic>> _qqSearchInIsolate(Map<String, dynamic> params) async {
+  final body = await _qqSearchRequestBody(params);
+  if (body == null || body.isEmpty) return [];
+  return _qqSearchParseBody(body);
+}
+
+Future<String?> _qqSearchRequestBody(Map<String, dynamic> params) async {
   final now = DateTime.now().millisecondsSinceEpoch;
   final random = (now * 123456789) % 1000000000000000;
   final searchId = (10000000000000000 + random).toString();
@@ -540,7 +596,10 @@ Future<List<dynamic>> _qqSearchInIsolate(Map<String, dynamic> params) async {
       'Content-Type': 'text/plain; charset=utf-8',
     },
   );
-  if (body == null || body.isEmpty) return [];
+  return body;
+}
+
+List<dynamic> _qqSearchParseBody(String body) {
   try {
     final Map<String, dynamic> data = jsonDecode(body);
     final songList = data['req_0']?['data']?['body']?['item_song'];
@@ -594,76 +653,94 @@ Future<Map<String, String?>> _qqLyricInIsolate(
   final String? album = params['album'] as String?;
   final String? artist = params['artist'] as String?;
   final int durationSec = params['durationSec'] as int? ?? 0;
-
-  // ── 方案 A：GetPlayLyricInfo ──
   if (title != null && title.isNotEmpty) {
-    final titleB64 = base64Encode(utf8.encode(title));
-    final albumB64 = base64Encode(utf8.encode(album ?? ''));
-    final singerB64 = base64Encode(utf8.encode(artist ?? ''));
-    final body = await _httpPost(
-      _qmSearchUrl,
-      jsonEncode({
-        'comm': {
-          'ct': '11',
-          'cv': '1003006',
-          'v': '1003006',
-          'os_ver': '15',
-          'phonetype': '24122RKC7C',
-          'tmeAppID': 'qqmusiclight',
-          'nettype': 'NETWORK_WIFI',
-        },
-        'req_0': {
-          'method': 'GetPlayLyricInfo',
-          'module': 'music.musichallSong.PlayLyricInfo',
-          'param': {
-            'songID': id,
-            'songName': titleB64,
-            'albumName': albumB64,
-            'singerName': singerB64,
-            'crypt': 1,
-            'qrc': 1,
-            'trans': 1,
-            'roma': 1,
-            'cv': 2111,
-            'ct': 19,
-            'lrc_t': 0,
-            'qrc_t': 0,
-            'roma_t': 0,
-            'trans_t': 0,
-            'type': 0,
-            'interval': durationSec,
-          },
-        },
-      }),
-      {
-        'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
-        'Host': 'u.y.qq.com',
-        'Content-Type': 'text/plain; charset=utf-8',
-      },
+    final fromPlayLyric = await _qqLyricFromPlayLyric(
+      id: id,
+      title: title,
+      album: album,
+      artist: artist,
+      durationSec: durationSec,
     );
-
-    if (body != null) {
-      try {
-        final Map<String, dynamic> data = jsonDecode(body);
-        final lyricData = data['req_0']?['data'];
-        if (lyricData != null) {
-          final encLyric = lyricData['lyric']?.toString() ?? '';
-          final encTrans = lyricData['trans']?.toString() ?? '';
-          final encRoma = lyricData['roma']?.toString() ?? '';
-          if (encLyric.isNotEmpty) {
-            return {
-              'encryptedLyric': encLyric,
-              'encryptedTrans': encTrans.isNotEmpty ? encTrans : null,
-              'roma': encRoma.isNotEmpty ? encRoma : null,
-            };
-          }
-        }
-      } catch (_) {}
-    }
+    if (fromPlayLyric != null) return fromPlayLyric;
   }
+  return _qqLyricFromDownloadFallback(id);
+}
 
-  // ── 方案 B：lyric_download.fcg 降级 ──
+Future<Map<String, String?>?> _qqLyricFromPlayLyric({
+  required int id,
+  required String title,
+  String? album,
+  String? artist,
+  required int durationSec,
+}) async {
+  final titleB64 = base64Encode(utf8.encode(title));
+  final albumB64 = base64Encode(utf8.encode(album ?? ''));
+  final singerB64 = base64Encode(utf8.encode(artist ?? ''));
+  final body = await _httpPost(
+    _qmSearchUrl,
+    jsonEncode({
+      'comm': {
+        'ct': '11',
+        'cv': '1003006',
+        'v': '1003006',
+        'os_ver': '15',
+        'phonetype': '24122RKC7C',
+        'tmeAppID': 'qqmusiclight',
+        'nettype': 'NETWORK_WIFI',
+      },
+      'req_0': {
+        'method': 'GetPlayLyricInfo',
+        'module': 'music.musichallSong.PlayLyricInfo',
+        'param': {
+          'songID': id,
+          'songName': titleB64,
+          'albumName': albumB64,
+          'singerName': singerB64,
+          'crypt': 1,
+          'qrc': 1,
+          'trans': 1,
+          'roma': 1,
+          'cv': 2111,
+          'ct': 19,
+          'lrc_t': 0,
+          'qrc_t': 0,
+          'roma_t': 0,
+          'trans_t': 0,
+          'type': 0,
+          'interval': durationSec,
+        },
+      },
+    }),
+    {
+      'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
+      'Host': 'u.y.qq.com',
+      'Content-Type': 'text/plain; charset=utf-8',
+    },
+  );
+
+  if (body != null) {
+    try {
+      final Map<String, dynamic> data = jsonDecode(body);
+      final lyricData = data['req_0']?['data'];
+      if (lyricData != null) {
+        final encLyric = lyricData['lyric']?.toString() ?? '';
+        final encTrans = lyricData['trans']?.toString() ?? '';
+        final encRoma = lyricData['roma']?.toString() ?? '';
+        if (encLyric.isNotEmpty) {
+          return {
+            'encryptedLyric': encLyric,
+            'encryptedTrans': encTrans.isNotEmpty ? encTrans : null,
+            'roma': encRoma.isNotEmpty ? encRoma : null,
+          };
+        }
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
+Future<Map<String, String?>> _qqLyricFromDownloadFallback(int id) async {
   final fbBody = await _httpGet(
     'https://c.y.qq.com/qqmusic/fcgi-bin/lyric_download.fcg',
     {

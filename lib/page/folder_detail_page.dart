@@ -12,6 +12,81 @@ import 'package:pure_music/page/uni_page_components.dart';
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
+void _sortFolderAudios(
+  List<Audio> list,
+  SortOrder order,
+  int Function(Audio a, Audio b) compare,
+) {
+  switch (order) {
+    case SortOrder.ascending:
+      list.sort(compare);
+    case SortOrder.decending:
+      list.sort((a, b) => compare(b, a));
+  }
+}
+
+List<SortMethodDesc<Audio>> _folderSortMethods() {
+  return [..._folderTextSorts(), ..._folderTimeSorts()];
+}
+
+List<SortMethodDesc<Audio>> _folderTextSorts() {
+  return [
+    SortMethodDesc(
+      icon: Symbols.title,
+      name: '标题',
+      alphabetValueOf: (audio) => audio.title,
+      method: (list, order) => _sortFolderAudios(
+        list,
+        order,
+        (a, b) => a.title.naturalCompareTo(b.title),
+      ),
+    ),
+    SortMethodDesc(
+      icon: Symbols.artist,
+      name: '艺术家',
+      alphabetValueOf: (audio) => audio.artist,
+      method: (list, order) => _sortFolderAudios(
+        list,
+        order,
+        (a, b) => a.artist.naturalCompareTo(b.artist),
+      ),
+    ),
+    SortMethodDesc(
+      icon: Symbols.album,
+      name: '专辑',
+      alphabetValueOf: (audio) => audio.album,
+      method: (list, order) => _sortFolderAudios(
+        list,
+        order,
+        (a, b) => a.album.naturalCompareTo(b.album),
+      ),
+    ),
+  ];
+}
+
+List<SortMethodDesc<Audio>> _folderTimeSorts() {
+  return [
+    SortMethodDesc(
+      icon: Symbols.add,
+      name: '创建时间',
+      method: (list, order) => _sortFolderAudios(
+        list,
+        order,
+        (a, b) => a.created.compareTo(b.created),
+      ),
+    ),
+    SortMethodDesc(
+      icon: Symbols.edit,
+      name: '修改时间',
+      method: (list, order) => _sortFolderAudios(
+        list,
+        order,
+        (a, b) => a.modified.compareTo(b.modified),
+      ),
+    ),
+  ];
+}
+
 class FolderDetailPage extends StatefulWidget {
   final AudioFolder folder;
   const FolderDetailPage({super.key, required this.folder});
@@ -62,18 +137,10 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
   @override
   Widget build(BuildContext context) {
     final allAudios = _contentList;
-    final contentList = _searchQuery.isEmpty
-        ? List<Audio>.from(allAudios)
-        : allAudios.where((audio) {
-            final q = _searchQuery.toLowerCase();
-            return audio.title.toLowerCase().contains(q) ||
-                audio.artist.toLowerCase().contains(q) ||
-                audio.album.toLowerCase().contains(q);
-          }).toList();
+    final contentList = _filteredAudios(allAudios);
     final canSortSongs = hasEnoughItemsToSort(contentList.length);
     final canPlaySongs = canShowPlayAllAction(contentList.length);
     final canSwitchContentView = canShowContentViewSwitch(contentList.length);
-
     return UniDetailPage<AudioFolder, Audio, Object>(
       pref: AppPreference.instance.folderDetailPagePref,
       primaryContent: widget.folder,
@@ -110,83 +177,21 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
         ),
         MultiSelectExit(multiSelectController: multiSelectController),
       ],
-      sortMethods: [
-        SortMethodDesc(
-          icon: Symbols.title,
-          name: '标题',
-          alphabetValueOf: (audio) => audio.title,
-          method: (list, order) {
-            switch (order) {
-              case SortOrder.ascending:
-                list.sort((a, b) => a.title.naturalCompareTo(b.title));
-                break;
-              case SortOrder.decending:
-                list.sort((a, b) => b.title.naturalCompareTo(a.title));
-                break;
-            }
-          },
-        ),
-        SortMethodDesc(
-          icon: Symbols.artist,
-          name: '艺术家',
-          alphabetValueOf: (audio) => audio.artist,
-          method: (list, order) {
-            switch (order) {
-              case SortOrder.ascending:
-                list.sort((a, b) => a.artist.naturalCompareTo(b.artist));
-                break;
-              case SortOrder.decending:
-                list.sort((a, b) => b.artist.naturalCompareTo(a.artist));
-                break;
-            }
-          },
-        ),
-        SortMethodDesc(
-          icon: Symbols.album,
-          name: '专辑',
-          alphabetValueOf: (audio) => audio.album,
-          method: (list, order) {
-            switch (order) {
-              case SortOrder.ascending:
-                list.sort((a, b) => a.album.naturalCompareTo(b.album));
-                break;
-              case SortOrder.decending:
-                list.sort((a, b) => b.album.naturalCompareTo(a.album));
-                break;
-            }
-          },
-        ),
-        SortMethodDesc(
-          icon: Symbols.add,
-          name: '创建时间',
-          method: (list, order) {
-            switch (order) {
-              case SortOrder.ascending:
-                list.sort((a, b) => a.created.compareTo(b.created));
-                break;
-
-              case SortOrder.decending:
-                list.sort((a, b) => b.created.compareTo(a.created));
-                break;
-            }
-          },
-        ),
-        SortMethodDesc(
-          icon: Symbols.edit,
-          name: '修改时间',
-          method: (list, order) {
-            switch (order) {
-              case SortOrder.ascending:
-                list.sort((a, b) => a.modified.compareTo(b.modified));
-                break;
-              case SortOrder.decending:
-                list.sort((a, b) => b.modified.compareTo(a.modified));
-                break;
-            }
-          },
-        ),
-      ],
+      sortMethods: _folderSortMethods(),
     );
+  }
+
+  List<Audio> _filteredAudios(List<Audio> allAudios) {
+    if (_searchQuery.isEmpty) return List<Audio>.from(allAudios);
+    final q = _searchQuery.toLowerCase();
+    return allAudios
+        .where(
+          (audio) =>
+              audio.title.toLowerCase().contains(q) ||
+              audio.artist.toLowerCase().contains(q) ||
+              audio.album.toLowerCase().contains(q),
+        )
+        .toList();
   }
 }
 
