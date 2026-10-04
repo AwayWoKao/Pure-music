@@ -94,6 +94,7 @@ todo/
 # Local docs
 docs/
 !page/docs/
+PROGRESS.md
 output/
 output/data/
 release/
