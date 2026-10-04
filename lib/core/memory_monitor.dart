@@ -43,7 +43,10 @@ class _WindowsWorkingSetTrimmer {
       }
       return setProcessWorkingSetSize(getCurrentProcess(), -1, -1) != 0;
     } catch (e, trace) {
-      log.memory.warn('legacy', '[mem] Windows working set trim failed: $e\n$trace');
+      log.memory.warn(
+        'legacy',
+        '[mem] Windows working set trim failed: $e\n$trace',
+      );
       return false;
     }
   }
@@ -101,75 +104,103 @@ class MemoryMonitorService {
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 10), (_) {
       try {
-        final rssMB = (ProcessInfo.currentRss / (1024 * 1024)).round();
-        final playbackService = PlayService.existingPlaybackService;
-        final playingPath = playbackService?.nowPlaying?.path;
-        final now = DateTime.now();
-
-        final playing = _isPlaying();
-        // 播放中贴近 140-160MB 目标区间，越界后从轻到重逐级清理。
-        final tier1Threshold = playing ? 185 : 220;
-        final tier2Threshold = playing ? 220 : 260;
-        final tier3Threshold = playing ? 280 : 320;
-
-        if (rssMB > tier3Threshold &&
-            _cleanupDue(now, _lastTier3CleanupAt, const Duration(minutes: 1))) {
-          _lastTier1CleanupAt = now;
-          _lastTier2CleanupAt = now;
-          _lastTier3CleanupAt = now;
-          log.memory.warn('legacy', '[mem] RSS ${rssMB}MB > $tier3Threshold, tier-3 emergency cleanup',);
-          if (!playing) {
-            PaintingBinding.instance.imageCache.clear();
-            PaintingBinding.instance.imageCache.clearLiveImages();
-          } else {
-            PaintingBinding.instance.imageCache.clear();
-          }
-          CoverImageCache.instance.trimMemory(keepPath: playingPath);
-          CoverImageCache.instance.trimSmall(keepEntries: 24);
-          AudioLibrary.instance.trimCollectionThumbnailRetention(32);
-          LyricsLinePainter.clearPool();
-          LyricsLineWidget.clearBlurFilterCache();
-          if (playing) {
-            AudioLibrary.instance.evictStaleCoverBytes();
-          } else {
-            AudioLibrary.instance.evictAllCoversExcept(
-              playingPath,
-              includeCollectionCovers: true,
-            );
-            clearLyricCaches();
-          }
-          _trimWorkingSetIfDue(
-            cooldown: playing
-                ? const Duration(minutes: 2)
-                : const Duration(minutes: 1),
-          );
-        } else if (rssMB > tier2Threshold &&
-            _cleanupDue(now, _lastTier2CleanupAt, const Duration(minutes: 3))) {
-          _lastTier1CleanupAt = now;
-          _lastTier2CleanupAt = now;
-          log.memory.warn('legacy', '[mem] RSS ${rssMB}MB > $tier2Threshold, tier-2 cleanup');
-          CoverImageCache.instance.trimMemory(keepPath: playingPath);
-          CoverImageCache.instance.trimSmall(keepEntries: 64);
-          AudioLibrary.instance.trimCollectionThumbnailRetention(80);
-          LyricsLinePainter.trimPool();
-          LyricsLineWidget.clearBlurFilterCache();
-          AudioLibrary.instance.evictStaleCoverBytes();
-        } else if (rssMB > tier1Threshold &&
-            _cleanupDue(now, _lastTier1CleanupAt, const Duration(minutes: 1))) {
-          _lastTier1CleanupAt = now;
-          // tier-1: keep playback smooth; avoid forcing image reloads or OS working-set trim.
-          AudioLibrary.instance.trimCollectionThumbnailRetention(128);
-          LyricsLinePainter.trimPool();
-          AudioLibrary.instance.evictStaleCoverBytes();
-        }
-
-        if (Platform.environment['CP_MEMORY_LOG'] == '1') {
-          CoverImageCache.instance.logStats();
-        }
+        _checkMemoryPressure();
       } catch (e, trace) {
         log.memory.error('legacy', '[mem] monitor error: $e\n$trace');
       }
     });
+  }
+
+  void _checkMemoryPressure() {
+    final rssMB = (ProcessInfo.currentRss / (1024 * 1024)).round();
+    final playbackService = PlayService.existingPlaybackService;
+    final playingPath = playbackService?.nowPlaying?.path;
+    final now = DateTime.now();
+    final playing = _isPlaying();
+    final tier1Threshold = playing ? 185 : 220;
+    final tier2Threshold = playing ? 220 : 260;
+    final tier3Threshold = playing ? 280 : 320;
+    if (rssMB > tier3Threshold &&
+        _cleanupDue(now, _lastTier3CleanupAt, const Duration(minutes: 1))) {
+      _runTier3Cleanup(now, playing, playingPath, rssMB, tier3Threshold);
+    } else if (rssMB > tier2Threshold &&
+        _cleanupDue(now, _lastTier2CleanupAt, const Duration(minutes: 3))) {
+      _runTier2Cleanup(now, playingPath, rssMB, tier2Threshold);
+    } else if (rssMB > tier1Threshold &&
+        _cleanupDue(now, _lastTier1CleanupAt, const Duration(minutes: 1))) {
+      _runTier1Cleanup(now);
+    }
+    if (Platform.environment['CP_MEMORY_LOG'] == '1') {
+      CoverImageCache.instance.logStats();
+    }
+  }
+
+  void _runTier3Cleanup(
+    DateTime now,
+    bool playing,
+    String? playingPath,
+    int rssMB,
+    int tier3Threshold,
+  ) {
+    _lastTier1CleanupAt = now;
+    _lastTier2CleanupAt = now;
+    _lastTier3CleanupAt = now;
+    log.memory.warn(
+      'legacy',
+      '[mem] RSS ${rssMB}MB > $tier3Threshold, tier-3 emergency cleanup',
+    );
+    if (!playing) {
+      PaintingBinding.instance.imageCache.clear();
+      PaintingBinding.instance.imageCache.clearLiveImages();
+    } else {
+      PaintingBinding.instance.imageCache.clear();
+    }
+    CoverImageCache.instance.trimMemory(keepPath: playingPath);
+    CoverImageCache.instance.trimSmall(keepEntries: 24);
+    AudioLibrary.instance.trimCollectionThumbnailRetention(32);
+    LyricsLinePainter.clearPool();
+    LyricsLineWidget.clearBlurFilterCache();
+    if (playing) {
+      AudioLibrary.instance.evictStaleCoverBytes();
+    } else {
+      AudioLibrary.instance.evictAllCoversExcept(
+        playingPath,
+        includeCollectionCovers: true,
+      );
+      clearLyricCaches();
+    }
+    _trimWorkingSetIfDue(
+      cooldown: playing
+          ? const Duration(minutes: 2)
+          : const Duration(minutes: 1),
+    );
+  }
+
+  void _runTier2Cleanup(
+    DateTime now,
+    String? playingPath,
+    int rssMB,
+    int tier2Threshold,
+  ) {
+    _lastTier1CleanupAt = now;
+    _lastTier2CleanupAt = now;
+    log.memory.warn(
+      'legacy',
+      '[mem] RSS ${rssMB}MB > $tier2Threshold, tier-2 cleanup',
+    );
+    CoverImageCache.instance.trimMemory(keepPath: playingPath);
+    CoverImageCache.instance.trimSmall(keepEntries: 64);
+    AudioLibrary.instance.trimCollectionThumbnailRetention(80);
+    LyricsLinePainter.trimPool();
+    LyricsLineWidget.clearBlurFilterCache();
+    AudioLibrary.instance.evictStaleCoverBytes();
+  }
+
+  void _runTier1Cleanup(DateTime now) {
+    _lastTier1CleanupAt = now;
+    AudioLibrary.instance.trimCollectionThumbnailRetention(128);
+    LyricsLinePainter.trimPool();
+    AudioLibrary.instance.evictStaleCoverBytes();
   }
 
   void stop() {
@@ -202,8 +233,7 @@ class MemoryMonitorService {
   void trimTrayHidden() {
     PaintingBinding.instance.imageCache.clear();
     PaintingBinding.instance.imageCache.clearLiveImages();
-    final playingPath =
-        PlayService.existingPlaybackService?.nowPlaying?.path;
+    final playingPath = PlayService.existingPlaybackService?.nowPlaying?.path;
     CoverImageCache.instance.trimMemory(keepPath: playingPath);
     CoverImageCache.instance.trimSmall(keepEntries: 96);
     AudioLibrary.instance.trimCollectionThumbnailRetention(128);
