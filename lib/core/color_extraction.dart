@@ -8,20 +8,26 @@ class ColorExtractionService {
 
   static const int _maxPathCacheSize = 200;
 
-  /// 按音频路径缓存的主色，供首帧同步读取
+  /// 按音频路径+修改时间缓存主色，避免封面更新后仍用旧色。
   final Map<String, Color> _pathColorCache = {};
   final Map<String, List<Color>> _pathPaletteCache = {};
   final List<String> _pathAccessOrder = [];
 
-  void cachePaletteForPath(String path, List<Color> palette) {
-    if (palette.isEmpty) return;
-    _pathPaletteCache[path] = List.unmodifiable(palette);
-    _pathColorCache[path] = palette.first;
-    _trimPathCache(path);
+  String _cacheKey(String path, int? modified) {
+    if (modified == null) return path;
+    return '$path|$modified';
   }
 
-  void _trimPathCache(String path) {
-    _touchPathCacheEntry(path);
+  void cachePaletteForPath(String path, List<Color> palette, {int? modified}) {
+    if (palette.isEmpty) return;
+    final key = _cacheKey(path, modified);
+    _pathPaletteCache[key] = List.unmodifiable(palette);
+    _pathColorCache[key] = palette.first;
+    _trimPathCache(key);
+  }
+
+  void _trimPathCache(String key) {
+    _touchPathCacheEntry(key);
     while (_pathAccessOrder.length > _maxPathCacheSize &&
         _pathAccessOrder.isNotEmpty) {
       final oldest = _pathAccessOrder.removeAt(0);
@@ -30,16 +36,22 @@ class ColorExtractionService {
     }
   }
 
-  Color? getCachedColorForPath(String path) {
-    final color = _pathColorCache[path];
-    if (color != null) _touchPathCacheEntry(path);
+  Color? getCachedColorForPath(String path, {int? modified}) {
+    final key = _cacheKey(path, modified);
+    final color =
+        _pathColorCache[key] ??
+        (modified == null ? null : _pathColorCache[path]);
+    if (color != null) _touchPathCacheEntry(key);
     return color;
   }
 
-  List<Color>? getCachedPaletteForPath(String path) {
-    final palette = _pathPaletteCache[path];
+  List<Color>? getCachedPaletteForPath(String path, {int? modified}) {
+    final key = _cacheKey(path, modified);
+    final palette =
+        _pathPaletteCache[key] ??
+        (modified == null ? null : _pathPaletteCache[path]);
     if (palette != null) {
-      _touchPathCacheEntry(path);
+      _touchPathCacheEntry(key);
       return List<Color>.from(palette);
     }
     return null;

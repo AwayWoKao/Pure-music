@@ -1,9 +1,11 @@
+import 'dart:developer' as developer;
 import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
 import 'dart:math';
 import 'dart:ui' as ui;
 
+import 'package:pure_music/core/color_extraction.dart';
 import 'package:pure_music/core/database.dart';
 import 'package:pure_music/core/utils.dart';
 import 'package:pure_music/core/workload_policy.dart';
@@ -296,6 +298,7 @@ class AlbumColorCache {
 
     final bytes = await CoverImageCache.instance.loadBytes(
       path: audio.path,
+      modified: audio.modified,
       width: 64,
       height: 64,
     );
@@ -347,7 +350,10 @@ class _AsyncSemaphore {
 
   _AsyncSemaphore(this._capacity);
 
-  Future<T> run<T>(Future<T> Function() task, {bool lowPriority = false}) async {
+  Future<T> run<T>(
+    Future<T> Function() task, {
+    bool lowPriority = false,
+  }) async {
     await _acquire(lowPriority);
     try {
       return await task();
@@ -370,8 +376,8 @@ class _AsyncSemaphore {
     final next = _highPriority.isNotEmpty
         ? _highPriority.removeFirst()
         : _lowPriority.isNotEmpty
-            ? _lowPriority.removeFirst()
-            : null;
+        ? _lowPriority.removeFirst()
+        : null;
     if (next != null) {
       next.complete();
       return;
@@ -593,6 +599,7 @@ class CoverImageCache {
   final _largeBytes = <String, int>{};
   final _pending = <String, Future<ImageProvider?>>{};
   final _pendingBytes = <String, Future<Uint8List?>>{};
+  final _decodedBytes = _LruMap<String, Uint8List>(20);
   final _persistentWarmCompleted = <String>{};
   final _persistentWarmPending = <String>{};
   late final _missing = _LruMap<String, bool>(512);
@@ -618,12 +625,19 @@ class CoverImageCache {
     return _large;
   }
 
+  String _coverKey(String path, int width, int height, {int? modified}) {
+    final size = '${width}x$height';
+    if (modified == null) return '$path|$size';
+    return '$path|$modified|$size';
+  }
+
   Future<ImageProvider?> get({
     required String path,
     required int width,
     required int height,
+    int? modified,
   }) async {
-    final key = '$path|${width}x$height';
+    final key = _coverKey(path, width, height, modified: modified);
     final tier = _tierFor(width, height);
 
     final cached = _getCached(
@@ -644,7 +658,7 @@ class CoverImageCache {
 
     _missCount++;
     final generation = _generation;
-    final future = _fetch(path, width, height);
+    final future = _fetch(path, width, height, modified: modified);
     _pending[key] = future;
     try {
       final result = await future;
@@ -666,8 +680,9 @@ class CoverImageCache {
     required String path,
     required int width,
     required int height,
+    int? modified,
   }) {
-    final key = '$path|${width}x$height';
+    final key = _coverKey(path, width, height, modified: modified);
     return _getCached(
       key,
       _tierFor(width, height),
@@ -719,8 +734,18 @@ class CoverImageCache {
     return _largeBytes;
   }
 
-  Future<ImageProvider?> _fetch(String path, int width, int height) async {
-    final bytes = await loadBytes(path: path, width: width, height: height);
+  Future<ImageProvider?> _fetch(
+    String path,
+    int width,
+    int height, {
+    int? modified,
+  }) async {
+    final bytes = await loadBytes(
+      path: path,
+      width: width,
+      height: height,
+      modified: modified,
+    );
     if (bytes == null) return null;
     return _stableImage(
       path: path,
@@ -766,11 +791,15 @@ class CoverImageCache {
   int get stableImageConfigurationCountForTesting =>
       _stableImageConfigurations.length;
 
+  @visibleForTesting
+  int get decodedBytesCountForTesting => _decodedBytes.length;
+
   Future<Uint8List?> loadBytes({
     required String path,
     required int width,
     required int height,
     bool lowPriority = false,
+    int? modified,
   }) async {
     final pixelRatio =
         ui.PlatformDispatcher.instance.views.first.devicePixelRatio;
@@ -780,6 +809,7 @@ class CoverImageCache {
       height: height,
       pixelRatio: pixelRatio,
       lowPriority: lowPriority,
+      modified: modified,
     );
   }
 
@@ -795,10 +825,18 @@ class CoverImageCache {
     required int height,
     required double pixelRatio,
     bool lowPriority = false,
+    int? modified,
   }) async {
     final physicalWidth = (width * pixelRatio).round();
     final physicalHeight = (height * pixelRatio).round();
-    final key = '$path|${physicalWidth}x$physicalHeight';
+    final key = _coverKey(
+      path,
+      physicalWidth,
+      physicalHeight,
+      modified: modified,
+    );
+    final cached = _decodedBytes.get(key);
+    if (cached != null) return cached;
     final pending = _pendingBytes[key];
     if (pending != null) return pending;
 
@@ -815,7 +853,11 @@ class CoverImageCache {
     _pendingBytes[key] = future;
     try {
       final result = await future;
-      if (result == null) _missing.set(key, true);
+      if (result == null) {
+        _missing.set(key, true);
+      } else {
+        _decodedBytes.set(key, result);
+      }
       return result;
     } finally {
       if (identical(_pendingBytes[key], future)) {
@@ -832,28 +874,37 @@ class CoverImageCache {
     required int physicalWidth,
     required int physicalHeight,
   }) async {
-    final indexPath = _indexPath;
-    final maxPhysical = max(physicalWidth, physicalHeight);
-    if (indexPath != null && maxPhysical > 96) {
-      try {
-        return await library_db.getCachedCover(
-          indexPath: indexPath,
-          path: path,
-          width: physicalWidth,
-          height: physicalHeight,
-        );
-      } catch (error, trace) {
-        if (!_databaseWarningLogged) {
-          _databaseWarningLogged = true;
-          log.app.warn('legacy', '[cache] persistent cover cache unavailable: $error', stackTrace: trace,);
+    developer.Timeline.startSync('cover.decode');
+    try {
+      final indexPath = _indexPath;
+      final maxPhysical = max(physicalWidth, physicalHeight);
+      if (indexPath != null && maxPhysical > 96) {
+        try {
+          return await library_db.getCachedCover(
+            indexPath: indexPath,
+            path: path,
+            width: physicalWidth,
+            height: physicalHeight,
+          );
+        } catch (error, trace) {
+          if (!_databaseWarningLogged) {
+            _databaseWarningLogged = true;
+            log.app.warn(
+              'legacy',
+              '[cache] persistent cover cache unavailable: $error',
+              stackTrace: trace,
+            );
+          }
         }
       }
+      return getPictureFromPath(
+        path: path,
+        width: physicalWidth,
+        height: physicalHeight,
+      );
+    } finally {
+      developer.Timeline.finishSync();
     }
-    return getPictureFromPath(
-      path: path,
-      width: physicalWidth,
-      height: physicalHeight,
-    );
   }
 
   /// 后台预生成常用缩略图，字节写入磁盘后立即释放。
@@ -881,11 +932,16 @@ class CoverImageCache {
           path: entry.key,
           width: size,
           height: size,
+          modified: entry.value,
           lowPriority: true,
         );
         _persistentWarmCompleted.add(key);
       } catch (error, trace) {
-        log.app.debug('legacy', '[cache] persistent cover warm skipped: $error', stackTrace: trace,);
+        log.app.debug(
+          'legacy',
+          '[cache] persistent cover warm skipped: $error',
+          stackTrace: trace,
+        );
       } finally {
         _persistentWarmPending.remove(key);
       }
@@ -894,9 +950,77 @@ class CoverImageCache {
     }
   }
 
-  void preload(String? path, {int width = 48, int height = 48}) {
+  void preload(String? path, {int width = 48, int height = 48, int? modified}) {
     if (path == null) return;
-    get(path: path, width: width, height: height).ignore();
+    get(path: path, width: width, height: height, modified: modified).ignore();
+  }
+
+  void putDecodedBytes({
+    required String path,
+    required int width,
+    required int height,
+    required Uint8List bytes,
+    int? modified,
+  }) {
+    final pixelRatio =
+        ui.PlatformDispatcher.instance.views.first.devicePixelRatio;
+    final key = _coverKey(
+      path,
+      (width * pixelRatio).round(),
+      (height * pixelRatio).round(),
+      modified: modified,
+    );
+    _decodedBytes.set(key, bytes);
+  }
+
+  void preloadNowPlayingCover(Audio audio) {
+    if (audio.path.isEmpty) return;
+    unawaited(_preloadNowPlayingCover(audio));
+  }
+
+  Future<void> _preloadNowPlayingCover(Audio audio) async {
+    final path = audio.path;
+    final modified = audio.modified;
+    final colors = ColorExtractionService();
+    if (colors.getCachedPaletteForPath(path, modified: modified) != null) {
+      await loadBytes(
+        path: path,
+        width: 160,
+        height: 160,
+        modified: modified,
+        lowPriority: true,
+      );
+      return;
+    }
+    try {
+      final result = await getPictureAndColors(
+        path: path,
+        width: 160,
+        height: 160,
+        numColors: 8,
+      );
+      final bytes = result.$1;
+      if (bytes != null) {
+        putDecodedBytes(
+          path: path,
+          width: 160,
+          height: 160,
+          bytes: bytes,
+          modified: modified,
+        );
+      }
+      if (result.$2.isNotEmpty) {
+        colors.cachePaletteForPath(path, [
+          for (final argb in result.$2) Color(argb),
+        ], modified: modified);
+      }
+    } catch (error, trace) {
+      log.app.debug(
+        'legacy',
+        '[cache] now playing cover prefetch skipped: $error',
+        stackTrace: trace,
+      );
+    }
   }
 
   void clear() {
@@ -907,6 +1031,7 @@ class CoverImageCache {
     _large.clear();
     _pending.clear();
     _pendingBytes.clear();
+    _decodedBytes.clear();
     _missing.clear();
     _persistentWarmCompleted.clear();
     _persistentWarmPending.clear();
@@ -922,6 +1047,7 @@ class CoverImageCache {
       _large.removeWhere(notKeep);
       _pending.removeWhere((key, _) => notKeep(key));
       _pendingBytes.removeWhere((key, _) => notKeep(key));
+      _decodedBytes.removeWhere(notKeep);
       _missing.removeWhere(notKeep);
     } else {
       _generation++;
@@ -929,6 +1055,7 @@ class CoverImageCache {
       _large.clear();
       _pending.clear();
       _pendingBytes.clear();
+      _decodedBytes.clear();
       _missing.clear();
     }
   }
@@ -946,6 +1073,7 @@ class CoverImageCache {
     _large.removeWhere(matches);
     _pending.removeWhere((key, _) => matches(key));
     _pendingBytes.removeWhere((key, _) => matches(key));
+    _decodedBytes.removeWhere(matches);
     _missing.removeWhere(matches);
     _persistentWarmCompleted.removeWhere((key) => key.startsWith('$path|'));
     _persistentWarmPending.removeWhere((key) => key.startsWith('$path|'));
@@ -980,12 +1108,15 @@ class CoverImageCache {
     final hitRateText = hitRate == null
         ? '-'
         : '${(hitRate * 100).toStringAsFixed(0)}%';
-    log.app.debug('legacy', '[cache] CoverImageCache '
-      '${s.hits}h/${s.misses}m '
-      '(hit rate $hitRateText) '
-      '| ${s.smallEntries}s/${s.mediumEntries}m/${s.largeEntries}l entries '
-      '| ${(s.smallBytes / 1024).toStringAsFixed(0)}/${(s.mediumBytes / 1024).toStringAsFixed(0)}/${(s.largeBytes / 1024).toStringAsFixed(0)} KB '
-      '| ${s.pendingRequests} pending',);
+    log.app.debug(
+      'legacy',
+      '[cache] CoverImageCache '
+          '${s.hits}h/${s.misses}m '
+          '(hit rate $hitRateText) '
+          '| ${s.smallEntries}s/${s.mediumEntries}m/${s.largeEntries}l entries '
+          '| ${(s.smallBytes / 1024).toStringAsFixed(0)}/${(s.mediumBytes / 1024).toStringAsFixed(0)}/${(s.largeBytes / 1024).toStringAsFixed(0)} KB '
+          '| ${s.pendingRequests} pending',
+    );
   }
 
   /// 完全释放并清理所有缓存
@@ -996,6 +1127,7 @@ class CoverImageCache {
     _large.clear();
     _pending.clear();
     _pendingBytes.clear();
+    _decodedBytes.clear();
     _missing.clear();
     _persistentWarmCompleted.clear();
     _persistentWarmPending.clear();
