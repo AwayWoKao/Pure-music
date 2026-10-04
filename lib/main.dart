@@ -12,6 +12,7 @@ import 'package:pure_music/entry.dart';
 import 'package:pure_music/core/hotkeys.dart';
 import 'package:pure_music/core/immersive.dart';
 import 'package:pure_music/core/memory_monitor.dart';
+import 'package:pure_music/core/now_playing_perf_auto.dart';
 import 'package:pure_music/native/rust/api/logger.dart';
 import 'package:pure_music/native/rust/frb_generated.dart';
 import 'package:pure_music/core/app_fonts.dart';
@@ -89,8 +90,12 @@ void _installGlobalErrorLogging() {
       error: details.exception,
       stackTrace: details.stack,
     );
-    log.app.error('legacy', '[flutter] unhandled framework error', error: details.exception,
-      stackTrace: details.stack,);
+    log.app.error(
+      'legacy',
+      '[flutter] unhandled framework error',
+      error: details.exception,
+      stackTrace: details.stack,
+    );
     previousFlutterError?.call(details);
   };
   final previousPlatformError = PlatformDispatcher.instance.onError;
@@ -100,8 +105,12 @@ void _installGlobalErrorLogging() {
       error: error,
       stackTrace: stackTrace,
     );
-    log.app.fatal('legacy', '[platform] unhandled asynchronous error', error: error,
-      stackTrace: stackTrace,);
+    log.app.fatal(
+      'legacy',
+      '[platform] unhandled asynchronous error',
+      error: error,
+      stackTrace: stackTrace,
+    );
     return previousPlatformError?.call(error, stackTrace) ?? false;
   };
 }
@@ -118,30 +127,41 @@ Future<void> main() async {
       error: error,
       stackTrace: stackTrace,
     );
-    log.app.fatal('legacy', '[startup] unhandled error', error: error, stackTrace: stackTrace);
+    log.app.fatal(
+      'legacy',
+      '[startup] unhandled error',
+      error: error,
+      stackTrace: stackTrace,
+    );
     await applicationLogOutput.flush();
     rethrow;
   }
 }
 
 Future<void> _runApplication() async {
-  // 覆盖多屏缩略图，避免滚动回来时反复解码；内存监控仍会分级回收。
   PaintingBinding.instance.imageCache.maximumSize = 96;
   PaintingBinding.instance.imageCache.maximumSizeBytes = 32 << 20;
-
   final singleInstance = FlutterSingleInstance();
   if (!await singleInstance.isFirstInstance()) {
     await singleInstance.focus();
     exit(0);
   }
-
   try {
     await RustLib.init();
   } catch (e, s) {
     log.app.error('legacy', 'RustLib.init failed: $e\n$s');
     rethrow;
   }
+  _listenRustLogger();
+  await HotkeysHelper.unregisterAll();
+  final welcome = await _loadSettingsAndCaches();
+  if (!await _initWindowShell()) return;
+  MemoryMonitorService.instance.start();
+  runApp(Entry(welcome: welcome));
+  NowPlayingPerfAuto.schedule();
+}
 
+void _listenRustLogger() {
   _rustLoggerSub = initRustLogger().listen((line) {
     final parsed = parseRustLogLine(line);
     if (parsed == null) {
@@ -150,9 +170,9 @@ Future<void> _runApplication() async {
     }
     log.write(parsed);
   });
+}
 
-  await HotkeysHelper.unregisterAll();
-
+Future<bool> _loadSettingsAndCaches() async {
   final supportPath = (await getAppDataDir()).path;
   CoverImageCache.instance.configure(indexPath: supportPath);
   final settingsDir = await getSettingsDir();
@@ -165,26 +185,23 @@ Future<void> _runApplication() async {
   }
   await HotkeysHelper.registerHotKeys();
   await AlbumColorCache.instance.init();
+  return !File(path.join(supportPath, 'index.json')).existsSync();
+}
 
-  final welcome = !File(path.join(supportPath, 'index.json')).existsSync();
-
+Future<bool> _initWindowShell() async {
   await initWindow();
   await WindowLifecycleService.instance.init(
     disposeRuntimeResources: disposeRuntimeResources,
   );
-  if (WindowLifecycleService.instance.isExiting) return;
+  if (WindowLifecycleService.instance.isExiting) return false;
   FlutterSingleInstance.onFocus = (_) =>
       WindowLifecycleService.instance.showWindow();
   await ImmersiveModeController.instance.init();
-  if (WindowLifecycleService.instance.isExiting) return;
-
+  if (WindowLifecycleService.instance.isExiting) return false;
   if (AppSettings.instance.appWindowTransparent) {
     await windowManager.setBackgroundColor(Colors.transparent);
   }
-
-  MemoryMonitorService.instance.start();
-
-  runApp(Entry(welcome: welcome));
+  return true;
 }
 
 StreamSubscription<String>? _rustLoggerSub;
