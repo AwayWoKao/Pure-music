@@ -66,8 +66,11 @@ Future<void> readPlaylists() async {
       playlists
         ..clear()
         ..addAll(fromJson);
-      log.library.debug('legacy', '[perf] playlists load=${stopwatch.elapsedMilliseconds}ms '
-        'count=${playlists.length} migrated=true',);
+      log.library.debug(
+        'legacy',
+        '[perf] playlists load=${stopwatch.elapsedMilliseconds}ms '
+            'count=${playlists.length} migrated=true',
+      );
       return;
     }
 
@@ -75,8 +78,11 @@ Future<void> readPlaylists() async {
     playlists
       ..clear()
       ..addAll(fromDatabase);
-    log.library.debug('legacy', '[perf] playlists load=${stopwatch.elapsedMilliseconds}ms '
-      'count=${playlists.length} migrated=false',);
+    log.library.debug(
+      'legacy',
+      '[perf] playlists load=${stopwatch.elapsedMilliseconds}ms '
+          'count=${playlists.length} migrated=false',
+    );
   } catch (err, trace) {
     log.library.error('legacy', err.toString(), stackTrace: trace);
     rethrow;
@@ -191,55 +197,57 @@ void _writePlaylistsToDb(Database db, List<Playlist> playlists) {
     final existingIds = <int>{};
     for (final row in existing) {
       final id = row['id'] as int;
-      final name = row['name'] as String;
-      existingByName[name] = id;
+      existingByName[row['name'] as String] = id;
       existingIds.add(id);
     }
-
     final keptIds = <int>{};
     for (final pl in playlists) {
-      final existingId = existingByName[pl.name];
-      int playlistId;
-      if (existingId != null) {
-        playlistId = existingId;
-        keptIds.add(playlistId);
-        db.execute('UPDATE playlists SET cover_source = ? WHERE id = ?', [
-          pl.coverSource,
-          playlistId,
-        ]);
-        db.execute('DELETE FROM playlist_items WHERE playlist_id = ?', [
-          playlistId,
-        ]);
-      } else {
-        db.execute('INSERT INTO playlists(name, cover_source) VALUES(?, ?)', [
-          pl.name,
-          pl.coverSource,
-        ]);
-        playlistId = db.lastInsertRowId;
-        keptIds.add(playlistId);
-      }
-      pl.id = playlistId;
-      for (int i = 0; i < pl.paths.length; i++) {
-        final p = pl.paths[i];
-        final addedAt = pl._addedAt[_playlistPathKey(p)];
-        final addedAtStr = addedAt?.toIso8601String();
-        db.execute(
-          'INSERT INTO playlist_items(playlist_id, path, sort_order, added_at) VALUES(?, ?, ?, ?)',
-          [playlistId, p, i, addedAtStr],
-        );
-      }
+      keptIds.add(_upsertPlaylistRow(db, pl, existingByName));
     }
-
     for (final id in existingIds.difference(keptIds)) {
       db.execute('DELETE FROM playlist_items WHERE playlist_id = ?', [id]);
       db.execute('DELETE FROM playlists WHERE id = ?', [id]);
     }
-
     db.execute('COMMIT');
   } catch (_) {
     db.execute('ROLLBACK');
     rethrow;
   }
+}
+
+int _upsertPlaylistRow(
+  Database db,
+  Playlist pl,
+  Map<String, int> existingByName,
+) {
+  final existingId = existingByName[pl.name];
+  final int playlistId;
+  if (existingId != null) {
+    playlistId = existingId;
+    db.execute('UPDATE playlists SET cover_source = ? WHERE id = ?', [
+      pl.coverSource,
+      playlistId,
+    ]);
+    db.execute('DELETE FROM playlist_items WHERE playlist_id = ?', [
+      playlistId,
+    ]);
+  } else {
+    db.execute('INSERT INTO playlists(name, cover_source) VALUES(?, ?)', [
+      pl.name,
+      pl.coverSource,
+    ]);
+    playlistId = db.lastInsertRowId;
+  }
+  pl.id = playlistId;
+  for (int i = 0; i < pl.paths.length; i++) {
+    final path = pl.paths[i];
+    final addedAt = pl._addedAt[_playlistPathKey(path)];
+    db.execute(
+      'INSERT INTO playlist_items(playlist_id, path, sort_order, added_at) VALUES(?, ?, ?, ?)',
+      [playlistId, path, i, addedAt?.toIso8601String()],
+    );
+  }
+  return playlistId;
 }
 
 Future<Playlist?> importPlaylistFromFile() async {
@@ -494,15 +502,17 @@ class Playlist {
   factory Playlist.fromMap(Map map) {
     final paths = <String>[];
     final rawAudios = map['audios'];
-    if (rawAudios is List) {
-      for (var item in rawAudios) {
-        if (item is Map) {
-          final p = item['path'];
-          if (p is String) paths.add(p);
-        } else if (item is String) {
-          paths.add(item);
-        }
+    if (rawAudios is! List) {
+      return Playlist(map['name'] ?? '', paths);
+    }
+    for (final item in rawAudios) {
+      if (item is String) {
+        paths.add(item);
+        continue;
       }
+      if (item is! Map) continue;
+      final path = item['path'];
+      if (path is String) paths.add(path);
     }
     return Playlist(map['name'] ?? '', paths);
   }
