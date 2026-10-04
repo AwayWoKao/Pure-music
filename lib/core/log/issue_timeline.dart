@@ -1,4 +1,5 @@
 import 'diagnostic_redaction.dart';
+import 'issue_crash.dart';
 import 'log_format.dart';
 import 'log_record.dart';
 
@@ -7,6 +8,42 @@ const _detailWindowAfter = Duration(seconds: 1);
 const _detailLimit = 5;
 // 摘要里每种问题留一条。error/fatal 全留；warn 太多时只留最近 32 种。
 const _problemWarnCap = 32;
+
+String fitIssueLogToBudget(List<LogRecord> records, int budget) {
+  if (budget <= 0) return '';
+  final warnings =
+      records
+          .where((record) => record.level.index >= LogLevel.warn.index)
+          .toList()
+        ..sort((a, b) => a.time.compareTo(b.time));
+  final infos =
+      records.where((record) => record.level == LogLevel.info).toList()
+        ..sort((a, b) => a.time.compareTo(b.time));
+  final warningOnly = renderIssueLog(warnings);
+  if (warningOnly.length >= budget) {
+    return truncateIssueTail(warningOnly, budget);
+  }
+  if (infos.isEmpty) return warningOnly;
+  final all = renderIssueLog([...warnings, ...infos]);
+  if (all.length <= budget) return all;
+  var lo = 0;
+  var hi = infos.length;
+  var best = warningOnly;
+  while (lo < hi) {
+    final mid = (lo + hi + 1) ~/ 2;
+    final candidate = renderIssueLog([
+      ...warnings,
+      ...infos.sublist(infos.length - mid),
+    ]);
+    if (candidate.length <= budget) {
+      lo = mid;
+      best = candidate;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return best;
+}
 
 String renderIssueLog(List<LogRecord> records) {
   final ordered = [...records]..sort((a, b) => a.time.compareTo(b.time));
@@ -24,9 +61,11 @@ String renderIssueLog(List<LogRecord> records) {
   final buffer = StringBuffer()
     ..writeln(_summary(counts))
     ..writeln(_moduleSummary(moduleWarnings));
-  final problems = _selectProblems(_groupByTitle(
-    titles.where((record) => record.level.index >= LogLevel.warn.index),
-  ));
+  final problems = _selectProblems(
+    _groupByTitle(
+      titles.where((record) => record.level.index >= LogLevel.warn.index),
+    ),
+  );
   if (problems.groups.isEmpty) {
     buffer.writeln('problems=-');
   } else {
@@ -52,7 +91,7 @@ String renderIssueLog(List<LogRecord> records) {
     expandable.length > _detailLimit ? expandable.length - _detailLimit : 0,
   );
   for (final record in shown) {
-      final details = issueRecords.where((candidate) {
+    final details = issueRecords.where((candidate) {
       if (candidate.module != record.module) return false;
       if (candidate.level.index > LogLevel.debug.index) return false;
       final delta = candidate.time.difference(record.time);

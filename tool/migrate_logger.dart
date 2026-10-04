@@ -169,7 +169,7 @@ String _rewrite(String call, String module) {
 }
 
 String _ensureImport(String source) {
-  if (source.contains("core/utils.dart") || source.contains("core/log/app_log.dart")) {
+  if (source.contains('core/utils.dart') || source.contains('core/log/app_log.dart')) {
     return source;
   }
   final import = RegExp(r"^import '[^']+';\r?\n", multiLine: true);

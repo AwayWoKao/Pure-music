@@ -112,8 +112,14 @@ void main() {
     ];
 
     final rendered = renderIssueLog(records);
-    final problems = rendered.split('-- problems --')[1].split('-- timeline --').first;
-    final timeline = rendered.split('-- timeline --')[1].split('-- detail').first;
+    final problems = rendered
+        .split('-- problems --')[1]
+        .split('-- timeline --')
+        .first;
+    final timeline = rendered
+        .split('-- timeline --')[1]
+        .split('-- detail')
+        .first;
 
     expect(
       '×12 until 2026-10-02T14:33:00.000'.allMatches(timeline),
@@ -144,7 +150,10 @@ void main() {
     expect(problems, contains('song.advanced_early'));
     expect(problems, contains('lyric parse failed'));
     expect(problems, isNot(contains('song.changed')));
-    expect(problems.indexOf('[mem]'), lessThan(problems.indexOf('lyric parse failed')));
+    expect(
+      problems.indexOf('[mem]'),
+      lessThan(problems.indexOf('lyric parse failed')),
+    );
     expect(
       problems.indexOf('lyric parse failed'),
       lessThan(problems.indexOf('song.advanced_early')),
@@ -187,10 +196,16 @@ void main() {
     ];
 
     final rendered = renderIssueLog(records);
-    final problems = rendered.split('-- problems --')[1].split('-- timeline --').first;
+    final problems = rendered
+        .split('-- problems --')[1]
+        .split('-- timeline --')
+        .first;
     expect(problems, contains('omitted=1'));
     expect(problems, contains('×2 until 2026-10-02T14:03:00.000'));
-    expect(problems.indexOf('plugin load failed'), lessThan(problems.indexOf('unique warn')));
+    expect(
+      problems.indexOf('plugin load failed'),
+      lessThan(problems.indexOf('unique warn')),
+    );
     expect(problems, contains('unique warn 32'));
     expect(problems, isNot(contains('unique warn 0')));
     expect(rendered, isNot(contains('problems=-')));
@@ -209,4 +224,33 @@ void main() {
     expect(rendered, contains('problems=-'));
     expect(rendered, isNot(contains('-- problems --')));
   });
+
+  test(
+    'fitIssueLogToBudget keeps newest infos without shrinking one by one',
+    () {
+      final records = <LogRecord>[
+        for (var i = 0; i < 40; i++)
+          _record(
+            minute: i,
+            level: LogLevel.warn,
+            module: LogModule.memory,
+            event: 'legacy',
+            message: '[mem] RSS ${200 + i}MB > 220, tier-2 cleanup',
+          ),
+        for (var i = 0; i < 80; i++)
+          _record(
+            minute: 50,
+            second: i % 60,
+            level: LogLevel.info,
+            module: LogModule.playback,
+            event: 'song.changed',
+            message: 'play $i',
+          ),
+      ];
+      final fitted = fitIssueLogToBudget(records, 12000);
+      expect(fitted.length, lessThanOrEqualTo(12000));
+      expect(fitted, contains('-- problems --'));
+      expect(fitted, contains('play 79'));
+    },
+  );
 }

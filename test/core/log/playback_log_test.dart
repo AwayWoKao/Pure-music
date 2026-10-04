@@ -38,7 +38,7 @@ void main() {
       reason: 'completed',
       to: 'Night Drive',
       index: 13,
-      origin: SongOrigin(at: 5.5, length: 176, from: 'Old', fromIndex: 12, lengthSource: 'player'),
+      origin: const SongOrigin(at: 5.5, length: 176, from: 'Old', fromIndex: 12, lengthSource: 'player'),
     );
     expect(
       LogMemory.instance.records.map((record) => record.event),
