@@ -93,68 +93,93 @@ class _WinJobObject {
   /// 返回 job handle，调用方需持有引用直至不再需要。
   static Pointer<Void>? createAndAssign(int childPid) {
     try {
-      // 1) 创建 Job Object
-      final job = _createJobObject(nullptr, nullptr);
-      if (job == nullptr) {
-        log.desktopLyric.warn('legacy', '[desktop lyric] CreateJobObjectW failed');
-        return null;
-      }
-
-      // 2) 设置 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-      // JOBOBJECT_EXTENDED_LIMIT_INFORMATION 布局 (x64):
-      //   +0x00: BasicLimitInformation.PerProcessUserTimeLimit (LARGE_INTEGER, 8B)
-      //   +0x08: BasicLimitInformation.PerJobUserTimeLimit   (LARGE_INTEGER, 8B)
-      //   +0x10: BasicLimitInformation.LimitFlags            (DWORD, 4B)
-      //   ... 其余字段不需要设置，calloc 已清零
-      // 总结构体大小估算为 144B (x64)
-      const infoSize = 144;
-      final infoPtr = calloc<Uint8>(infoSize);
-      // LimitFlags @ offset 0x10
-      (infoPtr + 0x10).cast<Uint32>().value = _jobObjectLimitKillOnJobClose;
-
-      final ret = _setInformationJobObject(
-        job,
-        _jobObjectExtendedLimitInformation,
-        infoPtr.cast(),
-        infoSize,
-      );
-      calloc.free(infoPtr);
-
-      if (ret == 0) {
-        log.desktopLyric.warn('legacy', '[desktop lyric] SetInformationJobObject failed, closing job');
-        _closeHandle(job);
-        return null;
-      }
-
-      // 3) 将子进程加入 Job
-      final process = _openProcess(
-        _processSetQuota | _processTerminate,
-        0,
-        childPid,
-      );
-      if (process == nullptr) {
-        log.desktopLyric.warn('legacy', '[desktop lyric] OpenProcess failed, closing job');
-        _closeHandle(job);
-        return null;
-      }
-
-      try {
-        final assignRet = _assignProcessToJobObject(job, process);
-        if (assignRet == 0) {
-          log.desktopLyric.warn('legacy', '[desktop lyric] AssignProcessToJobObject failed '
-            '(进程可能已属于其他 Job)，退化至仅靠心跳超时',);
-          _closeHandle(job);
-          return null;
-        }
-
-        log.desktopLyric.info('legacy', '[desktop lyric] Job Object created, child PID=$childPid secured',);
-        return job;
-      } finally {
-        _closeHandle(process);
-      }
+      final job = _createConfiguredJob();
+      if (job == null) return null;
+      return _assignPidToJob(job, childPid);
     } catch (e) {
-      log.desktopLyric.warn('legacy', '[desktop lyric] WinJobObject init error: $e');
+      log.desktopLyric.warn(
+        'legacy',
+        '[desktop lyric] WinJobObject init error: $e',
+      );
       return null;
+    }
+  }
+
+  static Pointer<Void>? _createConfiguredJob() {
+    final job = _createJobObject(nullptr, nullptr);
+    if (job == nullptr) {
+      log.desktopLyric.warn(
+        'legacy',
+        '[desktop lyric] CreateJobObjectW failed',
+      );
+      return null;
+    }
+
+    // 2) 设置 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    // JOBOBJECT_EXTENDED_LIMIT_INFORMATION 布局 (x64):
+    //   +0x00: BasicLimitInformation.PerProcessUserTimeLimit (LARGE_INTEGER, 8B)
+    //   +0x08: BasicLimitInformation.PerJobUserTimeLimit   (LARGE_INTEGER, 8B)
+    //   +0x10: BasicLimitInformation.LimitFlags            (DWORD, 4B)
+    //   ... 其余字段不需要设置，calloc 已清零
+    // 总结构体大小估算为 144B (x64)
+    const infoSize = 144;
+    final infoPtr = calloc<Uint8>(infoSize);
+    // LimitFlags @ offset 0x10
+    (infoPtr + 0x10).cast<Uint32>().value = _jobObjectLimitKillOnJobClose;
+
+    final ret = _setInformationJobObject(
+      job,
+      _jobObjectExtendedLimitInformation,
+      infoPtr.cast(),
+      infoSize,
+    );
+    calloc.free(infoPtr);
+
+    if (ret == 0) {
+      log.desktopLyric.warn(
+        'legacy',
+        '[desktop lyric] SetInformationJobObject failed, closing job',
+      );
+      _closeHandle(job);
+      return null;
+    }
+    return job;
+  }
+
+  static Pointer<Void>? _assignPidToJob(Pointer<Void> job, int childPid) {
+    final process = _openProcess(
+      _processSetQuota | _processTerminate,
+      0,
+      childPid,
+    );
+    if (process == nullptr) {
+      log.desktopLyric.warn(
+        'legacy',
+        '[desktop lyric] OpenProcess failed, closing job',
+      );
+      _closeHandle(job);
+      return null;
+    }
+
+    try {
+      final assignRet = _assignProcessToJobObject(job, process);
+      if (assignRet == 0) {
+        log.desktopLyric.warn(
+          'legacy',
+          '[desktop lyric] AssignProcessToJobObject failed '
+              '(进程可能已属于其他 Job)，退化至仅靠心跳超时',
+        );
+        _closeHandle(job);
+        return null;
+      }
+
+      log.desktopLyric.info(
+        'legacy',
+        '[desktop lyric] Job Object created, child PID=$childPid secured',
+      );
+      return job;
+    } finally {
+      _closeHandle(process);
     }
   }
 
@@ -182,7 +207,10 @@ class DesktopLyricService extends ChangeNotifier {
   static const int _maxStdoutBufferSize = 65536;
   late final msg.MessageFrameDecoder _stdoutDecoder = msg.MessageFrameDecoder(
     maxBufferLength: _maxStdoutBufferSize,
-    onOverflow: () => log.desktopLyric.warn('legacy', '[desktop lyric] stdout buffer truncated'),
+    onOverflow: () => log.desktopLyric.warn(
+      'legacy',
+      '[desktop lyric] stdout buffer truncated',
+    ),
   );
   static const int _maxSendQueueSize = 128;
   int _sendQueueSize = 0;
@@ -217,14 +245,20 @@ class DesktopLyricService extends ChangeNotifier {
   void _monitorProcessExit(Process process, int generation) {
     process.exitCode
         .then((code) {
-          log.desktopLyric.info('legacy', '[desktop lyric] process exited with code: $code');
+          log.desktopLyric.info(
+            'legacy',
+            '[desktop lyric] process exited with code: $code',
+          );
           _cleanupAfterExit(
             expectedProcess: process,
             expectedGeneration: generation,
           );
         })
         .catchError((e) {
-          log.desktopLyric.warn('legacy', '[desktop lyric] process exit monitoring error: $e');
+          log.desktopLyric.warn(
+            'legacy',
+            '[desktop lyric] process exit monitoring error: $e',
+          );
         });
   }
 
@@ -266,31 +300,38 @@ class DesktopLyricService extends ChangeNotifier {
   Future<void> startDesktopLyric() async {
     if (_isRunning || _isStarting) return;
     _isStarting = true;
-
     if (_isKilling) {
       while (_isKilling) {
         await Future.delayed(const Duration(milliseconds: 50));
       }
     }
-
     final desktopLyricPath = path.join(
       path.dirname(Platform.resolvedExecutable),
       'desktop_lyric',
       'desktop_lyric.exe',
     );
     if (!File(desktopLyricPath).existsSync()) {
-      log.desktopLyric.error('legacy', '[desktop lyric] desktop_lyric.exe not found: $desktopLyricPath',);
+      log.desktopLyric.error(
+        'legacy',
+        '[desktop lyric] desktop_lyric.exe not found: $desktopLyricPath',
+      );
       _isStarting = false;
       return;
     }
+    final process = await _spawnDesktopLyricProcess(desktopLyricPath);
+    if (process == null) {
+      _isStarting = false;
+      return;
+    }
+    _attachDesktopLyricProcess(process);
+  }
 
+  Future<Process?> _spawnDesktopLyricProcess(String desktopLyricPath) async {
     final nowPlaying = _playbackService.nowPlaying;
     final currScheme = ThemeProvider.instance.darkScheme;
     const isDarkMode = true;
-
-    Process process;
     try {
-      process = await Process.start(desktopLyricPath, [
+      final process = await Process.start(desktopLyricPath, [
         json.encode(
           msg.InitArgsMessage(
             _playbackService.playerState == PlayerState.playing,
@@ -304,12 +345,17 @@ class DesktopLyricService extends ChangeNotifier {
           ).toJson(),
         ),
       ]);
+      return process;
     } catch (e) {
-      log.desktopLyric.error('legacy', '[desktop lyric] failed to start process: $e');
-      _isStarting = false;
-      return;
+      log.desktopLyric.error(
+        'legacy',
+        '[desktop lyric] failed to start process: $e',
+      );
+      return null;
     }
+  }
 
+  void _attachDesktopLyricProcess(Process process) {
     final generation = ++_processGeneration;
     _process = process;
     _isRunning = true;
@@ -319,7 +365,9 @@ class DesktopLyricService extends ChangeNotifier {
 
     _stderrSubscription = process.stderr
         .transform(utf8.decoder)
-        .listen((event) => log.desktopLyric.error('legacy', '[desktop lyric] $event'));
+        .listen(
+          (event) => log.desktopLyric.error('legacy', '[desktop lyric] $event'),
+        );
 
     _desktopLyricSubscription = process.stdout.transform(utf8.decoder).listen((
       event,
@@ -361,7 +409,11 @@ class DesktopLyricService extends ChangeNotifier {
             process.stdin.writeln(message.buildMessageJson());
             await process.stdin.flush();
           } catch (err, trace) {
-            log.desktopLyric.error('legacy', '[desktop lyric] send message error: $err', stackTrace: trace,);
+            log.desktopLyric.error(
+              'legacy',
+              '[desktop lyric] send message error: $err',
+              stackTrace: trace,
+            );
             _cleanupAfterExit(
               expectedProcess: process,
               expectedGeneration: generation,
@@ -369,7 +421,10 @@ class DesktopLyricService extends ChangeNotifier {
           }
         })
         .catchError((e) {
-          log.desktopLyric.warn('legacy', '[desktop lyric] send queue error: $e');
+          log.desktopLyric.warn(
+            'legacy',
+            '[desktop lyric] send queue error: $e',
+          );
         })
         .whenComplete(() {
           if (generation == _processGeneration && _sendQueueSize > 0) {
@@ -405,7 +460,10 @@ class DesktopLyricService extends ChangeNotifier {
           }
         }
       } catch (e) {
-        log.desktopLyric.warn('legacy', '[desktop lyric] killDesktopLyric error: $e');
+        log.desktopLyric.warn(
+          'legacy',
+          '[desktop lyric] killDesktopLyric error: $e',
+        );
       }
     }
 
@@ -555,36 +613,67 @@ class DesktopLyricService extends ChangeNotifier {
     final relativeHighlightDeadlineMs = highlightDeadlineMs == null
         ? null
         : highlightDeadlineMs - lineStartMs;
+    final words = _relativeLyricWords(line, lineStartMs, progressMs);
+    final next = _nextLyricLineFields(nextLine);
+    _sendLyricLineChanged(
+      line: line,
+      highlightDuration: highlightDuration,
+      words: words,
+      progressMs: progressMs,
+      nextContent: next.$1,
+      nextTranslation: next.$2,
+      nextWords: next.$3,
+      nextRomanLyric: next.$4,
+      isWordByWord: isWordByWord,
+      lineId: lineId,
+      relativeHighlightDeadlineMs: relativeHighlightDeadlineMs,
+    );
+    _sendLyricProgressSnapshot();
+  }
 
-    List<msg.LyricWord>? words;
-    if (line is SyncLyricLine) {
-      words = line.words
-          .map(
-            (w) => msg.LyricWord(
-              w.start.inMilliseconds - lineStartMs,
-              w.length.inMilliseconds,
-              w.content,
-            ),
-          )
-          .toList();
-      log.desktopLyric.info('legacy', '[desktop lyric] sendLyricLineMessage: line is SyncLyricLine, words count = ${words.length}, progressMs=$progressMs',);
-      if (words.isNotEmpty) {
-        log.desktopLyric.info('legacy', '[desktop lyric] first word: ${words[0].content}, startMs=${words[0].startMs}, lengthMs=${words[0].lengthMs}',);
-      }
-    } else {
-      log.desktopLyric.info('legacy', '[desktop lyric] sendLyricLineMessage: line is ${line.runtimeType}, words = null',);
+  List<msg.LyricWord>? _relativeLyricWords(
+    LyricLine line,
+    int lineStartMs,
+    int progressMs,
+  ) {
+    if (line is! SyncLyricLine) {
+      log.desktopLyric.info(
+        'legacy',
+        '[desktop lyric] sendLyricLineMessage: line is ${line.runtimeType}, words = null',
+      );
+      return null;
     }
+    final words = line.words
+        .map(
+          (w) => msg.LyricWord(
+            w.start.inMilliseconds - lineStartMs,
+            w.length.inMilliseconds,
+            w.content,
+          ),
+        )
+        .toList();
+    log.desktopLyric.info(
+      'legacy',
+      '[desktop lyric] sendLyricLineMessage: line is SyncLyricLine, words count = ${words.length}, progressMs=$progressMs',
+    );
+    if (words.isNotEmpty) {
+      log.desktopLyric.info(
+        'legacy',
+        '[desktop lyric] first word: ${words[0].content}, startMs=${words[0].startMs}, lengthMs=${words[0].lengthMs}',
+      );
+    }
+    return words;
+  }
 
-    String? nextContent;
-    String? nextTranslation;
-    String? nextRomanLyric;
-    List<msg.LyricWord>? nextWords;
-    if (nextLine != null) {
-      if (nextLine is SyncLyricLine) {
-        nextContent = nextLine.content;
-        nextTranslation = nextLine.translation;
-        nextRomanLyric = nextLine.romanLyric;
-        nextWords = nextLine.words
+  (String?, String?, List<msg.LyricWord>?, String?) _nextLyricLineFields(
+    LyricLine? nextLine,
+  ) {
+    if (nextLine == null) return (null, null, null, null);
+    if (nextLine is SyncLyricLine) {
+      return (
+        nextLine.content,
+        nextLine.translation,
+        nextLine.words
             .map(
               (w) => msg.LyricWord(
                 w.start.inMilliseconds,
@@ -592,56 +681,61 @@ class DesktopLyricService extends ChangeNotifier {
                 w.content,
               ),
             )
-            .toList();
-      } else if (nextLine is UnsyncLyricLine) {
-        nextContent = nextLine.content;
-        nextTranslation = nextLine.translation;
-        nextRomanLyric = nextLine.romanLyric;
-      }
+            .toList(),
+        nextLine.romanLyric,
+      );
     }
+    if (nextLine is UnsyncLyricLine) {
+      return (
+        nextLine.content,
+        nextLine.translation,
+        null,
+        nextLine.romanLyric,
+      );
+    }
+    return (null, null, null, null);
+  }
 
+  void _sendLyricLineChanged({
+    required LyricLine line,
+    required Duration highlightDuration,
+    required List<msg.LyricWord>? words,
+    required int progressMs,
+    required String? nextContent,
+    required String? nextTranslation,
+    required List<msg.LyricWord>? nextWords,
+    required String? nextRomanLyric,
+    required bool isWordByWord,
+    required int lineId,
+    required int? relativeHighlightDeadlineMs,
+  }) {
+    final String content;
     if (line is SyncLyricLine) {
-      sendMessage(
-        msg.LyricLineChangedMessage(
-          line.content,
-          highlightDuration,
-          line.translation,
-          words,
-          progressMs,
-          nextContent,
-          nextTranslation,
-          nextWords,
-          line.romanLyric,
-          nextRomanLyric,
-          isWordByWord,
-          lineId,
-          relativeHighlightDeadlineMs,
-          lyricHighlightCatchUpDurationMs,
-          lyricHighlightFinishLeadMs,
-        ),
-      );
+      content = line.content;
     } else if (line is LrcLine) {
-      sendMessage(
-        msg.LyricLineChangedMessage(
-          line.content,
-          highlightDuration,
-          line.translation,
-          words,
-          progressMs,
-          nextContent,
-          nextTranslation,
-          nextWords,
-          line.romanLyric,
-          nextRomanLyric,
-          isWordByWord,
-          lineId,
-          relativeHighlightDeadlineMs,
-          lyricHighlightCatchUpDurationMs,
-          lyricHighlightFinishLeadMs,
-        ),
-      );
+      content = line.content;
+    } else {
+      return;
     }
-    _sendLyricProgressSnapshot();
+    sendMessage(
+      msg.LyricLineChangedMessage(
+        content,
+        highlightDuration,
+        line.translation,
+        words,
+        progressMs,
+        nextContent,
+        nextTranslation,
+        nextWords,
+        line.romanLyric,
+        nextRomanLyric,
+        isWordByWord,
+        lineId,
+        relativeHighlightDeadlineMs,
+        lyricHighlightCatchUpDurationMs,
+        lyricHighlightFinishLeadMs,
+      ),
+    );
   }
 
   int _lineIdForIndex(int index) {
@@ -667,51 +761,61 @@ class DesktopLyricService extends ChangeNotifier {
       _nextSyntheticLineId = -1;
     }
     final switchStartMs = playService.lyricService.switchStartMsForLyric(lyric);
-    final lines = <msg.FullLyricLine>[];
-    for (var index = 0; index < lyric.lines.length; index++) {
-      final line = lyric.lines[index];
-      final content = _desktopLyricLineContent(line);
-      final isTransition = isDesktopLyricTransitionLine(line);
-      if ((content == null || content.trim().isEmpty) && !isTransition) {
-        continue;
-      }
-      final startMs = _desktopLyricLineStartMs(line);
-      final endMs = _desktopLyricLineEndMs(lyric, line);
-      final words = line is SyncLyricLine
-          ? line.words
-                .map(
-                  (word) => msg.LyricWord(
-                    word.start.inMilliseconds - line.start.inMilliseconds,
-                    word.length.inMilliseconds,
-                    word.content,
-                  ),
-                )
-                .toList(growable: false)
-          : null;
-      final highlightDeadlineMs = isTransition
-          ? null
-          : lyricHighlightDeadlineMsForLine(lyric, index);
-      lines.add(
-        msg.FullLyricLine(
-          isTransition ? _gapLineIdForStart(startMs) : _lineIdForIndex(index),
-          isTransition ? null : content,
-          isTransition ? null : line.translation,
-          isTransition ? null : line.romanLyric,
-          line.start.inMilliseconds,
-          endMs - line.start.inMilliseconds,
-          isTransition ? null : words,
-          highlightDeadlineMs == null
-              ? null
-              : highlightDeadlineMs - line.start.inMilliseconds,
-          isTransition
-              ? startMs
-              : index < switchStartMs.length
-              ? switchStartMs[index]
-              : startMs,
-        ),
-      );
-    }
+    final lines = <msg.FullLyricLine>[
+      for (var index = 0; index < lyric.lines.length; index++)
+        if (_shouldSendDesktopLyricLine(lyric.lines[index]))
+          _fullLyricLineAt(lyric, index, switchStartMs),
+    ];
     sendMessage(msg.FullLyricChangedMessage(lines));
+  }
+
+  bool _shouldSendDesktopLyricLine(LyricLine line) {
+    final content = _desktopLyricLineContent(line);
+    return (content != null && content.trim().isNotEmpty) ||
+        isDesktopLyricTransitionLine(line);
+  }
+
+  msg.FullLyricLine _fullLyricLineAt(
+    Lyric lyric,
+    int index,
+    List<int> switchStartMs,
+  ) {
+    final line = lyric.lines[index];
+    final content = _desktopLyricLineContent(line);
+    final isTransition = isDesktopLyricTransitionLine(line);
+    final startMs = _desktopLyricLineStartMs(line);
+    final endMs = _desktopLyricLineEndMs(lyric, line);
+    final words = line is SyncLyricLine
+        ? line.words
+              .map(
+                (word) => msg.LyricWord(
+                  word.start.inMilliseconds - line.start.inMilliseconds,
+                  word.length.inMilliseconds,
+                  word.content,
+                ),
+              )
+              .toList(growable: false)
+        : null;
+    final highlightDeadlineMs = isTransition
+        ? null
+        : lyricHighlightDeadlineMsForLine(lyric, index);
+    return msg.FullLyricLine(
+      isTransition ? _gapLineIdForStart(startMs) : _lineIdForIndex(index),
+      isTransition ? null : content,
+      isTransition ? null : line.translation,
+      isTransition ? null : line.romanLyric,
+      line.start.inMilliseconds,
+      endMs - line.start.inMilliseconds,
+      isTransition ? null : words,
+      highlightDeadlineMs == null
+          ? null
+          : highlightDeadlineMs - line.start.inMilliseconds,
+      isTransition
+          ? startMs
+          : index < switchStartMs.length
+          ? switchStartMs[index]
+          : startMs,
+    );
   }
 
   void _startProgressSync() {
@@ -791,78 +895,90 @@ class DesktopLyricService extends ChangeNotifier {
       sendNowPlayingMessage(nowPlaying);
     }
     sendPlayerStateMessage(_playbackService.playerState == PlayerState.playing);
+    playService.lyricService.currLyricFuture.then(_sendDesktopLyricOpeningLine);
+  }
 
-    playService.lyricService.currLyricFuture.then((lyric) {
-      if (lyric == null) return;
-      if (lyric.lines.isEmpty) return;
-      sendFullLyricMessage(lyric);
-      final positionMs = (_playbackService.position * 1000).round();
-      final preludeLine = desktopLyricPreludeLineAt(lyric, positionMs);
-      if (preludeLine != null) {
-        final firstLine = lyric.lines.firstWhere(
-          (line) => _desktopLyricLineContent(line)?.trim().isNotEmpty == true,
-        );
-        sendLyricLineMessage(
-          preludeLine,
-          nextLine: firstLine,
-          isWordByWord: lyric.isWordByWord,
-          syntheticLineId: syntheticLineIdForStart(
-            preludeLine.start.inMilliseconds,
-          ),
-        );
-        return;
-      }
-      final update = playService.lyricService.lineUpdateForLyric(
-        lyric,
-        _playbackService.position,
-      );
-      final idx = update?.primaryIndex;
-      if (idx == null || idx < 0 || idx >= lyric.lines.length) return;
-      final candidateLine = lyric.lines[idx];
-      if (isDesktopLyricTransitionLine(candidateLine)) {
-        var nextIndex = idx + 1;
-        while (nextIndex < lyric.lines.length &&
-            !_hasDesktopLyricContent(lyric.lines[nextIndex])) {
-          nextIndex += 1;
-        }
-        sendLyricLineMessage(
-          candidateLine,
-          nextLine: nextIndex < lyric.lines.length
-              ? lyric.lines[nextIndex]
-              : null,
-          isWordByWord: lyric.isWordByWord,
-          syntheticLineId: syntheticLineIdForStart(
-            _desktopLyricLineStartMs(candidateLine),
-          ),
-        );
-        return;
-      }
-      var currentIndex = idx;
-      while (currentIndex >= 0 &&
-          !_hasDesktopLyricContent(lyric.lines[currentIndex])) {
-        currentIndex -= 1;
-      }
-      if (currentIndex < 0) return;
-      final currentLine = lyric.lines[currentIndex];
-      var nextIndex = currentIndex + 1;
-      while (nextIndex < lyric.lines.length &&
-          !_hasDesktopLyricContent(lyric.lines[nextIndex])) {
-        nextIndex += 1;
-      }
-      final nextLine = nextIndex < lyric.lines.length
-          ? lyric.lines[nextIndex]
-          : null;
-      sendLyricLineMessage(
-        currentLine,
-        nextLine: nextLine,
-        isWordByWord: lyric.isWordByWord,
-        highlightDeadlineMs: lyricHighlightDeadlineMsForLine(
-          lyric,
-          currentIndex,
-        ),
-        lineIndex: currentIndex,
-      );
-    });
+  void _sendDesktopLyricOpeningLine(Lyric? lyric) {
+    if (lyric == null || lyric.lines.isEmpty) return;
+    sendFullLyricMessage(lyric);
+    final positionMs = (_playbackService.position * 1000).round();
+    final preludeLine = desktopLyricPreludeLineAt(lyric, positionMs);
+    if (preludeLine != null) {
+      _sendPreludeDesktopLyricLine(lyric, preludeLine);
+      return;
+    }
+    _sendIndexedDesktopLyricLine(lyric);
+  }
+
+  void _sendPreludeDesktopLyricLine(Lyric lyric, LyricLine preludeLine) {
+    final firstLine = lyric.lines.firstWhere(
+      (line) => _desktopLyricLineContent(line)?.trim().isNotEmpty == true,
+    );
+    sendLyricLineMessage(
+      preludeLine,
+      nextLine: firstLine,
+      isWordByWord: lyric.isWordByWord,
+      syntheticLineId: syntheticLineIdForStart(
+        preludeLine.start.inMilliseconds,
+      ),
+    );
+  }
+
+  void _sendIndexedDesktopLyricLine(Lyric lyric) {
+    final update = playService.lyricService.lineUpdateForLyric(
+      lyric,
+      _playbackService.position,
+    );
+    final idx = update?.primaryIndex;
+    if (idx == null || idx < 0 || idx >= lyric.lines.length) return;
+    final candidateLine = lyric.lines[idx];
+    if (isDesktopLyricTransitionLine(candidateLine)) {
+      _sendTransitionDesktopLyricLine(lyric, candidateLine, idx);
+      return;
+    }
+    _sendContentDesktopLyricLine(lyric, idx);
+  }
+
+  void _sendTransitionDesktopLyricLine(
+    Lyric lyric,
+    LyricLine candidateLine,
+    int idx,
+  ) {
+    var nextIndex = idx + 1;
+    while (nextIndex < lyric.lines.length &&
+        !_hasDesktopLyricContent(lyric.lines[nextIndex])) {
+      nextIndex += 1;
+    }
+    sendLyricLineMessage(
+      candidateLine,
+      nextLine: nextIndex < lyric.lines.length ? lyric.lines[nextIndex] : null,
+      isWordByWord: lyric.isWordByWord,
+      syntheticLineId: syntheticLineIdForStart(
+        _desktopLyricLineStartMs(candidateLine),
+      ),
+    );
+  }
+
+  void _sendContentDesktopLyricLine(Lyric lyric, int idx) {
+    var currentIndex = idx;
+    while (currentIndex >= 0 &&
+        !_hasDesktopLyricContent(lyric.lines[currentIndex])) {
+      currentIndex -= 1;
+    }
+    if (currentIndex < 0) return;
+    final currentLine = lyric.lines[currentIndex];
+    var nextIndex = currentIndex + 1;
+    while (nextIndex < lyric.lines.length &&
+        !_hasDesktopLyricContent(lyric.lines[nextIndex])) {
+      nextIndex += 1;
+    }
+    sendLyricLineMessage(
+      currentLine,
+      nextLine: nextIndex < lyric.lines.length ? lyric.lines[nextIndex] : null,
+      isWordByWord: lyric.isWordByWord,
+      highlightDeadlineMs: lyricHighlightDeadlineMsForLine(lyric, currentIndex),
+      lineIndex: currentIndex,
+    );
   }
 
   String? _desktopLyricLineContent(LyricLine line) {

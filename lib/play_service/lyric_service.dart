@@ -1163,7 +1163,11 @@ class LyricService extends ChangeNotifier {
         error,
         trace,
       ) {
-        log.lyric.warn('legacy', '[lyric] persist fallback source failed: $error', stackTrace: trace,);
+        log.lyric.warn(
+          'legacy',
+          '[lyric] persist fallback source failed: $error',
+          stackTrace: trace,
+        );
       });
     });
     return lyricFuture;
@@ -1182,15 +1186,12 @@ class LyricService extends ChangeNotifier {
 
   void updateLyric() {
     _cancelLyricWritePrompt();
-
     final nowPlaying = _getNowPlaying();
     if (nowPlaying == null) return;
     final audioPath = nowPlaying.path;
-
     final requestToken = _beginLyricRequest(audioPath);
     _activeLyricSourceType = LyricSourceType.local;
     _activeLocalIsExternal = null;
-
     final lyricSource = lyricSources[audioPath];
     final isFromWeb =
         lyricSource != null && lyricSource.source != LyricSourceType.local;
@@ -1200,79 +1201,102 @@ class LyricService extends ChangeNotifier {
     final localCacheKey = usesLocalLyric
         ? _localLyricCacheKey(audioPath)
         : null;
-
-    if (lyricSource == null) {
-      // 未指定单曲来源 → 使用全局「首选歌词来源」设置
-      if (AppSettings.instance.localLyricFirst) {
-        // 本地模式：只看内嵌/外置，绝不搜索网络
-        currLyricFuture = _loadLocalLyric(audioPath, notifyFailure: true);
-        _reportLyricUpdate(mode: 'local', source: 'local');
-      } else {
-        // 在线模式：只看用户选的那个源，不看内嵌/外置
-        final preferredSource = AppSettings.instance.preferredOnlineSource;
-        final rs = switch (preferredSource) {
-          LyricSourceType.qq => ResultSource.qq,
-          LyricSourceType.kugou => ResultSource.kugou,
-          LyricSourceType.ne => ResultSource.ne,
-          LyricSourceType.amll => ResultSource.amll,
-          LyricSourceType.local =>
-            ResultSource.qq, // unreachable in online mode
-        };
-        _activeLyricSourceType = _lyricSourceTypeFromResultSource(rs);
-        currLyricFuture = _startOnlineLyricWithFallback(
-          audio: nowPlaying,
-          preferredSource: rs,
-          requestToken: requestToken,
-          audioPath: audioPath,
-        );
-        _reportLyricUpdate(mode: 'online', source: rs.name);
-      }
-    } else {
-      _activeLyricSourceType = lyricSource.source;
-      if (lyricSource.source == LyricSourceType.local) {
-        currLyricFuture = _loadLocalLyric(audioPath, notifyFailure: true);
-      } else {
-        currLyricFuture = getOnlineLyric(
-          qqSongId: lyricSource.qqSongId,
-          kugouSongHash: lyricSource.kugouSongHash,
-          neSongId: lyricSource.neSongId,
-          amllTtmlFile: lyricSource.amllTtmlFile,
-          title: nowPlaying.title,
-          album: nowPlaying.album,
-          artist: nowPlaying.artist,
-          durationSec: nowPlaying.duration,
-        );
-      }
-      _reportLyricUpdate(mode: 'saved', source: lyricSource.source.name);
-    }
-
-    final future = currLyricFuture;
-    future.then((value) {
-      if (!_isCurrentLyricRequest(requestToken, audioPath, future)) return;
-      log.lyric.debug('legacy', '[lyric_service] then: value=${value?.lines.length ?? "null"}');
-
-      if (value != null) {
-        _nextLyricLine = 0;
-        _setCurrLyric(value);
-        if (usesLocalLyric) {
-          _putLocalLyricCache(localCacheKey!, value);
-        }
-        // 网络歌词加载成功后，安排写入标签提示
-        if (isFromWeb || value.source == LyricFormat.web) {
-          _scheduleLyricWritePrompt(audioPath);
-          unawaited(_autoSaveExternalLyric(audioPath));
-        }
-      } else {
-        _currLyric = null;
-      }
-      findCurrLyricLineAt(playService.playbackService.position);
-      _notifyLyricChangeListeners();
+    currLyricFuture = _lyricFutureForUpdate(
+      nowPlaying,
+      audioPath,
+      requestToken,
+      lyricSource,
+    );
+    currLyricFuture.then((value) {
+      _applyLoadedLyric(
+        value,
+        requestToken: requestToken,
+        audioPath: audioPath,
+        future: currLyricFuture,
+        usesLocalLyric: usesLocalLyric,
+        localCacheKey: localCacheKey,
+        isFromWeb: isFromWeb,
+      );
     });
-
     notifyListeners();
   }
 
-  /// 取消待处理的写入标签提示
+  Future<Lyric?> _lyricFutureForUpdate(
+    Audio nowPlaying,
+    String audioPath,
+    int requestToken,
+    LyricSource? lyricSource,
+  ) {
+    if (lyricSource == null) {
+      if (AppSettings.instance.localLyricFirst) {
+        _reportLyricUpdate(mode: 'local', source: 'local');
+        return _loadLocalLyric(audioPath, notifyFailure: true);
+      }
+      final preferredSource = AppSettings.instance.preferredOnlineSource;
+      final rs = switch (preferredSource) {
+        LyricSourceType.qq => ResultSource.qq,
+        LyricSourceType.kugou => ResultSource.kugou,
+        LyricSourceType.ne => ResultSource.ne,
+        LyricSourceType.amll => ResultSource.amll,
+        LyricSourceType.local => ResultSource.qq,
+      };
+      _activeLyricSourceType = _lyricSourceTypeFromResultSource(rs);
+      _reportLyricUpdate(mode: 'online', source: rs.name);
+      return _startOnlineLyricWithFallback(
+        audio: nowPlaying,
+        preferredSource: rs,
+        requestToken: requestToken,
+        audioPath: audioPath,
+      );
+    }
+    _activeLyricSourceType = lyricSource.source;
+    _reportLyricUpdate(mode: 'saved', source: lyricSource.source.name);
+    if (lyricSource.source == LyricSourceType.local) {
+      return _loadLocalLyric(audioPath, notifyFailure: true);
+    }
+    return getOnlineLyric(
+      qqSongId: lyricSource.qqSongId,
+      kugouSongHash: lyricSource.kugouSongHash,
+      neSongId: lyricSource.neSongId,
+      amllTtmlFile: lyricSource.amllTtmlFile,
+      title: nowPlaying.title,
+      album: nowPlaying.album,
+      artist: nowPlaying.artist,
+      durationSec: nowPlaying.duration,
+    );
+  }
+
+  void _applyLoadedLyric(
+    Lyric? value, {
+    required int requestToken,
+    required String audioPath,
+    required Future<Lyric?> future,
+    required bool usesLocalLyric,
+    required String? localCacheKey,
+    required bool isFromWeb,
+  }) {
+    if (!_isCurrentLyricRequest(requestToken, audioPath, future)) return;
+    log.lyric.debug(
+      'legacy',
+      '[lyric_service] then: value=${value?.lines.length ?? "null"}',
+    );
+    if (value != null) {
+      _nextLyricLine = 0;
+      _setCurrLyric(value);
+      if (usesLocalLyric) {
+        _putLocalLyricCache(localCacheKey!, value);
+      }
+      if (isFromWeb || value.source == LyricFormat.web) {
+        _scheduleLyricWritePrompt(audioPath);
+        unawaited(_autoSaveExternalLyric(audioPath));
+      }
+    } else {
+      _currLyric = null;
+    }
+    findCurrLyricLineAt(playService.playbackService.position);
+    _notifyLyricChangeListeners();
+  }
+
   void _cancelLyricWritePrompt() {
     _promptGeneration += 1;
     _promptTimer?.cancel();
@@ -1283,10 +1307,7 @@ class LyricService extends ChangeNotifier {
   void _scheduleLyricWritePrompt(String audioPath) {
     _cancelLyricWritePrompt();
     if (!enableOnlineLyricWriting) return;
-
-    // 已提示过/忽略过，不再提示
     if (!_lyricWritePromptHistory.shouldPrompt(audioPath)) return;
-
     final settings = AppSettings.instance;
     final useAutoWrite = settings.autoWriteLyricToTag;
     final delay = Duration(
@@ -1294,45 +1315,45 @@ class LyricService extends ChangeNotifier {
           ? settings.autoWriteLyricToTagDelay
           : settings.promptWriteLyricToTagDelay,
     );
-
     final generation = _promptGeneration;
-    _promptTimer = Timer(delay, () {
-      if (generation != _promptGeneration) return;
-      // 倒计时结束时检查是否还是同一首歌
-      final nowPlaying = _getNowPlaying();
-      if (nowPlaying == null || nowPlaying.path != audioPath) return;
+    _promptTimer = Timer(
+      delay,
+      () => _runLyricWritePrompt(audioPath, generation, useAutoWrite),
+    );
+  }
 
-      // 异步检查是否已有内嵌歌词
-      getLyricFromPath(path: audioPath).then((existing) {
-        if (generation != _promptGeneration ||
-            _getNowPlaying()?.path != audioPath) {
-          return;
-        }
-        if (existing != null && existing.trim().isNotEmpty) {
-          // 已有歌词，不再提示
-          _lyricWritePromptHistory.markEmbeddedLyricFound(audioPath);
-          return;
-        }
-
-        if (useAutoWrite) {
-          // 自动写入模式：直接写入，不弹窗
-          _handleAutoWrite(audioPath);
-        } else {
-          // 手动模式：弹窗询问
-          final shown = showLyricWritePrompt(
-            title: nowPlaying.title,
-            onWrite: () => _handlePromptWrite(audioPath),
-            onDismiss: () => _handlePromptDismiss(audioPath),
-          );
-          if (shown) {
-            _lyricWritePromptHistory.markPromptShown(audioPath);
-          }
-        }
-      });
+  void _runLyricWritePrompt(
+    String audioPath,
+    int generation,
+    bool useAutoWrite,
+  ) {
+    if (generation != _promptGeneration) return;
+    final nowPlaying = _getNowPlaying();
+    if (nowPlaying == null || nowPlaying.path != audioPath) return;
+    getLyricFromPath(path: audioPath).then((existing) {
+      if (generation != _promptGeneration ||
+          _getNowPlaying()?.path != audioPath) {
+        return;
+      }
+      if (existing != null && existing.trim().isNotEmpty) {
+        _lyricWritePromptHistory.markEmbeddedLyricFound(audioPath);
+        return;
+      }
+      if (useAutoWrite) {
+        _handleAutoWrite(audioPath);
+        return;
+      }
+      final shown = showLyricWritePrompt(
+        title: nowPlaying.title,
+        onWrite: () => _handlePromptWrite(audioPath),
+        onDismiss: () => _handlePromptDismiss(audioPath),
+      );
+      if (shown) {
+        _lyricWritePromptHistory.markPromptShown(audioPath);
+      }
     });
   }
 
-  /// 用户选择写入标签 → 立即写入当前歌曲标签
   void _handlePromptWrite(String audioPath) {
     _lyricWritePromptHistory.markPromptShown(audioPath);
     writeCurrentLyricToTag(expectedPath: audioPath)
@@ -1463,54 +1484,11 @@ class LyricService extends ChangeNotifier {
 
   void useOnlineLyric() {
     _cancelLyricWritePrompt();
-
     final nowPlaying = _getNowPlaying();
     if (nowPlaying == null) return;
     final audioPath = nowPlaying.path;
     final requestToken = _beginLyricRequest(audioPath);
-
-    // 优先使用已保存的指定来源，避免重新搜索导致加载失败
-    final savedSource = lyricSources[audioPath];
-    if (savedSource != null && savedSource.source != LyricSourceType.local) {
-      _activeLyricSourceType = savedSource.source;
-      log.lyric.info(
-        'lyric.update',
-        '切换到已保存的在线歌词',
-        fields: {'mode': 'saved', 'source': savedSource.source.name},
-      );
-      currLyricFuture = getOnlineLyric(
-        qqSongId: savedSource.qqSongId,
-        kugouSongHash: savedSource.kugouSongHash,
-        neSongId: savedSource.neSongId,
-        amllTtmlFile: savedSource.amllTtmlFile,
-        title: nowPlaying.title,
-        album: nowPlaying.album,
-        artist: nowPlaying.artist,
-        durationSec: nowPlaying.duration,
-      );
-    } else {
-      // 无指定来源 → 使用首选在线源（单源搜索，不三源并行）
-      final rs = switch (AppSettings.instance.preferredOnlineSource) {
-        LyricSourceType.qq => ResultSource.qq,
-        LyricSourceType.kugou => ResultSource.kugou,
-        LyricSourceType.ne => ResultSource.ne,
-        LyricSourceType.amll => ResultSource.amll,
-        LyricSourceType.local => ResultSource.qq,
-      };
-      _activeLyricSourceType = _lyricSourceTypeFromResultSource(rs);
-      log.lyric.info(
-        'lyric.update',
-        '按首选来源搜索在线歌词',
-        fields: {'mode': 'online', 'source': rs.name},
-      );
-      currLyricFuture = _startOnlineLyricWithFallback(
-        audio: nowPlaying,
-        preferredSource: rs,
-        requestToken: requestToken,
-        audioPath: audioPath,
-      );
-    }
-
+    currLyricFuture = _onlineLyricFuture(nowPlaying, audioPath, requestToken);
     final future = currLyricFuture;
     future.then((value) {
       if (!_isCurrentLyricRequest(requestToken, audioPath, future)) return;
@@ -1523,8 +1501,52 @@ class LyricService extends ChangeNotifier {
       findCurrLyricLineAt(playService.playbackService.position);
       _notifyLyricChangeListeners();
     });
-
     notifyListeners();
+  }
+
+  Future<Lyric?> _onlineLyricFuture(
+    Audio nowPlaying,
+    String audioPath,
+    int requestToken,
+  ) {
+    final savedSource = lyricSources[audioPath];
+    if (savedSource != null && savedSource.source != LyricSourceType.local) {
+      _activeLyricSourceType = savedSource.source;
+      log.lyric.info(
+        'lyric.update',
+        '切换到已保存的在线歌词',
+        fields: {'mode': 'saved', 'source': savedSource.source.name},
+      );
+      return getOnlineLyric(
+        qqSongId: savedSource.qqSongId,
+        kugouSongHash: savedSource.kugouSongHash,
+        neSongId: savedSource.neSongId,
+        amllTtmlFile: savedSource.amllTtmlFile,
+        title: nowPlaying.title,
+        album: nowPlaying.album,
+        artist: nowPlaying.artist,
+        durationSec: nowPlaying.duration,
+      );
+    }
+    final rs = switch (AppSettings.instance.preferredOnlineSource) {
+      LyricSourceType.qq => ResultSource.qq,
+      LyricSourceType.kugou => ResultSource.kugou,
+      LyricSourceType.ne => ResultSource.ne,
+      LyricSourceType.amll => ResultSource.amll,
+      LyricSourceType.local => ResultSource.qq,
+    };
+    _activeLyricSourceType = _lyricSourceTypeFromResultSource(rs);
+    log.lyric.info(
+      'lyric.update',
+      '按首选来源搜索在线歌词',
+      fields: {'mode': 'online', 'source': rs.name},
+    );
+    return _startOnlineLyricWithFallback(
+      audio: nowPlaying,
+      preferredSource: rs,
+      requestToken: requestToken,
+      audioPath: audioPath,
+    );
   }
 
   void useSpecificLyric(Lyric lyric) {

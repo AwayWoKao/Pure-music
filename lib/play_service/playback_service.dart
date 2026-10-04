@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 
 import 'package:pure_music/core/preference.dart';
 import 'package:pure_music/core/cache.dart';
@@ -98,15 +99,24 @@ class PlaybackService extends ChangeNotifier {
       return 0.0;
     }
     if (length <= 1.0 || position <= 1.0) {
-      log.playback.info('legacy', '[remember] too early: length=$length, position=$position');
+      log.playback.info(
+        'legacy',
+        '[remember] too early: length=$length, position=$position',
+      );
       return 0.0;
     }
     if (length - position <= 1.0) {
-      log.playback.info('legacy', '[remember] too close to end: remaining=${length - position}s');
+      log.playback.info(
+        'legacy',
+        '[remember] too close to end: remaining=${length - position}s',
+      );
       return 0.0;
     }
     final remembered = position.clamp(0.0, length).toDouble();
-    log.playback.info('legacy', '[remember] will save position=$remembered (length=$length)');
+    log.playback.info(
+      'legacy',
+      '[remember] will save position=$remembered (length=$length)',
+    );
     return remembered;
   }
 
@@ -126,7 +136,10 @@ class PlaybackService extends ChangeNotifier {
       return 0.0;
     }
     if (!savedPosition.isFinite || savedPosition <= 1.0) {
-      log.playback.info('legacy', '[restore] savedPosition too small: $savedPosition');
+      log.playback.info(
+        'legacy',
+        '[restore] savedPosition too small: $savedPosition',
+      );
       return 0.0;
     }
     if (!length.isFinite || length <= 1.0) {
@@ -134,21 +147,38 @@ class PlaybackService extends ChangeNotifier {
       return 0.0;
     }
     if (length - savedPosition <= 1.0) {
-      log.playback.info('legacy', '[restore] too close to end: saved=$savedPosition, length=$length, remaining=${length - savedPosition}',);
+      log.playback.info(
+        'legacy',
+        '[restore] too close to end: saved=$savedPosition, length=$length, remaining=${length - savedPosition}',
+      );
       return 0.0;
     }
     final restored = savedPosition.clamp(0.0, length).toDouble();
-    log.playback.info('legacy', '[restore] will seek to position=$restored (saved=$savedPosition, length=$length)',);
+    log.playback.info(
+      'legacy',
+      '[restore] will seek to position=$restored (saved=$savedPosition, length=$length)',
+    );
     return restored;
   }
 
   PlaybackService(this.playService) {
     unawaited(LastFmService.instance.ensureLoaded());
+    _bindExclusiveMode();
+    _bindPlayerState();
+    _bindSmtcControls();
+    _bindEqualizerAndSmartTransitions();
+    _bindSleepTimer();
+    _scheduleSessionRestore();
+  }
+
+  void _bindExclusiveMode() {
     _player.onExclusiveModeChanged = (exclusive) {
       _wasapiExclusive.value = exclusive;
       _rebuildGaplessPreparation();
     };
+  }
 
+  void _bindPlayerState() {
     _playerStateStreamSub = playerStateStream.listen((event) {
       var shouldAutoAdvance = false;
       if (event == PlayerState.completed) {
@@ -183,6 +213,9 @@ class PlaybackService extends ChangeNotifier {
         _autoNextAudio();
       }
     });
+  }
+
+  void _bindSmtcControls() {
     _gaplessTransitionStreamSub = _player.gaplessTransitionStream.listen(
       _onGaplessTransition,
     );
@@ -219,7 +252,9 @@ class PlaybackService extends ChangeNotifier {
       );
       seek(positionSeconds);
     });
+  }
 
+  void _bindEqualizerAndSmartTransitions() {
     _eq = EqualizerService(_player, _pref);
     _smartTransitions = SmartTransitionCoordinator(
       player: _player,
@@ -233,7 +268,9 @@ class PlaybackService extends ChangeNotifier {
       prepareFallback: _prepareSmartFallback,
       prepareAfterCompletion: _rebuildGaplessPreparation,
     );
+  }
 
+  void _bindSleepTimer() {
     SleepTimerService.instance.setOnExpired(_pauseForSleepTimer);
     SleepTimerService.instance.setOnEnterExtending(
       _abortQueuedTransitionsForSleepTimer,
@@ -241,7 +278,9 @@ class PlaybackService extends ChangeNotifier {
     SleepTimerService.instance.setOnCancelExtending(() {
       if (!_closed) _rebuildGaplessPreparation();
     });
+  }
 
+  void _scheduleSessionRestore() {
     Future.microtask(() async {
       try {
         await _restoreLastSession();
@@ -807,8 +846,11 @@ class PlaybackService extends ChangeNotifier {
       transitionId: pending.id,
       transitionMode: TransitionMode.crossfade,
     );
-    log.playback.info('legacy', '[smart transition] simple crossfade fallback '
-      'prepared=$prepared reason=$reason',);
+    log.playback.info(
+      'legacy',
+      '[smart transition] simple crossfade fallback '
+          'prepared=$prepared reason=$reason',
+    );
     if (!prepared) {
       _pendingGaplessTransition = null;
       return false;
@@ -1001,35 +1043,10 @@ class PlaybackService extends ChangeNotifier {
     final token = _songChangeTasks.begin();
     _cancelSongChangeTasks();
     ThemeProvider.instance.cancelPendingAudioTheme();
-
     _playlistIndex = audioIndex;
-    _nowPlaying.value = audio;
-    SleepTimerService.instance.onSongChanged(audio.path);
-    _lastNowPlayingChangedMs = DateTime.now().millisecondsSinceEpoch;
-    _resetListenAccumulator(audio.duration.toDouble());
-    unawaited(audio.loadSmallCoverBytes());
-    playService.desktopLyricService.sendNowPlayingMessage(audio);
-    playService.lyricService.updateLyric();
-
-    _playerState.value = state;
-    unawaited(
-      _smtc.updateDisplay(
-        title: audio.title,
-        artist: audio.artist,
-        album: audio.album,
-        duration: audio.duration * 1000,
-        path: audio.path,
-      ),
-    );
-    unawaited(
-      _smtc.updateState(
-        state == PlayerState.playing ? SMTCState.playing : SMTCState.paused,
-      ),
-    );
-    _syncSmtcPositionTimer();
+    _publishSongChange(audio, state);
     _schedulePositionSyncBurst(token: token, path: audio.path);
     notifyListeners();
-
     if (alreadyPlaying) {
       _player.replayGainDb = replayGainDb;
       if (replayGainDb == null) {
@@ -1049,6 +1066,32 @@ class PlaybackService extends ChangeNotifier {
     }
   }
 
+  void _publishSongChange(Audio audio, PlayerState state) {
+    _nowPlaying.value = audio;
+    SleepTimerService.instance.onSongChanged(audio.path);
+    _lastNowPlayingChangedMs = DateTime.now().millisecondsSinceEpoch;
+    _resetListenAccumulator(audio.duration.toDouble());
+    unawaited(audio.loadSmallCoverBytes());
+    playService.desktopLyricService.sendNowPlayingMessage(audio);
+    playService.lyricService.updateLyric();
+    _playerState.value = state;
+    unawaited(
+      _smtc.updateDisplay(
+        title: audio.title,
+        artist: audio.artist,
+        album: audio.album,
+        duration: audio.duration * 1000,
+        path: audio.path,
+      ),
+    );
+    unawaited(
+      _smtc.updateState(
+        state == PlayerState.playing ? SMTCState.playing : SMTCState.paused,
+      ),
+    );
+    _syncSmtcPositionTimer();
+  }
+
   bool _loadAndPlay(
     int audioIndex,
     List<Audio> playlist, {
@@ -1059,6 +1102,7 @@ class PlaybackService extends ChangeNotifier {
     if (audioIndex < 0 || audioIndex >= playlist.length) return false;
     final audio = playlist[audioIndex];
     _invalidateGaplessPreparation();
+    developer.Timeline.startSync('playback.loadAndPlay');
     try {
       _player.setSource(audio.path);
       _eq.reapplyOutputGain();
@@ -1072,12 +1116,18 @@ class PlaybackService extends ChangeNotifier {
       );
       return true;
     } catch (err, trace) {
-      log.playback.error('legacy', '加载并播放歌曲失败 index=$audioIndex title=${audio.title}', error: err,
-        stackTrace: trace,);
+      log.playback.error(
+        'legacy',
+        '加载并播放歌曲失败 index=$audioIndex title=${audio.title}',
+        error: err,
+        stackTrace: trace,
+      );
       if (reportFailure) {
         _reportPlaybackLoadFailure('播放失败，请查看日志');
       }
       return false;
+    } finally {
+      developer.Timeline.finishSync();
     }
   }
 
@@ -1236,49 +1286,59 @@ class PlaybackService extends ChangeNotifier {
   }) {
     _songChangeTasks.schedule(
       token: token,
-      onMetadata: () {
-        if (!_isCurrentSongChangeTask(token, audio)) return;
-
-        _syncSmtcPositionTimer();
-
-        playService.desktopLyricService.canSendMessage.then((canSend) {
-          if (!_isCurrentSongChangeTask(token, audio)) return;
-          if (!canSend) return;
-
-          playService.desktopLyricService.sendPlayerStateMessage(
-            playerState == PlayerState.playing,
-          );
-        });
-      },
-      onPrefetch: () {
-        if (!_isCurrentSongChangeTask(token, audio)) return;
-
-        ThemeProvider.instance.applyThemeFromAudio(audio);
-
-        if (audioIndex + 1 < playlist.length) {
-          final next = playlist[audioIndex + 1];
-          CoverImageCache.instance.preload(next.path);
-          playService.lyricService.prefetchLyric(next);
-          if (audioIndex + 2 < playlist.length) {
-            playService.lyricService.prefetchLyric(playlist[audioIndex + 2]);
-          }
-        }
-      },
-      onPersist: () {
-        if (!_isCurrentSongChangeTask(token, audio)) return;
-        final currentIndex = _playlistIndex;
-        if (currentIndex == null || _playlist.value.isEmpty) return;
-        _persistLastSession(
-          playlist: _playlist.value,
-          playlistIndex: currentIndex,
-          nowPlaying: audio,
-        );
-      },
-      onCleanup: () {
-        if (!_isCurrentSongChangeTask(token, audio)) return;
-        AudioLibrary.instance.evictStaleCoverBytes();
-      },
+      onMetadata: () => _onSongChangeMetadata(token, audio),
+      onPrefetch: () =>
+          _onSongChangePrefetch(token, audio, audioIndex, playlist),
+      onPersist: () => _onSongChangePersist(token, audio),
+      onCleanup: () => _onSongChangeCleanup(token, audio),
     );
+  }
+
+  void _onSongChangeMetadata(int token, Audio audio) {
+    if (!_isCurrentSongChangeTask(token, audio)) return;
+    _syncSmtcPositionTimer();
+    playService.desktopLyricService.canSendMessage.then((canSend) {
+      if (!_isCurrentSongChangeTask(token, audio)) return;
+      if (!canSend) return;
+      playService.desktopLyricService.sendPlayerStateMessage(
+        playerState == PlayerState.playing,
+      );
+    });
+  }
+
+  void _onSongChangePrefetch(
+    int token,
+    Audio audio,
+    int audioIndex,
+    List<Audio> playlist,
+  ) {
+    if (!_isCurrentSongChangeTask(token, audio)) return;
+    ThemeProvider.instance.applyThemeFromAudio(audio);
+    if (audioIndex + 1 < playlist.length) {
+      final next = playlist[audioIndex + 1];
+      CoverImageCache.instance.preload(next.path, modified: next.modified);
+      CoverImageCache.instance.preloadNowPlayingCover(next);
+      playService.lyricService.prefetchLyric(next);
+      if (audioIndex + 2 < playlist.length) {
+        playService.lyricService.prefetchLyric(playlist[audioIndex + 2]);
+      }
+    }
+  }
+
+  void _onSongChangePersist(int token, Audio audio) {
+    if (!_isCurrentSongChangeTask(token, audio)) return;
+    final currentIndex = _playlistIndex;
+    if (currentIndex == null || _playlist.value.isEmpty) return;
+    _persistLastSession(
+      playlist: _playlist.value,
+      playlistIndex: currentIndex,
+      nowPlaying: audio,
+    );
+  }
+
+  void _onSongChangeCleanup(int token, Audio audio) {
+    if (!_isCurrentSongChangeTask(token, audio)) return;
+    AudioLibrary.instance.evictStaleCoverBytes();
   }
 
   /// 播放当前播放列表的第几项，只能用在播放列表界面
@@ -1308,7 +1368,10 @@ class PlaybackService extends ChangeNotifier {
   }
 
   void reorderPlaylist(int oldIndex, int newIndex) {
-    log.playback.debug('legacy', '[action] reorderPlaylist old=$oldIndex new=$newIndex');
+    log.playback.debug(
+      'legacy',
+      '[action] reorderPlaylist old=$oldIndex new=$newIndex',
+    );
     AudioEchoLogRecorder.instance.mark(
       'reorderPlaylist',
       extra: {'oldIndex': oldIndex, 'newIndex': newIndex},
@@ -1342,7 +1405,10 @@ class PlaybackService extends ChangeNotifier {
 
   /// 播放 playlist[audioIndex] 并设置播放列表为 playlist
   void play(int audioIndex, List<Audio> playlist) {
-    log.playback.debug('legacy', '[action] play index=$audioIndex playlistLen=${playlist.length}');
+    log.playback.debug(
+      'legacy',
+      '[action] play index=$audioIndex playlistLen=${playlist.length}',
+    );
     AudioEchoLogRecorder.instance.mark(
       'play',
       extra: {'index': audioIndex, 'playlistLen': playlist.length},
@@ -1371,7 +1437,10 @@ class PlaybackService extends ChangeNotifier {
   }
 
   void shuffleAndPlay(List<Audio> audios) {
-    log.playback.debug('legacy', '[action] shuffleAndPlay len=${audios.length}');
+    log.playback.debug(
+      'legacy',
+      '[action] shuffleAndPlay len=${audios.length}',
+    );
     AudioEchoLogRecorder.instance.mark(
       'shuffleAndPlay',
       extra: {'len': audios.length},
@@ -1437,6 +1506,22 @@ class PlaybackService extends ChangeNotifier {
   }
 
   /// 从播放队列中移除指定索引的曲目
+
+  void _syncBackupAfterQueueRemove(Audio removedAudio) {
+    if (shuffle.value) {
+      final backup = List<Audio>.from(_playlistBackup);
+      final backupIndex = backup.indexWhere(
+        (audio) => audio.path == removedAudio.path,
+      );
+      if (backupIndex >= 0) {
+        backup.removeAt(backupIndex);
+      }
+      _setPlaylistBackup(backup);
+      return;
+    }
+    _setPlaylistBackup(_playlist.value);
+  }
+
   void removeFromQueue(int index) {
     log.playback.debug('legacy', '[action] removeFromQueue index=$index');
     AudioEchoLogRecorder.instance.mark(
@@ -1448,18 +1533,7 @@ class PlaybackService extends ChangeNotifier {
     final removedAudio = _playlist.value[index];
     final wasPlaying = _playlistIndex == index;
     _setPlaylist([..._playlist.value]..removeAt(index));
-    if (shuffle.value) {
-      final backup = List<Audio>.from(_playlistBackup);
-      final backupIndex = backup.indexWhere(
-        (audio) => audio.path == removedAudio.path,
-      );
-      if (backupIndex >= 0) {
-        backup.removeAt(backupIndex);
-      }
-      _setPlaylistBackup(backup);
-    } else {
-      _setPlaylistBackup(_playlist.value);
-    }
+    _syncBackupAfterQueueRemove(removedAudio);
     if (_playlistIndex != null) {
       if (_playlistIndex! > index) {
         _playlistIndex = _playlistIndex! - 1;
@@ -1584,7 +1658,10 @@ class PlaybackService extends ChangeNotifier {
           _sessionStore.snapshot.copyWith(lastPositionSeconds: 0.0),
         );
       }
-      log.playback.info('legacy', '[persist] rememberPlaybackPosition disabled, cleared position');
+      log.playback.info(
+        'legacy',
+        '[persist] rememberPlaybackPosition disabled, cleared position',
+      );
       return;
     }
     final currentAudio = nowPlaying;
@@ -1592,51 +1669,74 @@ class PlaybackService extends ChangeNotifier {
       await _sessionStore.save(
         _sessionStore.snapshot.copyWith(lastPositionSeconds: 0.0),
       );
-      log.playback.info('legacy', '[persist] no audio playing, cleared position');
+      log.playback.info(
+        'legacy',
+        '[persist] no audio playing, cleared position',
+      );
       return;
     }
     final remembered = _rememberedPositionSeconds();
     await _sessionStore.save(
       _sessionStore.snapshot.copyWith(lastPositionSeconds: remembered),
     );
-    log.playback.info('legacy', '[persist] saved position: $remembered (from pos=$position, len=$length)',);
+    log.playback.info(
+      'legacy',
+      '[persist] saved position: $remembered (from pos=$position, len=$length)',
+    );
   }
 
   Future<void> _restoreLastSession() async {
     var session = _sessionStore.snapshot;
     var lastPath = session.lastAudioPath;
     if (lastPath.isEmpty) return;
-
-    for (int i = 0; i < 10; i++) {
-      if (AudioLibrary.instance.audioCollection.isNotEmpty) break;
-      await Future.delayed(const Duration(milliseconds: 200));
-    }
-    if (AudioLibrary.instance.audioCollection.isEmpty) return;
-
+    if (!await _waitForLibraryAudios()) return;
     session = _sessionStore.snapshot;
     lastPath = session.lastAudioPath;
     if (lastPath.isEmpty) return;
-    final savedPosition = session.lastPositionSeconds;
+    final pathToAudio = {
+      for (final audio in AudioLibrary.instance.audioCollection)
+        audio.path: audio,
+    };
+    final restoredPlaylist = _playlistFromSessionPaths(
+      session.lastPlaylistPaths,
+      pathToAudio,
+      lastPath,
+    );
+    if (restoredPlaylist.isEmpty) return;
+    _installRestoredSession(session, restoredPlaylist, pathToAudio, lastPath);
+    await _restorePlayerAndSmtc(session, lastPath);
+  }
 
-    final pathToAudio = <String, Audio>{};
-    for (final audio in AudioLibrary.instance.audioCollection) {
-      pathToAudio[audio.path] = audio;
+  Future<bool> _waitForLibraryAudios() async {
+    for (int i = 0; i < 10; i++) {
+      if (AudioLibrary.instance.audioCollection.isNotEmpty) return true;
+      await Future.delayed(const Duration(milliseconds: 200));
     }
+    return AudioLibrary.instance.audioCollection.isNotEmpty;
+  }
 
-    final restoredPlaylist = <Audio>[];
-    for (final p in session.lastPlaylistPaths) {
-      final a = pathToAudio[p];
-      if (a != null) {
-        restoredPlaylist.add(a);
-      }
-    }
-
+  List<Audio> _playlistFromSessionPaths(
+    List<String> paths,
+    Map<String, Audio> pathToAudio,
+    String lastPath,
+  ) {
+    final restoredPlaylist = <Audio>[
+      for (final p in paths)
+        if (pathToAudio[p] != null) pathToAudio[p]!,
+    ];
     if (restoredPlaylist.isEmpty) {
       final single = pathToAudio[lastPath];
-      if (single == null) return;
-      restoredPlaylist.add(single);
+      if (single != null) restoredPlaylist.add(single);
     }
+    return restoredPlaylist;
+  }
 
+  void _installRestoredSession(
+    PlaybackSessionSnapshot session,
+    List<Audio> restoredPlaylist,
+    Map<String, Audio> pathToAudio,
+    String lastPath,
+  ) {
     final restoredOriginalPlaylist = <Audio>[];
     for (final p in session.lastOriginalPlaylistPaths) {
       final a = pathToAudio[p];
@@ -1667,7 +1767,7 @@ class PlaybackService extends ChangeNotifier {
       to: restored.title,
       index: restoredIndex,
       origin: SongOrigin(
-        at: savedPosition,
+        at: session.lastPositionSeconds,
         length: restored.duration.toDouble(),
         from: null,
         fromIndex: null,
@@ -1679,7 +1779,12 @@ class PlaybackService extends ChangeNotifier {
     _smtcDisplayRevision++;
     _lastNowPlayingChangedMs = DateTime.now().millisecondsSinceEpoch;
     nowPlaying!.loadSmallCoverBytes();
+  }
 
+  Future<void> _restorePlayerAndSmtc(
+    PlaybackSessionSnapshot session,
+    String lastPath,
+  ) async {
     try {
       _player.setSource(nowPlaying!.path);
       _eq.reapplyOutputGain();
@@ -1699,15 +1804,18 @@ class PlaybackService extends ChangeNotifier {
       if (_closed || !identical(nowPlaying, restoredAudio)) return;
       final restoreTo = restoredPositionSeconds(
         enabled: AppSettings.instance.rememberPlaybackPosition,
-        savedPosition: savedPosition,
+        savedPosition: session.lastPositionSeconds,
         length: _player.length,
         savedAudioPath: lastPath,
         restoredAudioPath: restoredAudio.path,
       );
-      log.playback.info('legacy', '[restore] rememberPlaybackPosition=${AppSettings.instance.rememberPlaybackPosition}, '
-        'savedPosition=${session.lastPositionSeconds}, '
-        'playerLength=${_player.length}, '
-        'restoreTo=$restoreTo',);
+      log.playback.info(
+        'legacy',
+        '[restore] rememberPlaybackPosition=${AppSettings.instance.rememberPlaybackPosition}, '
+            'session.lastPositionSeconds=${session.lastPositionSeconds}, '
+            'playerLength=${_player.length}, '
+            'restoreTo=$restoreTo',
+      );
       if (restoreTo > 0) {
         _player.seek(restoreTo);
       }
@@ -1867,17 +1975,25 @@ class PlaybackService extends ChangeNotifier {
     _songChangeTasks.begin();
     _cancelSongChangeTasks();
     _cancelPositionSyncBurst();
-
     try {
       await _smartTransitions.close();
     } catch (_) {}
-
-    // 1. 先停止音频播放（防止释放资源时仍有音频回调）
     try {
       _player.pause();
     } catch (_) {}
+    final smtcCancels = await _cancelPlaybackSubscriptions();
+    await Future.delayed(const Duration(milliseconds: 100));
+    await _closeSmtc(smtcCancels);
+    _disposePlaybackNotifiers();
+    try {
+      _player.free();
+    } catch (e) {
+      log.playback.warn('legacy', '_player.free error: $e');
+    }
+  }
 
-    // 2. 取消所有 Stream 订阅（在关闭 Controllers 之前）
+  Future<({Future<void> events, Future<void> position})>
+  _cancelPlaybackSubscriptions() async {
     try {
       await _playerStateStreamSub.cancel();
     } catch (_) {}
@@ -1896,23 +2012,25 @@ class PlaybackService extends ChangeNotifier {
     _smtcPositionTimer = null;
     _smtcKeepAliveTimer?.cancel();
     _smtcKeepAliveTimer = null;
+    return (events: smtcEventCancellation, position: smtcPositionCancellation);
+  }
 
-    // 4. 等待异步回调完全停止（避免 use-after-free）
-    await Future.delayed(const Duration(milliseconds: 100));
-
-    // 5. 关闭 SMTC（系统媒体传输控制）
+  Future<void> _closeSmtc(
+    ({Future<void> events, Future<void> position}) smtcCancels,
+  ) async {
     try {
       await _smtc.updateState(SMTCState.paused);
       await _smtc.close();
     } catch (_) {}
     try {
-      await smtcEventCancellation;
+      await smtcCancels.events;
     } catch (_) {}
     try {
-      await smtcPositionCancellation;
+      await smtcCancels.position;
     } catch (_) {}
+  }
 
-    // 6. dispose ValueNotifiers（释放 _playlist 引用的 Audio 列表）
+  void _disposePlaybackNotifiers() {
     try {
       _wasapiExclusive.dispose();
     } catch (_) {}
@@ -1944,12 +2062,5 @@ class PlaybackService extends ChangeNotifier {
     try {
       _playCountRevision.dispose();
     } catch (_) {}
-
-    // 7. 最后释放 BASS 音频资源（此时所有回调和订阅已停止）
-    try {
-      _player.free();
-    } catch (e) {
-      log.playback.warn('legacy', '_player.free error: $e');
-    }
   }
 }

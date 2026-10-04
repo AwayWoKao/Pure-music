@@ -111,14 +111,22 @@ final class SmartTransitionCoordinator {
             _handleNativeEvent,
             onError: (Object error, StackTrace trace) {
               _lastFallbackReason = 'native_event_stream: $error';
-              log.playback.warn('legacy', '[smart transition] native event stream failed', error: error,
-                stackTrace: trace,);
+              log.playback.warn(
+                'legacy',
+                '[smart transition] native event stream failed',
+                error: error,
+                stackTrace: trace,
+              );
             },
           );
     } catch (error, trace) {
       _lastFallbackReason = 'native_event_init: $error';
-      log.playback.warn('legacy', '[smart transition] native event stream unavailable', error: error,
-        stackTrace: trace,);
+      log.playback.warn(
+        'legacy',
+        '[smart transition] native event stream unavailable',
+        error: error,
+        stackTrace: trace,
+      );
     }
   }
 
@@ -173,6 +181,18 @@ final class SmartTransitionCoordinator {
       _state = 'idle';
       return;
     }
+    final pending = _beginPendingTransition(target);
+    if (!_player.canUseSmartTransition) {
+      _fallback(pending, 'mixer_unavailable');
+      return;
+    }
+    if (!_hasRequiredCapabilities(pending)) return;
+    unawaited(_analyzeOutgoing(pending));
+  }
+
+  _PendingSmartTransition _beginPendingTransition(
+    SmartTransitionTarget target,
+  ) {
     final pending = _PendingSmartTransition(
       transitionId: _nextTransitionId(),
       generation: ++_generation,
@@ -200,23 +220,22 @@ final class SmartTransitionCoordinator {
         'incomingPath': target.incoming.path,
       },
     );
+    return pending;
+  }
 
-    if (!_player.canUseSmartTransition) {
-      _fallback(pending, 'mixer_unavailable');
-      return;
-    }
+  bool _hasRequiredCapabilities(_PendingSmartTransition pending) {
     final capabilities = _capabilities();
-    if (capabilities['available'] != true ||
-        capabilities['absoluteScheduling'] != true ||
-        capabilities['envelope'] != true ||
-        capabilities['playbackSync'] != true) {
-      _fallback(
-        pending,
-        'native_capability: ${capabilities['error'] ?? 'incomplete'}',
-      );
-      return;
+    if (capabilities['available'] == true &&
+        capabilities['absoluteScheduling'] == true &&
+        capabilities['envelope'] == true &&
+        capabilities['playbackSync'] == true) {
+      return true;
     }
-    unawaited(_analyzeOutgoing(pending));
+    _fallback(
+      pending,
+      'native_capability: ${capabilities['error'] ?? 'incomplete'}',
+    );
+    return false;
   }
 
   void onPositionTick(double positionSeconds, double lengthSeconds) {
@@ -261,6 +280,21 @@ final class SmartTransitionCoordinator {
 
   bool cancel(String reason) {
     final pending = _pending;
+    _logSmartTransitionCancel(pending, reason);
+    _generation++;
+    if (pending == null) return false;
+    pending.cancelTimers();
+    _cancelPendingAnalysis(pending);
+    if (!pending.transferred) {
+      return _cancelUntransferred(pending);
+    }
+    return _cancelTransferred(pending, reason);
+  }
+
+  void _logSmartTransitionCancel(
+    _PendingSmartTransition? pending,
+    String reason,
+  ) {
     AudioEchoLogRecorder.instance.mark(
       'smart_transition_cancel',
       extra: {
@@ -274,29 +308,30 @@ final class SmartTransitionCoordinator {
         'reserved': pending?.reserved,
       },
     );
-    _generation++;
-    if (pending == null) return false;
-    pending.cancelTimers();
+  }
+
+  void _cancelPendingAnalysis(_PendingSmartTransition pending) {
     final jobId = pending.analysisJobId;
-    if (jobId != null) {
-      native.cancelSmartTransitionAnalysis(jobId: BigInt.from(jobId));
-      pending.analysisJobId = null;
-    }
+    if (jobId == null) return;
+    native.cancelSmartTransitionAnalysis(jobId: BigInt.from(jobId));
+    pending.analysisJobId = null;
+  }
 
-    if (!pending.transferred) {
-      final preparation = pending.preparation;
-      if (preparation != null) {
-        _player.discardSmartTransition(
-          pending.transitionId,
-          incomingReleasedByNative: false,
-        );
-      }
-      pending.terminal = true;
-      _pending = null;
-      _state = 'cancelled';
-      return false;
+  bool _cancelUntransferred(_PendingSmartTransition pending) {
+    final preparation = pending.preparation;
+    if (preparation != null) {
+      _player.discardSmartTransition(
+        pending.transitionId,
+        incomingReleasedByNative: false,
+      );
     }
+    pending.terminal = true;
+    _pending = null;
+    _state = 'cancelled';
+    return false;
+  }
 
+  bool _cancelTransferred(_PendingSmartTransition pending, String reason) {
     final snapshot = _decodeMap(
       native.cancelNativeSmartTransitionJson(
         transitionId: BigInt.from(pending.transitionId),
@@ -330,14 +365,22 @@ final class SmartTransitionCoordinator {
     try {
       cancel('close');
     } catch (error, trace) {
-      log.playback.warn('legacy', '[smart transition] close cancellation failed', error: error,
-        stackTrace: trace,);
+      log.playback.warn(
+        'legacy',
+        '[smart transition] close cancellation failed',
+        error: error,
+        stackTrace: trace,
+      );
     }
     try {
       native.closeSmartTransitionEvents();
     } catch (error, trace) {
-      log.playback.warn('legacy', '[smart transition] event stream close failed', error: error,
-        stackTrace: trace,);
+      log.playback.warn(
+        'legacy',
+        '[smart transition] event stream close failed',
+        error: error,
+        stackTrace: trace,
+      );
     }
     final subscription = _eventSubscription;
     _eventSubscription = null;
@@ -381,8 +424,12 @@ final class SmartTransitionCoordinator {
       _startIncomingAnalysisIfReady(pending);
     } catch (error, trace) {
       if (!_isCurrent(pending)) return;
-      log.playback.warn('legacy', '[smart transition] outgoing analysis failed', error: error,
-        stackTrace: trace,);
+      log.playback.warn(
+        'legacy',
+        '[smart transition] outgoing analysis failed',
+        error: error,
+        stackTrace: trace,
+      );
       _fallback(pending, 'outgoing_analysis: $error');
     }
   }
@@ -426,8 +473,12 @@ final class SmartTransitionCoordinator {
       await _planAndArm(pending);
     } catch (error, trace) {
       if (!_isCurrent(pending)) return;
-      log.playback.warn('legacy', '[smart transition] incoming analysis failed', error: error,
-        stackTrace: trace,);
+      log.playback.warn(
+        'legacy',
+        '[smart transition] incoming analysis failed',
+        error: error,
+        stackTrace: trace,
+      );
       _fallback(pending, 'incoming_analysis: $error');
     }
   }
@@ -440,123 +491,192 @@ final class SmartTransitionCoordinator {
     _state = 'planning';
     final incomingReplayGainDb = await _readReplayGain(pending.target.incoming);
     if (!_isCurrent(pending) || !_validateTarget(pending.target)) return;
-    final capabilities = _capabilities();
     try {
-      final planJson = await native.planSmartTransitionJson(
-        outgoingProfileJson: pending.outgoingProfileJson!,
-        incomingProfileJson: pending.incomingProfileJson!,
-        isGaplessCandidate: pending.target.isGaplessCandidate,
-        isSameAlbum: pending.target.isSameAlbum,
-        userSpeed: pending.target.userSpeed,
-        pitch: pending.target.pitch,
-        tempoAtCueAvailable: capabilities['tempoAtCue'] == true,
-        outgoingReplayGainDb: pending.target.outgoingReplayGainDb ?? 0.0,
-        incomingReplayGainDb: incomingReplayGainDb ?? 0.0,
+      final plan = await _requestSmartTransitionPlan(
+        pending,
+        incomingReplayGainDb,
       );
-      if (!_isCurrent(pending) || !_validateTarget(pending.target)) return;
-      final plan = _decodeMap(planJson);
+      if (plan == null) return;
       pending.plan = plan;
       _lastPlan = plan;
       _state = 'preparing';
-      AudioEchoLogRecorder.instance.mark(
-        'smart_transition_plan',
-        extra: {
-          'transitionId': pending.transitionId,
-          'generation': pending.generation,
-          'sourceGeneration': pending.sourceGeneration,
-          'mode': plan['mode'],
-          'confidence': plan['confidence'],
-          'outgoingCueMs': plan['outgoing_cue_ms'],
-          'incomingCueMs': plan['incoming_cue_ms'],
-          'durationMs': plan['duration_ms'],
-          'diagnostics': jsonEncode(plan['diagnostics']),
-        },
+      _logSmartTransitionPlan(pending, plan);
+      final preparation = _prepareIncomingSmartTransition(
+        pending,
+        incomingReplayGainDb,
       );
-      final preparation = _player.prepareSmartTransition(
-        pending.target.incoming.path,
-        transitionId: pending.transitionId,
-        replayGainDb: incomingReplayGainDb,
-      );
-      if (preparation == null) {
-        _fallback(pending, 'incoming_prepare_failed');
-        return;
-      }
-      pending.preparation = preparation;
-      if (!_isCurrent(pending) ||
-          !_validateTarget(pending.target) ||
-          preparation.sourceGeneration != _player.sourceGeneration) {
-        _player.discardSmartTransition(
-          pending.transitionId,
-          incomingReleasedByNative: false,
-        );
-        pending.preparation = null;
-        cancel('target_changed_before_arm');
-        return;
-      }
-      final outcome = _decodeMap(
-        native.armSmartTransitionJson(
-          bassDir: _player.bassDirectory,
-          requestJson: jsonEncode({
-            'transitionId': pending.transitionId,
-            'sourceGeneration': preparation.sourceGeneration,
-            'mixerHandle': preparation.mixerHandle,
-            'outgoingHandle': preparation.outgoingHandle,
-            'incomingHandle': preparation.incomingHandle,
-            'incomingPath': preparation.path,
-            'incomingReplayGainDb': preparation.replayGainDb,
-            'plan': plan,
-          }),
-        ),
-      );
-      if (outcome['accepted'] != true) {
-        _player.discardSmartTransition(
-          pending.transitionId,
-          incomingReleasedByNative: false,
-        );
-        pending.preparation = null;
-        _fallback(pending, 'native_arm: ${outcome['error'] ?? 'rejected'}');
-        return;
-      }
-      pending.transferred = true;
-      pending.reserved = true;
-      _player.markSmartTransitionTransferred(pending.transitionId);
-      final snapshot = _objectMap(outcome['snapshot']);
-      _lastNativeSnapshot = snapshot;
-      final state = snapshot?['state'] as String? ?? 'armed';
-      if (state == 'failed' || state == 'cancelled') {
-        _player.discardSmartTransition(
-          pending.transitionId,
-          incomingReleasedByNative: true,
-        );
-        native.acknowledgeNativeSmartTransition(
-          transitionId: BigInt.from(pending.transitionId),
-        );
-        pending.transferred = false;
-        pending.reserved = false;
-        _fallback(pending, 'native_arm: ${outcome['error'] ?? state}');
-        return;
-      }
-      _state = 'armed';
-      AudioEchoLogRecorder.instance.mark(
-        'smart_transition_armed',
-        extra: {
-          'transitionId': pending.transitionId,
-          'generation': pending.generation,
-          'sourceGeneration': pending.sourceGeneration,
-          'nativeState': state,
-          'snapshot': jsonEncode(snapshot),
-        },
-      );
-      _scheduleStartRecovery(pending);
-      log.playback.info('legacy', '[smart transition] plan id=${pending.transitionId} '
-        'mode=${plan['mode']} confidence=${plan['confidence']} '
-        'cue=${plan['outgoing_cue_ms']} duration=${plan['duration_ms']}',);
+      if (preparation == null) return;
+      _armPreparedSmartTransition(pending, plan, preparation);
     } catch (error, trace) {
       if (!_isCurrent(pending)) return;
-      log.playback.warn('legacy', '[smart transition] planning or arm failed', error: error,
-        stackTrace: trace,);
+      log.playback.warn(
+        'legacy',
+        '[smart transition] planning or arm failed',
+        error: error,
+        stackTrace: trace,
+      );
       _fallback(pending, 'plan_or_arm: $error');
     }
+  }
+
+  Future<Map<String, dynamic>?> _requestSmartTransitionPlan(
+    _PendingSmartTransition pending,
+    double? incomingReplayGainDb,
+  ) async {
+    final capabilities = _capabilities();
+    final planJson = await native.planSmartTransitionJson(
+      outgoingProfileJson: pending.outgoingProfileJson!,
+      incomingProfileJson: pending.incomingProfileJson!,
+      isGaplessCandidate: pending.target.isGaplessCandidate,
+      isSameAlbum: pending.target.isSameAlbum,
+      userSpeed: pending.target.userSpeed,
+      pitch: pending.target.pitch,
+      tempoAtCueAvailable: capabilities['tempoAtCue'] == true,
+      outgoingReplayGainDb: pending.target.outgoingReplayGainDb ?? 0.0,
+      incomingReplayGainDb: incomingReplayGainDb ?? 0.0,
+    );
+    if (!_isCurrent(pending) || !_validateTarget(pending.target)) return null;
+    return _decodeMap(planJson);
+  }
+
+  void _logSmartTransitionPlan(
+    _PendingSmartTransition pending,
+    Map<String, dynamic> plan,
+  ) {
+    AudioEchoLogRecorder.instance.mark(
+      'smart_transition_plan',
+      extra: {
+        'transitionId': pending.transitionId,
+        'generation': pending.generation,
+        'sourceGeneration': pending.sourceGeneration,
+        'mode': plan['mode'],
+        'confidence': plan['confidence'],
+        'outgoingCueMs': plan['outgoing_cue_ms'],
+        'incomingCueMs': plan['incoming_cue_ms'],
+        'durationMs': plan['duration_ms'],
+        'diagnostics': jsonEncode(plan['diagnostics']),
+      },
+    );
+  }
+
+  SmartTransitionPreparation? _prepareIncomingSmartTransition(
+    _PendingSmartTransition pending,
+    double? incomingReplayGainDb,
+  ) {
+    final preparation = _player.prepareSmartTransition(
+      pending.target.incoming.path,
+      transitionId: pending.transitionId,
+      replayGainDb: incomingReplayGainDb,
+    );
+    if (preparation == null) {
+      _fallback(pending, 'incoming_prepare_failed');
+      return null;
+    }
+    pending.preparation = preparation;
+    if (!_isCurrent(pending) ||
+        !_validateTarget(pending.target) ||
+        preparation.sourceGeneration != _player.sourceGeneration) {
+      _player.discardSmartTransition(
+        pending.transitionId,
+        incomingReleasedByNative: false,
+      );
+      pending.preparation = null;
+      cancel('target_changed_before_arm');
+      return null;
+    }
+    return preparation;
+  }
+
+  void _armPreparedSmartTransition(
+    _PendingSmartTransition pending,
+    Map<String, dynamic> plan,
+    SmartTransitionPreparation preparation,
+  ) {
+    final outcome = _decodeMap(
+      native.armSmartTransitionJson(
+        bassDir: _player.bassDirectory,
+        requestJson: jsonEncode({
+          'transitionId': pending.transitionId,
+          'sourceGeneration': preparation.sourceGeneration,
+          'mixerHandle': preparation.mixerHandle,
+          'outgoingHandle': preparation.outgoingHandle,
+          'incomingHandle': preparation.incomingHandle,
+          'incomingPath': preparation.path,
+          'incomingReplayGainDb': preparation.replayGainDb,
+          'plan': plan,
+        }),
+      ),
+    );
+    if (outcome['accepted'] != true) {
+      _rejectUnacceptedArm(pending, outcome);
+      return;
+    }
+    pending.transferred = true;
+    pending.reserved = true;
+    _player.markSmartTransitionTransferred(pending.transitionId);
+    final snapshot = _objectMap(outcome['snapshot']);
+    _lastNativeSnapshot = snapshot;
+    final state = snapshot?['state'] as String? ?? 'armed';
+    if (state == 'failed' || state == 'cancelled') {
+      _rejectFailedArm(pending, outcome, state);
+      return;
+    }
+    _markSmartTransitionArmed(pending, plan, state, snapshot);
+  }
+
+  void _rejectUnacceptedArm(
+    _PendingSmartTransition pending,
+    Map<String, dynamic> outcome,
+  ) {
+    _player.discardSmartTransition(
+      pending.transitionId,
+      incomingReleasedByNative: false,
+    );
+    pending.preparation = null;
+    _fallback(pending, 'native_arm: ${outcome['error'] ?? 'rejected'}');
+  }
+
+  void _rejectFailedArm(
+    _PendingSmartTransition pending,
+    Map<String, dynamic> outcome,
+    String state,
+  ) {
+    _player.discardSmartTransition(
+      pending.transitionId,
+      incomingReleasedByNative: true,
+    );
+    native.acknowledgeNativeSmartTransition(
+      transitionId: BigInt.from(pending.transitionId),
+    );
+    pending.transferred = false;
+    pending.reserved = false;
+    _fallback(pending, 'native_arm: ${outcome['error'] ?? state}');
+  }
+
+  void _markSmartTransitionArmed(
+    _PendingSmartTransition pending,
+    Map<String, dynamic> plan,
+    String state,
+    Map<String, dynamic>? snapshot,
+  ) {
+    _state = 'armed';
+    AudioEchoLogRecorder.instance.mark(
+      'smart_transition_armed',
+      extra: {
+        'transitionId': pending.transitionId,
+        'generation': pending.generation,
+        'sourceGeneration': pending.sourceGeneration,
+        'nativeState': state,
+        'snapshot': jsonEncode(snapshot),
+      },
+    );
+    _scheduleStartRecovery(pending);
+    log.playback.info(
+      'legacy',
+      '[smart transition] plan id=${pending.transitionId} '
+          'mode=${plan['mode']} confidence=${plan['confidence']} '
+          'cue=${plan['outgoing_cue_ms']} duration=${plan['duration_ms']}',
+    );
   }
 
   void _handleNativeEvent(String raw) {
@@ -567,23 +687,7 @@ final class SmartTransitionCoordinator {
       final transitionId = _asInt(snapshot['transitionId']);
       final pending = _pending;
       if (pending == null || transitionId != pending.transitionId) {
-        final state = snapshot['state'] as String?;
-        if (transitionId != null &&
-            (state == 'completed' ||
-                state == 'cancelled' ||
-                state == 'failed')) {
-          AudioEchoLogRecorder.instance.mark(
-            'smart_transition_late_terminal',
-            extra: {
-              'transitionId': transitionId,
-              'nativeState': state,
-              'snapshot': jsonEncode(snapshot),
-            },
-          );
-          native.acknowledgeNativeSmartTransition(
-            transitionId: BigInt.from(transitionId),
-          );
-        }
+        _ackLateTerminal(transitionId, snapshot);
         return;
       }
       final sequence = _asInt(payload['eventSequence']) ?? 0;
@@ -602,9 +706,32 @@ final class SmartTransitionCoordinator {
       );
       _applySnapshot(pending, snapshot);
     } catch (error, trace) {
-      log.playback.warn('legacy', '[smart transition] invalid native event', error: error,
-        stackTrace: trace,);
+      log.playback.warn(
+        'legacy',
+        '[smart transition] invalid native event',
+        error: error,
+        stackTrace: trace,
+      );
     }
+  }
+
+  void _ackLateTerminal(int? transitionId, Map<String, Object?> snapshot) {
+    final state = snapshot['state'] as String?;
+    if (transitionId == null ||
+        (state != 'completed' && state != 'cancelled' && state != 'failed')) {
+      return;
+    }
+    AudioEchoLogRecorder.instance.mark(
+      'smart_transition_late_terminal',
+      extra: {
+        'transitionId': transitionId,
+        'nativeState': state,
+        'snapshot': jsonEncode(snapshot),
+      },
+    );
+    native.acknowledgeNativeSmartTransition(
+      transitionId: BigInt.from(transitionId),
+    );
   }
 
   void _applySnapshot(
@@ -735,30 +862,7 @@ final class SmartTransitionCoordinator {
       final state = snapshot['state'] as String?;
       if (!_isCurrent(pending)) return;
       if (state == 'started') {
-        if (pending.reconcileAttempts++ < 5) {
-          pending.completionRecoveryTimer = Timer(
-            const Duration(milliseconds: 100),
-            () => _reconcile(pending),
-          );
-          return;
-        }
-        final recovered = _decodeMap(
-          native.cancelNativeSmartTransitionJson(
-            transitionId: BigInt.from(pending.transitionId),
-            reason: 'completion_watchdog',
-          ),
-        );
-        _lastNativeSnapshot = recovered;
-        AudioEchoLogRecorder.instance.mark(
-          'smart_transition_completion_recovery',
-          extra: {
-            'transitionId': pending.transitionId,
-            'generation': pending.generation,
-            'sourceGeneration': pending.sourceGeneration,
-            'nativeState': recovered['state'],
-          },
-        );
-        _applySnapshot(pending, recovered);
+        _reconcileStarted(pending);
       } else if ((state == 'armed' || state == 'completing') &&
           pending.reconcileAttempts++ < 5) {
         pending.startRecoveryTimer = Timer(
@@ -767,13 +871,65 @@ final class SmartTransitionCoordinator {
         );
       }
     } catch (error, trace) {
-      log.playback.warn('legacy', '[smart transition] snapshot reconciliation failed', error: error,
-        stackTrace: trace,);
+      log.playback.warn(
+        'legacy',
+        '[smart transition] snapshot reconciliation failed',
+        error: error,
+        stackTrace: trace,
+      );
     }
+  }
+
+  void _reconcileStarted(_PendingSmartTransition pending) {
+    if (pending.reconcileAttempts++ < 5) {
+      pending.completionRecoveryTimer = Timer(
+        const Duration(milliseconds: 100),
+        () => _reconcile(pending),
+      );
+      return;
+    }
+    final recovered = _decodeMap(
+      native.cancelNativeSmartTransitionJson(
+        transitionId: BigInt.from(pending.transitionId),
+        reason: 'completion_watchdog',
+      ),
+    );
+    _lastNativeSnapshot = recovered;
+    AudioEchoLogRecorder.instance.mark(
+      'smart_transition_completion_recovery',
+      extra: {
+        'transitionId': pending.transitionId,
+        'generation': pending.generation,
+        'sourceGeneration': pending.sourceGeneration,
+        'nativeState': recovered['state'],
+      },
+    );
+    _applySnapshot(pending, recovered);
   }
 
   void _fallback(_PendingSmartTransition pending, String reason) {
     if (!_isCurrent(pending)) return;
+    _logSmartTransitionFallback(pending, reason);
+    pending.cancelTimers();
+    _cancelPendingAnalysis(pending);
+    if (_discardFallbackPreparation(pending, reason)) return;
+    pending.terminal = true;
+    _pending = null;
+    _lastFallbackReason = reason;
+    _state = 'fallback';
+    log.playback.info(
+      'legacy',
+      '[smart transition] fallback id=${pending.transitionId} $reason',
+    );
+    if (_validateTarget(pending.target)) {
+      _prepareFallback(pending.target, reason);
+    }
+  }
+
+  void _logSmartTransitionFallback(
+    _PendingSmartTransition pending,
+    String reason,
+  ) {
     AudioEchoLogRecorder.instance.mark(
       'smart_transition_fallback',
       extra: {
@@ -786,50 +942,42 @@ final class SmartTransitionCoordinator {
         'reserved': pending.reserved,
       },
     );
-    pending.cancelTimers();
-    final jobId = pending.analysisJobId;
-    if (jobId != null) {
-      native.cancelSmartTransitionAnalysis(jobId: BigInt.from(jobId));
-      pending.analysisJobId = null;
-    }
+  }
+
+  bool _discardFallbackPreparation(
+    _PendingSmartTransition pending,
+    String reason,
+  ) {
     final preparation = pending.preparation;
-    if (preparation != null) {
-      if (pending.transferred) {
-        final snapshot = _decodeMap(
-          native.cancelNativeSmartTransitionJson(
-            transitionId: BigInt.from(pending.transitionId),
-            reason: reason,
-          ),
-        );
-        _lastNativeSnapshot = snapshot;
-        final state = snapshot['state'] as String? ?? 'missing';
-        if (_hasStarted(state)) {
-          _commitStarted(pending, snapshot);
-          _complete(pending, snapshot, prepareNext: false);
-          return;
-        }
-        _player.discardSmartTransition(
-          pending.transitionId,
-          incomingReleasedByNative: true,
-        );
-        native.acknowledgeNativeSmartTransition(
-          transitionId: BigInt.from(pending.transitionId),
-        );
-      } else {
-        _player.discardSmartTransition(
-          pending.transitionId,
-          incomingReleasedByNative: false,
-        );
-      }
+    if (preparation == null) return false;
+    if (!pending.transferred) {
+      _player.discardSmartTransition(
+        pending.transitionId,
+        incomingReleasedByNative: false,
+      );
+      return false;
     }
-    pending.terminal = true;
-    _pending = null;
-    _lastFallbackReason = reason;
-    _state = 'fallback';
-    log.playback.info('legacy', '[smart transition] fallback id=${pending.transitionId} $reason');
-    if (_validateTarget(pending.target)) {
-      _prepareFallback(pending.target, reason);
+    final snapshot = _decodeMap(
+      native.cancelNativeSmartTransitionJson(
+        transitionId: BigInt.from(pending.transitionId),
+        reason: reason,
+      ),
+    );
+    _lastNativeSnapshot = snapshot;
+    final state = snapshot['state'] as String? ?? 'missing';
+    if (_hasStarted(state)) {
+      _commitStarted(pending, snapshot);
+      _complete(pending, snapshot, prepareNext: false);
+      return true;
     }
+    _player.discardSmartTransition(
+      pending.transitionId,
+      incomingReleasedByNative: true,
+    );
+    native.acknowledgeNativeSmartTransition(
+      transitionId: BigInt.from(pending.transitionId),
+    );
+    return false;
   }
 
   bool _isCurrent(_PendingSmartTransition pending) =>

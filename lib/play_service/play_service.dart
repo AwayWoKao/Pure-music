@@ -44,22 +44,38 @@ class PlayService {
   bool get hasPlaybackSession => _playbackService?.nowPlaying != null;
 
   Future<void> close() async {
-    // 按顺序关闭服务，播放器必须完成资源释放后才能销毁窗口。
-    final desktopLyric = _desktopLyricService;
-    if (desktopLyric != null) {
-      try {
-        await desktopLyric.killDesktopLyric().timeout(
-          const Duration(seconds: 1),
-          onTimeout: () {
-            log.app.warn('legacy', 'desktopLyricService.close timeout');
-          },
-        );
-      } catch (e) {
-        log.app.warn('legacy', 'desktopLyricService.close error: $e');
-      }
-    }
+    await _closeDesktopLyric();
+    await _stopEchoLog();
+    LyricViewController.disposeIfInitialized();
+    _disposeLyricService();
+    await _closePlayback();
+    ThemeProvider.instance.dispose();
+    SystemVolumeService.instance.dispose();
+    AlbumColorCache.instance.dispose();
+    CoverImageCache.instance.dispose();
+    AudioLibrary.instance.dispose();
+    AppDb.instance.dispose();
+    AppSettings.closeGithub();
+    clearLyricCaches();
+    _instance = null;
+  }
 
-    // 停止音频回波日志记录
+  Future<void> _closeDesktopLyric() async {
+    final desktopLyric = _desktopLyricService;
+    if (desktopLyric == null) return;
+    try {
+      await desktopLyric.killDesktopLyric().timeout(
+        const Duration(seconds: 1),
+        onTimeout: () {
+          log.app.warn('legacy', 'desktopLyricService.close timeout');
+        },
+      );
+    } catch (e) {
+      log.app.warn('legacy', 'desktopLyricService.close error: $e');
+    }
+  }
+
+  Future<void> _stopEchoLog() async {
     try {
       await AudioEchoLogRecorder.instance.stop().timeout(
         const Duration(seconds: 1),
@@ -70,35 +86,25 @@ class PlayService {
     } catch (e) {
       log.app.warn('legacy', 'AudioEchoLogRecorder.stop error: $e');
     }
+  }
 
-    LyricViewController.disposeIfInitialized();
+  void _disposeLyricService() {
     final lyric = _lyricService;
-    if (lyric != null) {
-      try {
-        lyric.dispose();
-      } catch (e) {
-        log.app.warn('legacy', 'lyricService.dispose error: $e');
-      }
+    if (lyric == null) return;
+    try {
+      lyric.dispose();
+    } catch (e) {
+      log.app.warn('legacy', 'lyricService.dispose error: $e');
     }
+  }
 
+  Future<void> _closePlayback() async {
     final playback = _playbackService;
-    if (playback != null) {
-      try {
-        await playback.close();
-      } catch (e) {
-        log.app.warn('legacy', 'playbackService.close error: $e');
-      }
+    if (playback == null) return;
+    try {
+      await playback.close();
+    } catch (e) {
+      log.app.warn('legacy', 'playbackService.close error: $e');
     }
-
-    ThemeProvider.instance.dispose();
-    SystemVolumeService.instance.dispose();
-    AlbumColorCache.instance.dispose();
-    CoverImageCache.instance.dispose();
-    AudioLibrary.instance.dispose();
-    AppDb.instance.dispose();
-    AppSettings.closeGithub();
-    clearLyricCaches();
-
-    _instance = null;
   }
 }
