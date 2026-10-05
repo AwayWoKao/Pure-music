@@ -34,6 +34,22 @@ ThemeColorMode normalizedThemeColorMode(Object? value) {
   };
 }
 
+ThemeColorSource? normalizedThemeColorSource(Object? value) {
+  if (value == null) return null;
+  final index = normalizedEnumIndex(
+    value,
+    length: ThemeColorSource.values.length,
+    defaultIndex: -1,
+  );
+  if (index >= 0) return ThemeColorSource.values[index];
+  return switch (normalizedSettingEnumName(value)) {
+    'cover' => ThemeColorSource.cover,
+    'system' => ThemeColorSource.system,
+    'custom' => ThemeColorSource.custom,
+    _ => null,
+  };
+}
+
 Set<NowPlayingMode> normalizedWavyBarEnabledModes(Object? value) {
   if (value is String) {
     final mode = NowPlayingMode.fromStoredValue(value);

@@ -30,6 +30,8 @@ import 'package:pure_music/core/utils.dart';
 import 'package:pure_music/library/audio_library.dart';
 import 'package:pure_music/library/playlist.dart';
 import 'package:pure_music/component/responsive_builder.dart';
+import 'package:pure_music/page/now_playing_page/component/concert_act_cue.dart';
+import 'package:pure_music/page/now_playing_page/component/concert_act_label.dart';
 import 'package:pure_music/page/now_playing_page/component/current_playlist_view.dart';
 import 'package:pure_music/page/now_playing_page/component/equalizer_dialog.dart';
 import 'package:pure_music/page/now_playing_page/component/lyric_source_view.dart';
@@ -482,6 +484,7 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
               children: [
                 _buildBackground(brightness),
                 _playbackLayer(scheme, immersive),
+                const ConcertActCue(),
                 if (immersive) const _ImmersiveHelpOverlay(),
                 if (!immersive) _topChrome(),
                 // Positioned 必须是 Stack 直接子节点，不能包在 Builder 里
@@ -2612,6 +2615,7 @@ class __NowPlayingInfoState extends State<_NowPlayingInfo> {
           children: [
             _coverBox(scheme, nowPlayingPath, coverSize, heroEnabled),
             const SizedBox(height: 24.0),
+            const ConcertActLabel(),
             _infoText(
               nowPlaying == null ? 'Pure Music' : nowPlaying.title,
               scheme.onSurface,

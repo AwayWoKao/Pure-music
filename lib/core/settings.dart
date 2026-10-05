@@ -257,7 +257,7 @@ class AppSettings {
       DesktopLyricBrightnessMode.follow;
   ZhConversionMode zhConversionMode = ZhConversionMode.none;
   int promptWriteLyricToTagDelay = 15;
-  bool autoWriteLyricToTag = false;
+  LyricWriteMode lyricWriteMode = LyricWriteMode.ask;
   int autoWriteLyricToTagDelay = 30;
   LyricTagWordFormat lyricTagWordFormat = LyricTagWordFormat.enhanced;
   bool lyricTagIncludeTranslation = true;
@@ -272,6 +272,7 @@ class AppSettings {
   Set<NowPlayingMode> wavyBarEnabledModes = defaultWavyBarEnabledModes();
   TopBarLyricAnimation topBarLyricAnimation = TopBarLyricAnimation.slideUp;
   bool enableCoverColorExtraction = true;
+  ThemeColorSource themeColorSource = ThemeColorSource.cover;
   bool enableStackedScrollEffect = true;
   bool enableContentTransitionMotion = true;
   bool enableInteractiveSurfaceMotion = true;
@@ -297,6 +298,8 @@ class AppSettings {
   bool preventSleepOnNowPlaying = false;
   bool rememberPlaybackPosition = false;
 
+  String? midiSoundfontPath;
+
   String? fontFamily;
   String? fontPath;
   bool lyricFontFollowsUi = true;
@@ -304,11 +307,19 @@ class AppSettings {
   String? lyricFontPath;
 
   late String artistSplitPattern = artistSeparator.join('|');
+  String? _cachedArtistSplitPattern;
   RegExp? _cachedArtistSplitRegex;
 
-  /// 缓存的正则，避免每个 Audio 构造时重新编译
-  RegExp get artistSplitRegex =>
-      _cachedArtistSplitRegex ??= RegExp(artistSplitPattern);
+  /// 缓存的正则，避免每个 Audio 构造时重新编译；分隔符改了要跟着换
+  RegExp get artistSplitRegex {
+    final pattern = artistSplitPattern;
+    final cached = _cachedArtistSplitRegex;
+    if (cached != null && _cachedArtistSplitPattern == pattern) {
+      return cached;
+    }
+    _cachedArtistSplitPattern = pattern;
+    return _cachedArtistSplitRegex = RegExp(pattern);
+  }
 
   static final AppSettings _instance = AppSettings._();
 
@@ -489,12 +500,20 @@ class AppSettings {
       );
     }
 
-    final awt = settingsMap['AutoWriteLyricToTag'];
-    if (awt != null) {
-      _instance.autoWriteLyricToTag = normalizedBoolSetting(
-        awt,
-        defaultValue: false,
-      );
+    final lwm = settingsMap['LyricWriteMode'];
+    if (lwm != null) {
+      _instance.lyricWriteMode = normalizedSettingEnumValue(
+        lwm,
+        LyricWriteMode.values,
+        fallback: LyricWriteMode.ask,
+      )!;
+    } else if (normalizedBoolSetting(
+      settingsMap['AutoWriteLyricToTag'],
+      defaultValue: false,
+    )) {
+      _instance.lyricWriteMode = LyricWriteMode.auto;
+    } else {
+      _instance.lyricWriteMode = LyricWriteMode.ask;
     }
 
     final awd = settingsMap['AutoWriteLyricToTagDelay'];
@@ -621,6 +640,24 @@ class AppSettings {
         settingsMap['CustomCoverColor'],
       );
     }
+
+    final storedSource = normalizedThemeColorSource(
+      settingsMap['ThemeColorSource'],
+    );
+    if (storedSource != null) {
+      _instance.themeColorSource = storedSource;
+      _instance.enableCoverColorExtraction =
+          storedSource == ThemeColorSource.cover;
+    } else if (settingsMap.containsKey('EnableCoverColorExtraction') ||
+        settingsMap.containsKey('CustomCoverColor')) {
+      if (_instance.enableCoverColorExtraction) {
+        _instance.themeColorSource = ThemeColorSource.cover;
+      } else if (_instance.customCoverColor != null) {
+        _instance.themeColorSource = ThemeColorSource.custom;
+      } else {
+        _instance.themeColorSource = ThemeColorSource.system;
+      }
+    }
   }
 
   static void _readBackgroundGlassSettings(Map settingsMap) {
@@ -685,6 +722,9 @@ class AppSettings {
     _instance.rememberPlaybackPosition = normalizedBoolSetting(
       settingsMap['RememberPlaybackPosition'],
       defaultValue: false,
+    );
+    _instance.midiSoundfontPath = normalizedPathSetting(
+      settingsMap['MidiSoundfontPath'],
     );
   }
 
@@ -986,7 +1026,8 @@ class AppSettings {
     'KeepLyricMetadata': keepLyricMetadata,
     'ZhConversionMode': zhConversionMode.name,
     'PromptWriteLyricToTagDelay': promptWriteLyricToTagDelay,
-    'AutoWriteLyricToTag': autoWriteLyricToTag,
+    'LyricWriteMode': lyricWriteMode.name,
+    'AutoWriteLyricToTag': lyricWriteMode == LyricWriteMode.auto,
     'AutoWriteLyricToTagDelay': autoWriteLyricToTagDelay,
     'LyricTagWordFormat': lyricTagWordFormat.name,
     'LyricTagIncludeTranslation': lyricTagIncludeTranslation,
@@ -1035,6 +1076,7 @@ class AppSettings {
     'WavyBarEnabledModes': NowPlayingMode.toList(wavyBarEnabledModes),
     'TopBarLyricAnimation': topBarLyricAnimation.name,
     'EnableCoverColorExtraction': enableCoverColorExtraction,
+    'ThemeColorSource': themeColorSource.name,
     'CustomCoverColor': customCoverColor,
     'AppBackgroundImagePath': appBackgroundImagePath,
     'AppBackgroundImageOpacity': appBackgroundImageOpacity,
@@ -1055,6 +1097,7 @@ class AppSettings {
     'LyricFontPath': lyricFontPath,
     'PreventSleepOnNowPlaying': preventSleepOnNowPlaying,
     'RememberPlaybackPosition': rememberPlaybackPosition,
+    'MidiSoundfontPath': midiSoundfontPath,
   };
 
   Future<void> _writeSettingsFile(
@@ -1077,7 +1120,10 @@ class AppSettings {
     ]);
     sizeToSave = Size(normalizedSize.width, normalizedSize.height);
     windowSize = sizeToSave;
-    settingsMap['WindowSize'] = ',';
+    settingsMap['WindowSize'] = encodedWindowSizeSetting(
+      sizeToSave.width,
+      sizeToSave.height,
+    );
     final settingsStr = json.encode(settingsMap);
     final dir = await getSettingsDir();
     final settingsPath = path.join(dir.path, 'settings.json');

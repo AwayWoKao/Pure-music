@@ -267,6 +267,12 @@ TransitionMode _transitionModeFromStored(Map map) {
   return TransitionMode.seamless;
 }
 
+ReplayGainMode _replayGainModeFromStored(Object? value) {
+  final name = _normalizedEnumName(value);
+  if (name == null) return ReplayGainMode.track;
+  return ReplayGainMode.fromString(name) ?? ReplayGainMode.track;
+}
+
 int? _normalizedEnumIndex(Object? value, int length) {
   final index = _normalizedInteger(value);
   if (index == null || index < 0 || index >= length) return null;

@@ -39,6 +39,8 @@ import 'package:pure_music/page/settings_page/other_settings.dart'
         AudioEchoLogRecordControl,
         RememberPlaybackPositionControl,
         ReplayGainControl,
+        SkipLeadingSilenceControl,
+        MidiSoundfontControl,
         TransitionControl;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -256,13 +258,16 @@ class _ThemeColorModeControlState extends State<_ThemeColorModeControl> {
     return SettingsTile(
       description: '配色方式',
       subtitle: settings.themeColorMode == ThemeColorMode.independent
-          ? '直接使用主题色'
-          : '按 MD3 规则生成配色',
+          ? '灰底，主题色只作强调'
+          : '用主题色生成整套颜色',
       action: SegmentedButton<ThemeColorMode>(
         showSelectedIcon: false,
         segments: const [
-          ButtonSegment(value: ThemeColorMode.material3, label: Text('MD3')),
-          ButtonSegment(value: ThemeColorMode.independent, label: Text('独立')),
+          ButtonSegment(value: ThemeColorMode.material3, label: Text('生成配色')),
+          ButtonSegment(
+            value: ThemeColorMode.independent,
+            label: Text('直接强调'),
+          ),
         ],
         selected: {settings.themeColorMode},
         onSelectionChanged: _updating
@@ -1196,8 +1201,6 @@ class _StaggerStyleSelectorState extends State<_StaggerStyleSelector> {
   }
 }
 
-enum _ThemeColorSource { cover, custom }
-
 class _ThemeColorSourceControl extends StatefulWidget {
   const _ThemeColorSourceControl();
 
@@ -1251,25 +1254,25 @@ class _ThemeColorSourceControlState extends State<_ThemeColorSourceControl> {
     }
   }
 
-  Future<void> _setSource(_ThemeColorSource source) async {
+  Future<void> _setSource(ThemeColorSource source) async {
     if (_updating || _isPickingColor) return;
-    final enableCoverColorExtraction = source == _ThemeColorSource.cover;
-    if (enableCoverColorExtraction == settings.enableCoverColorExtraction) {
-      return;
-    }
+    if (source == settings.themeColorSource) return;
 
+    final previousSource = settings.themeColorSource;
     final previousExtraction = settings.enableCoverColorExtraction;
     final previousCustomColor = settings.customCoverColor;
     setState(() {
       _updating = true;
-      settings.enableCoverColorExtraction = enableCoverColorExtraction;
-      if (!enableCoverColorExtraction) {
+      settings.themeColorSource = source;
+      settings.enableCoverColorExtraction = source == ThemeColorSource.cover;
+      if (source == ThemeColorSource.custom) {
         settings.customCoverColor ??= AppSettings.getWindowsTheme();
       }
     });
     _refreshTheme();
     try {
       if (!await settings.saveSettings()) {
+        settings.themeColorSource = previousSource;
         settings.enableCoverColorExtraction = previousExtraction;
         settings.customCoverColor = previousCustomColor;
         _refreshTheme();
@@ -1284,8 +1287,7 @@ class _ThemeColorSourceControlState extends State<_ThemeColorSourceControl> {
 
   @override
   Widget build(BuildContext context) {
-    final isAuto = settings.enableCoverColorExtraction;
-    final source = isAuto ? _ThemeColorSource.cover : _ThemeColorSource.custom;
+    final source = settings.themeColorSource;
     final customColor = Color(
       settings.customCoverColor ?? AppSettings.getWindowsTheme(),
     );
@@ -1295,13 +1297,18 @@ class _ThemeColorSourceControlState extends State<_ThemeColorSourceControl> {
       children: [
         SettingsTile(
           description: '主题色来源',
-          subtitle: isAuto ? '当前封面' : '固定颜色',
-          action: SegmentedButton<_ThemeColorSource>(
+          subtitle: switch (source) {
+            ThemeColorSource.cover => '当前封面',
+            ThemeColorSource.system => '系统强调色',
+            ThemeColorSource.custom => '固定颜色',
+          },
+          action: SegmentedButton<ThemeColorSource>(
             showSelectedIcon: false,
             segments: const [
-              ButtonSegment(value: _ThemeColorSource.cover, label: Text('封面')),
+              ButtonSegment(value: ThemeColorSource.cover, label: Text('封面')),
+              ButtonSegment(value: ThemeColorSource.system, label: Text('系统')),
               ButtonSegment(
-                value: _ThemeColorSource.custom,
+                value: ThemeColorSource.custom,
                 label: Text('自定义'),
               ),
             ],
@@ -1311,7 +1318,7 @@ class _ThemeColorSourceControlState extends State<_ThemeColorSourceControl> {
                 : (selected) => _setSource(selected.first),
           ),
         ),
-        if (!isAuto) ...[
+        if (source == ThemeColorSource.custom) ...[
           const SizedBox(height: 16),
           _customColorTile(scheme, customColor),
         ],
@@ -1784,7 +1791,7 @@ class _PlaybackTabContent extends StatelessWidget {
         _GroupEntry(
           icon: Symbols.play_circle,
           title: '播放行为',
-          subtitle: '进度记忆、ReplayGain 与切歌过渡',
+          subtitle: '进度记忆、ReplayGain、片头空白、MIDI 与切歌过渡',
           groupId: 'playback-behavior',
         ),
         SizedBox(height: 8.0),
@@ -3455,7 +3462,7 @@ const _settingsGroups = <String, _SettingsGroupDesc>{
   'lyric-effect': _SettingsGroupDesc('显示效果', '辉光、注音、上抬', _LyricEffectGroup()),
   'playback-behavior': _SettingsGroupDesc(
     '播放行为',
-    '进度记忆、ReplayGain 与切歌过渡',
+    '进度记忆、ReplayGain、片头空白、MIDI 与切歌过渡',
     _PlaybackBehaviorGroup(),
   ),
   'playback-lastfm': _SettingsGroupDesc(
@@ -3941,19 +3948,11 @@ class _LyricWritingGroupState extends State<_LyricWritingGroup> {
       children: [
         const SettingsSectionHeader('写入方式'),
         const SizedBox(height: 4.0),
-        if (!enableOnlineLyricWriting)
-          const SettingsEmptyState(
-            icon: Symbols.lyrics,
-            title: '在线歌词写入未启用',
-            subtitle: '当前版本未开放此项',
-          )
-        else ...[
-          ..._writeFormatTiles(),
-          const SizedBox(height: 24.0),
-          const SettingsSectionHeader('自动写入'),
-          const SizedBox(height: 4.0),
-          ..._autoWriteTiles(),
-        ],
+        ..._writeFormatTiles(),
+        const SizedBox(height: 24.0),
+        const SettingsSectionHeader('自动写入'),
+        const SizedBox(height: 4.0),
+        ..._autoWriteTiles(),
       ],
     );
   }
@@ -4018,21 +4017,34 @@ class _LyricWritingGroupState extends State<_LyricWritingGroup> {
   }
 
   List<Widget> _autoWriteTiles() {
+    final mode = settings.lyricWriteMode;
     return [
       SettingsTile(
-        description: '自动写入标签',
-        subtitle: '获取后自动写入，不再询问',
-        action: Switch(
-          value: settings.autoWriteLyricToTag,
-          onChanged: (value) {
-            setState(() => settings.autoWriteLyricToTag = value);
+        description: '写入策略',
+        subtitle: switch (mode) {
+          LyricWriteMode.ask => '空标签时询问是否写入',
+          LyricWriteMode.auto => '空标签自动写入，已有歌词仍会询问覆盖',
+          LyricWriteMode.off => '不写标签、不弹出提示',
+        },
+        action: SegmentedButton<LyricWriteMode>(
+          showSelectedIcon: false,
+          segments: const [
+            ButtonSegment(value: LyricWriteMode.ask, label: Text('询问')),
+            ButtonSegment(value: LyricWriteMode.auto, label: Text('自动')),
+            ButtonSegment(value: LyricWriteMode.off, label: Text('关闭')),
+          ],
+          selected: {mode},
+          onSelectionChanged: (selection) {
+            setState(() => settings.lyricWriteMode = selection.first);
             settings.saveSettings();
             PlayService.instance.lyricService.resetLyricWritePrompts();
           },
         ),
       ),
-      const SizedBox(height: 16.0),
-      _writeDelayTile(),
+      if (mode != LyricWriteMode.off) ...[
+        const SizedBox(height: 16.0),
+        _writeDelayTile(),
+      ],
       const SizedBox(height: 16.0),
       SettingsTile(
         description: '自动保存外部 LRC',
@@ -4049,7 +4061,7 @@ class _LyricWritingGroupState extends State<_LyricWritingGroup> {
   }
 
   Widget _writeDelayTile() {
-    final auto = settings.autoWriteLyricToTag;
+    final auto = settings.lyricWriteMode == LyricWriteMode.auto;
     final delay = auto
         ? settings.autoWriteLyricToTagDelay
         : settings.promptWriteLyricToTagDelay;
@@ -4066,7 +4078,7 @@ class _LyricWritingGroupState extends State<_LyricWritingGroup> {
           label: '$delay秒',
           onChanged: (value) {
             setState(() {
-              if (settings.autoWriteLyricToTag) {
+              if (settings.lyricWriteMode == LyricWriteMode.auto) {
                 settings.autoWriteLyricToTagDelay = value.round();
               } else {
                 settings.promptWriteLyricToTagDelay = value.round();
@@ -4115,6 +4127,10 @@ class _PlaybackBehaviorGroup extends StatelessWidget {
         RememberPlaybackPositionControl(),
         SizedBox(height: 16.0),
         ReplayGainControl(),
+        SizedBox(height: 16.0),
+        SkipLeadingSilenceControl(),
+        SizedBox(height: 16.0),
+        MidiSoundfontControl(),
         SizedBox(height: 16.0),
         TransitionControl(),
       ],

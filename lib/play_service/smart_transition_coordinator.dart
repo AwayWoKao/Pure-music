@@ -39,11 +39,13 @@ final class SmartTransitionCommit {
     required this.transitionId,
     required this.target,
     required this.transition,
+    this.planMode,
   });
 
   final int transitionId;
   final SmartTransitionTarget target;
   final GaplessTransition transition;
+  final String? planMode;
 }
 
 final class _PendingSmartTransition {
@@ -802,6 +804,7 @@ final class SmartTransitionCoordinator {
         transitionId: pending.transitionId,
         target: pending.target,
         transition: transition,
+        planMode: pending.plan?['mode']?.toString(),
       ),
     );
     final durationMs = _asInt(pending.plan?['duration_ms']) ?? 0;

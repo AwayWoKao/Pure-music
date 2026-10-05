@@ -305,6 +305,7 @@ Timer? _toastTimer;
 
 OverlayEntry? _lyricWriteEntry;
 Timer? _lyricWriteTimer;
+VoidCallback? _lyricWriteOnTimeout;
 
 OverlayEntry? _hotkeyToastEntry;
 Timer? _hotkeyToastTimer;
@@ -352,6 +353,9 @@ bool showLyricWritePrompt({
   required String title,
   required VoidCallback onWrite,
   required VoidCallback onDismiss,
+  VoidCallback? onTimeout,
+  String message = '写入标签？',
+  String confirmLabel = '写入',
 }) {
   final context =
       scaffoldMessengerKey.currentContext ?? routerKey.currentContext;
@@ -359,15 +363,23 @@ bool showLyricWritePrompt({
   if (context == null || overlay == null) return false;
 
   hideLyricWritePrompt();
+  _lyricWriteOnTimeout = onTimeout;
 
   final visible = ValueNotifier(false);
   OverlayEntry? entry;
   entry = OverlayEntry(
     builder: (context) => _LyricWritePromptBubble(
       visible: visible,
+      title: title,
+      message: message,
+      confirmLabel: confirmLabel,
       onWrite: () {
         hideLyricWritePrompt();
         onWrite();
+      },
+      onSkip: () {
+        hideLyricWritePrompt();
+        onDismiss();
       },
     ),
   );
@@ -381,6 +393,9 @@ bool showLyricWritePrompt({
 
   _lyricWriteTimer = Timer(const Duration(seconds: 8), () {
     visible.value = false;
+    final timeout = _lyricWriteOnTimeout;
+    _lyricWriteOnTimeout = null;
+    timeout?.call();
     Timer(const Duration(milliseconds: 160), () {
       entry?.remove();
       if (identical(_lyricWriteEntry, entry)) {
@@ -395,6 +410,7 @@ bool showLyricWritePrompt({
 void hideLyricWritePrompt() {
   _lyricWriteTimer?.cancel();
   _lyricWriteTimer = null;
+  _lyricWriteOnTimeout = null;
   _lyricWriteEntry?.remove();
   _lyricWriteEntry = null;
 }
@@ -404,11 +420,19 @@ void hideLyricWritePrompt() {
 class _LyricWritePromptBubble extends StatelessWidget {
   const _LyricWritePromptBubble({
     required this.visible,
+    required this.title,
+    required this.message,
+    required this.confirmLabel,
     required this.onWrite,
+    required this.onSkip,
   });
 
   final ValueNotifier<bool> visible;
+  final String title;
+  final String message;
+  final String confirmLabel;
   final VoidCallback onWrite;
+  final VoidCallback onSkip;
 
   @override
   Widget build(BuildContext context) {
@@ -434,10 +458,7 @@ class _LyricWritePromptBubble extends StatelessWidget {
                   child: child,
                 ),
               ),
-              child: GestureDetector(
-                onTap: onWrite,
-                child: _card(scheme, textTheme),
-              ),
+              child: _card(scheme, textTheme),
             ),
           ),
         ),
@@ -474,17 +495,37 @@ class _LyricWritePromptBubble extends StatelessWidget {
             ),
             const SizedBox(width: Spacing.sm),
             Text(
-              '写入标签？',
+              message,
               style: textTheme.labelLarge?.copyWith(
                 color: scheme.onInverseSurface,
               ),
             ),
             const SizedBox(width: Spacing.sm),
             Text(
-              '写入',
+              title,
               style: textTheme.labelLarge?.copyWith(
                 color: scheme.onInverseSurface,
-                fontWeight: AppType.weightBold,
+              ),
+            ),
+            const SizedBox(width: Spacing.sm),
+            GestureDetector(
+              onTap: onWrite,
+              child: Text(
+                confirmLabel,
+                style: textTheme.labelLarge?.copyWith(
+                  color: scheme.onInverseSurface,
+                  fontWeight: AppType.weightBold,
+                ),
+              ),
+            ),
+            const SizedBox(width: Spacing.sm),
+            GestureDetector(
+              onTap: onSkip,
+              child: Text(
+                '\u8df3\u8fc7',
+                style: textTheme.labelLarge?.copyWith(
+                  color: scheme.onInverseSurface,
+                ),
               ),
             ),
           ],

@@ -12,4 +12,15 @@ void main() {
       height: 756.0,
     ));
   });
+
+  test('encoded window size roundtrips through the decoder', () {
+    expect(normalizedWindowSizeSetting(encodedWindowSizeSetting(1440, 900)), (
+      width: 1440.0,
+      height: 900.0,
+    ));
+  });
+
+  test('a comma-only payload restores the default size', () {
+    expect(normalizedWindowSizeSetting(','), defaultWindowSizeSetting);
+  });
 }
