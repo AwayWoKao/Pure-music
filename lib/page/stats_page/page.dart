@@ -7,9 +7,11 @@ import 'package:pure_music/library/audio_library.dart';
 import 'package:pure_music/native/rust/api/library_db.dart' as rust_library_db;
 import 'package:pure_music/page/page_scaffold.dart';
 import 'package:pure_music/play_service/play_service.dart';
+import 'package:pure_music/core/paths.dart' as app_paths;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:go_router/go_router.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 class StatsPage extends StatefulWidget {
@@ -21,6 +23,8 @@ class StatsPage extends StatefulWidget {
 
 class _StatsPageState extends State<StatsPage> {
   static const _rankedTrackExtent = 68.0;
+  static const _highlightLimit = 6;
+  static const _unheardPreviewLimit = 8;
 
   List<rust_library_db.PlayCountEntry>? _topPlayed;
   bool _loading = true;
@@ -173,6 +177,7 @@ class _StatsPageState extends State<StatsPage> {
           ),
         ),
         _rankedSliver(scheme, rankedTracks, stacked),
+        ..._unheardSlivers(scheme, audios),
         const SliverToBoxAdapter(child: SizedBox(height: Spacing.bottomNav)),
       ],
     );
@@ -200,10 +205,7 @@ class _StatsPageState extends State<StatsPage> {
           totalTracks: audios.length,
           artistCount: library.artistCollection.length,
           albumCount: library.albumCollection.length,
-          totalDuration: audios.fold<int>(
-            0,
-            (sum, audio) => sum + audio.duration,
-          ),
+          estimatedListen: _estimatedListenSeconds(audios, data),
         ),
       ),
     );
@@ -215,8 +217,29 @@ class _StatsPageState extends State<StatsPage> {
     List<rust_library_db.PlayCountEntry>? data,
   ) {
     final topArtists = _buildTopArtists(audios, data);
-    if (topArtists.isEmpty) return const [];
-    return [SliverToBoxAdapter(child: _buildArtistSection(scheme, topArtists))];
+    final topAlbums = _buildTopAlbums(audios, data);
+    return [
+      if (topArtists.isNotEmpty)
+        SliverToBoxAdapter(
+          child: _buildNamedSection(
+            scheme,
+            title: '常听艺术家',
+            items: topArtists,
+            accent: scheme.tertiary,
+            onTap: _openArtist,
+          ),
+        ),
+      if (topAlbums.isNotEmpty)
+        SliverToBoxAdapter(
+          child: _buildNamedSection(
+            scheme,
+            title: '常听专辑',
+            items: topAlbums,
+            accent: scheme.secondary,
+            onTap: _openAlbum,
+          ),
+        ),
+    ];
   }
 
   String _rankedSubtitle(
@@ -306,7 +329,7 @@ class _StatsPageState extends State<StatsPage> {
     required int totalTracks,
     required int artistCount,
     required int albumCount,
-    required int totalDuration,
+    required int estimatedListen,
   }) {
     return ListenableBuilder(
       listenable: AppSettings.listMotionNotifier,
@@ -343,7 +366,7 @@ class _StatsPageState extends State<StatsPage> {
                 totalTracks: totalTracks,
                 artistCount: artistCount,
                 albumCount: albumCount,
-                totalDuration: totalDuration,
+                estimatedListen: estimatedListen,
               ),
             );
           },
@@ -360,7 +383,7 @@ class _StatsPageState extends State<StatsPage> {
     required int totalTracks,
     required int artistCount,
     required int albumCount,
-    required int totalDuration,
+    required int estimatedListen,
   }) {
     return [
       _overviewMetric(
@@ -392,8 +415,8 @@ class _StatsPageState extends State<StatsPage> {
         width: width,
         icon: Symbols.schedule,
         color: scheme.onSurfaceVariant,
-        label: '曲库总时长',
-        value: formatDuration(totalDuration),
+        label: '预估收听',
+        value: formatDuration(estimatedListen),
       ),
     ];
   }
@@ -439,7 +462,6 @@ class _StatsPageState extends State<StatsPage> {
     );
   }
 
-
   Widget _metricLabel(ColorScheme scheme, String label) {
     return Text(
       label,
@@ -452,18 +474,21 @@ class _StatsPageState extends State<StatsPage> {
     );
   }
 
-  Widget _buildArtistSection(
-    ColorScheme scheme,
-    List<_ArtistPlayStat> artists,
-  ) {
-    final maxPlays = artists.first.playCount;
+  Widget _buildNamedSection(
+    ColorScheme scheme, {
+    required String title,
+    required List<_NamedPlayStat> items,
+    required Color accent,
+    required void Function(String name) onTap,
+  }) {
+    final maxPlays = items.first.playCount;
     return Padding(
       padding: const EdgeInsets.fromLTRB(Spacing.sm, Spacing.xl, Spacing.sm, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '常听艺术家',
+            title,
             style: TextStyle(
               fontSize: AppType.sectionTitle,
               fontWeight: AppType.weightSemibold,
@@ -473,17 +498,19 @@ class _StatsPageState extends State<StatsPage> {
           const SizedBox(height: Spacing.md),
           LayoutBuilder(
             builder: (context, constraints) =>
-                _artistWrap(scheme, artists, maxPlays, constraints),
+                _namedWrap(scheme, items, maxPlays, accent, onTap, constraints),
           ),
         ],
       ),
     );
   }
 
-  Widget _artistWrap(
+  Widget _namedWrap(
     ColorScheme scheme,
-    List<_ArtistPlayStat> artists,
+    List<_NamedPlayStat> items,
     int maxPlays,
+    Color accent,
+    void Function(String name) onTap,
     BoxConstraints constraints,
   ) {
     final modeWidth = SidebarMotionScope.layoutWidthOf(
@@ -500,45 +527,61 @@ class _StatsPageState extends State<StatsPage> {
       spacing: Spacing.lg,
       runSpacing: Spacing.md,
       children: [
-        for (var i = 0; i < artists.length; i++)
+        for (var i = 0; i < items.length; i++)
           SizedBox(
             width: width,
-            child: _buildArtistStat(
+            child: _buildNamedStat(
               scheme,
-              artists[i],
+              items[i],
               rank: i + 1,
               maxPlays: maxPlays,
+              accent: accent,
+              onTap: onTap,
             ),
           ),
       ],
     );
   }
 
-  Widget _buildArtistStat(
+  Widget _buildNamedStat(
     ColorScheme scheme,
-    _ArtistPlayStat artist, {
+    _NamedPlayStat item, {
     required int rank,
     required int maxPlays,
+    required Color accent,
+    required void Function(String name) onTap,
   }) {
-    final fraction = maxPlays > 0 ? artist.playCount / maxPlays : 0.0;
-    return Row(
-      children: [
-        _artistRank(scheme, rank),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    final fraction = maxPlays > 0 ? item.playCount / maxPlays : 0.0;
+    return Material(
+      color: Colors.transparent,
+      borderRadius: AppRadius.smCircular,
+      child: InkWell(
+        hoverColor: scheme.onSurface.withValues(alpha: Alpha.hover),
+        borderRadius: AppRadius.smCircular,
+        onTap: () => onTap(item.name),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
             children: [
-              _artistNameRow(scheme, artist),
-              const SizedBox(height: 6),
-              _artistBar(scheme, fraction),
+              _namedRank(scheme, rank, accent),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _namedTitleRow(scheme, item),
+                    const SizedBox(height: 6),
+                    _namedBar(scheme, fraction, accent),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
-      ],
+      ),
     );
   }
 
-  Widget _artistRank(ColorScheme scheme, int rank) {
+  Widget _namedRank(ColorScheme scheme, int rank, Color accent) {
     return SizedBox(
       width: 28,
       child: Text(
@@ -546,18 +589,18 @@ class _StatsPageState extends State<StatsPage> {
         style: TextStyle(
           fontSize: AppType.caption,
           fontWeight: AppType.weightSemibold,
-          color: rank <= 3 ? scheme.tertiary : scheme.onSurfaceVariant,
+          color: rank <= 3 ? accent : scheme.onSurfaceVariant,
         ),
       ),
     );
   }
 
-  Widget _artistNameRow(ColorScheme scheme, _ArtistPlayStat artist) {
+  Widget _namedTitleRow(ColorScheme scheme, _NamedPlayStat item) {
     return Row(
       children: [
         Expanded(
           child: Text(
-            artist.name,
+            item.name,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
@@ -569,7 +612,7 @@ class _StatsPageState extends State<StatsPage> {
         ),
         const SizedBox(width: Spacing.sm),
         Text(
-          '${formatCount(artist.playCount)} 次',
+          '${formatCount(item.playCount)} 次',
           style: TextStyle(
             fontSize: AppType.caption,
             color: scheme.onSurfaceVariant,
@@ -579,7 +622,7 @@ class _StatsPageState extends State<StatsPage> {
     );
   }
 
-  Widget _artistBar(ColorScheme scheme, double fraction) {
+  Widget _namedBar(ColorScheme scheme, double fraction, Color accent) {
     return ClipRRect(
       borderRadius: AppRadius.xsCircular,
       child: LinearProgressIndicator(
@@ -587,7 +630,7 @@ class _StatsPageState extends State<StatsPage> {
         minHeight: 3,
         backgroundColor: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
         valueColor: AlwaysStoppedAnimation<Color>(
-          scheme.tertiary.withValues(alpha: 0.72),
+          accent.withValues(alpha: 0.72),
         ),
       ),
     );
@@ -668,6 +711,7 @@ class _StatsPageState extends State<StatsPage> {
     final library = AudioLibrary.instance;
     final audio = library.audioByPath(entry.path);
     return DirectionalListItemEntrance(
+      identity: entry.path,
       child: Padding(
         padding: const EdgeInsets.symmetric(
           horizontal: Spacing.sm,
@@ -770,12 +814,16 @@ class _StatsPageState extends State<StatsPage> {
   }
 
   Widget _trackTexts(ColorScheme scheme, rust_library_db.PlayCountEntry entry) {
+    return _titleArtistTexts(scheme, entry.title, entry.artist);
+  }
+
+  Widget _titleArtistTexts(ColorScheme scheme, String title, String artist) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         Text(
-          entry.title,
+          title,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
@@ -786,7 +834,7 @@ class _StatsPageState extends State<StatsPage> {
         ),
         const SizedBox(height: 2),
         Text(
-          entry.artist,
+          artist,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
@@ -830,7 +878,110 @@ class _StatsPageState extends State<StatsPage> {
     );
   }
 
-  List<_ArtistPlayStat> _buildTopArtists(
+  void _openArtist(String name) {
+    final artist = AudioLibrary.instance.artistCollection[name];
+    if (artist == null) return;
+    DirectionalTabView.suppressNextIndexMotion();
+    context.push(app_paths.ARTIST_DETAIL_PAGE, extra: artist);
+  }
+
+  void _openAlbum(String name) {
+    final album = AudioLibrary.instance.albumCollection[name];
+    if (album == null) return;
+    DirectionalTabView.suppressNextIndexMotion();
+    context.push(app_paths.ALBUM_DETAIL_PAGE, extra: album);
+  }
+
+  int _estimatedListenSeconds(
+    List<Audio> audios,
+    List<rust_library_db.PlayCountEntry>? data,
+  ) {
+    if (data == null) {
+      return audios.fold<int>(
+        0,
+        (sum, audio) => sum + audio.playCount * audio.duration,
+      );
+    }
+    var total = 0;
+    for (final entry in data) {
+      final audio = AudioLibrary.instance.audioByPath(entry.path);
+      if (audio == null) continue;
+      total += entry.playCount * audio.duration;
+    }
+    return total;
+  }
+
+  List<Widget> _unheardSlivers(ColorScheme scheme, List<Audio> audios) {
+    final unheard = [
+      for (final audio in audios)
+        if (audio.playCount <= 0) audio,
+    ];
+    if (unheard.isEmpty) return const [];
+    unheard.sort((a, b) {
+      final byCreated = a.created.compareTo(b.created);
+      return byCreated != 0 ? byCreated : a.title.compareTo(b.title);
+    });
+    final preview = unheard.take(_unheardPreviewLimit).toList(growable: false);
+    final subtitle = unheard.length > preview.length
+        ? '共 ${unheard.length} 首，入库较早的 ${preview.length} 首'
+        : '${preview.length} 首曲目';
+    return [
+      SliverToBoxAdapter(
+        child: _buildSectionTitle(scheme, title: '从未播放', subtitle: subtitle),
+      ),
+      SliverToBoxAdapter(
+        child: StackedEffectScope(
+          child: Column(
+            children: [
+              for (final audio in preview) _buildUnheardRow(scheme, audio),
+            ],
+          ),
+        ),
+      ),
+    ];
+  }
+
+  Widget _buildUnheardRow(ColorScheme scheme, Audio audio) {
+    return DirectionalListItemEntrance(
+      identity: audio.path,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: Spacing.sm,
+          vertical: 2,
+        ),
+        child: SizedBox(
+          height: 64,
+          child: Material(
+            color: Colors.transparent,
+            borderRadius: AppRadius.smCircular,
+            child: InkWell(
+              hoverColor: scheme.onSurface.withValues(alpha: Alpha.hover),
+              borderRadius: AppRadius.smCircular,
+              onTap: () => _playAudio(AudioLibrary.instance, audio),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: Spacing.sm),
+                child: Row(
+                  children: [
+                    _CoverWidget(audio: audio),
+                    const SizedBox(width: Spacing.md),
+                    Expanded(
+                      child: _titleArtistTexts(
+                        scheme,
+                        audio.title,
+                        audio.artist,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<_NamedPlayStat> _buildTopArtists(
     List<Audio> audios,
     List<rust_library_db.PlayCountEntry>? entries,
   ) {
@@ -860,13 +1011,42 @@ class _StatsPageState extends State<StatsPage> {
     }
     final result =
         counts.entries
-            .map((entry) => _ArtistPlayStat(entry.key, entry.value))
+            .map((entry) => _NamedPlayStat(entry.key, entry.value))
             .toList()
           ..sort((a, b) {
             final byCount = b.playCount.compareTo(a.playCount);
             return byCount != 0 ? byCount : a.name.compareTo(b.name);
           });
-    return result.take(6).toList(growable: false);
+    return result.take(_highlightLimit).toList(growable: false);
+  }
+
+  List<_NamedPlayStat> _buildTopAlbums(
+    List<Audio> audios,
+    List<rust_library_db.PlayCountEntry>? entries,
+  ) {
+    final counts = <String, int>{};
+    final source = entries == null
+        ? audios
+              .where((audio) => audio.playCount > 0)
+              .map((audio) => (audio.album, audio.playCount))
+        : entries.map((entry) {
+            final audio = AudioLibrary.instance.audioByPath(entry.path);
+            return (audio?.album ?? entry.album, entry.playCount);
+          });
+    for (final item in source) {
+      final name = item.$1;
+      if (name.trim().isEmpty) continue;
+      counts.update(name, (value) => value + item.$2, ifAbsent: () => item.$2);
+    }
+    final result =
+        counts.entries
+            .map((entry) => _NamedPlayStat(entry.key, entry.value))
+            .toList()
+          ..sort((a, b) {
+            final byCount = b.playCount.compareTo(a.playCount);
+            return byCount != 0 ? byCount : a.name.compareTo(b.name);
+          });
+    return result.take(_highlightLimit).toList(growable: false);
   }
 }
 
@@ -996,8 +1176,8 @@ class _AnimatedMetricValue extends StatelessWidget {
   }
 }
 
-class _ArtistPlayStat {
-  const _ArtistPlayStat(this.name, this.playCount);
+class _NamedPlayStat {
+  const _NamedPlayStat(this.name, this.playCount);
 
   final String name;
   final int playCount;
