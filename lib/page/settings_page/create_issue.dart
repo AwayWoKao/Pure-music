@@ -11,6 +11,7 @@ import 'package:pure_music/play_service/audio_echo_log_recorder.dart';
 import 'package:pure_music/play_service/play_service.dart';
 import 'package:pure_music/native/rust/api/utils.dart' as rust_utils;
 import 'package:pure_music/core/log/issue_crash.dart';
+import 'package:pure_music/core/log/issue_report.dart';
 import 'package:pure_music/core/log/issue_timeline.dart';
 import 'package:pure_music/core/log/log_format.dart';
 import 'package:pure_music/core/log/log_record.dart';
@@ -164,6 +165,8 @@ class _SettingsIssuePageState extends State<SettingsIssuePage> {
 
   String _buildDescTemplate() {
     return [
+      '### 问题描述',
+      '',
       '### 复现步骤',
       '1. ',
       '2. ',
@@ -234,6 +237,9 @@ class _SettingsIssuePageState extends State<SettingsIssuePage> {
       '',
       '== NOW_PLAYING ==',
       _buildNowPlayingSnapshot(),
+      '',
+      '== LOG_GUIDE ==',
+      issueLogGuide,
       '',
     ];
   }
@@ -330,20 +336,52 @@ class _SettingsIssuePageState extends State<SettingsIssuePage> {
       showTextOnSnackBar('请先填写问题标题');
       return;
     }
+    if (_isPreparingLog) return;
     _ensureFieldsPrepared();
-    final (owner, repo) = _parseRepoSlug(AppPreference.instance.updateRepoSlug);
-    final body = [
-      descEditingController.text,
-      '',
-      '（建议先点击“获取日志”，日志会复制到剪贴板，粘贴到 Issue 正文中）',
-    ].join('\n');
-    final uri = Uri.https('github.com', '/$owner/$repo/issues/new', {
-      'title': title,
-      'body': body,
-    });
-    final opened = await rust_utils.launchInBrowser(uri: uri.toString());
-    if (!opened) {
+    setState(() => _isPreparingLog = true);
+    var copiedLog = false;
+    try {
+      logEditingController.text = await _buildLogSnapshotFull();
+      await Clipboard.setData(ClipboardData(text: logEditingController.text));
+      copiedLog = logEditingController.text.trim().isNotEmpty;
+    } catch (_) {
+      if (logEditingController.text.trim().isNotEmpty) {
+        try {
+          await Clipboard.setData(
+            ClipboardData(text: logEditingController.text),
+          );
+          copiedLog = true;
+        } catch (_) {
+          copiedLog = false;
+        }
+      }
+    }
+    try {
+      final (owner, repo) = _parseRepoSlug(
+        AppPreference.instance.updateRepoSlug,
+      );
+      final uri = buildBugIssueUri(
+        owner: owner,
+        repo: repo,
+        fields: parseIssueFormFields(
+          title: title,
+          description: descEditingController.text,
+          version: AppSettings.version,
+          windowsVersion: Platform.operatingSystemVersion,
+        ),
+      );
+      final opened = await rust_utils.launchInBrowser(uri: uri.toString());
+      if (!opened) {
+        showTextOnSnackBar('打开链接失败');
+      } else if (copiedLog) {
+        showTextOnSnackBar('已复制日志。请粘贴到 GitHub 的「完整日志」，并补全安装方式和问题分类。');
+      } else {
+        showTextOnSnackBar('已打开 GitHub。日志复制失败，请稍后点「获取日志」再粘贴。');
+      }
+    } catch (_) {
       showTextOnSnackBar('打开链接失败');
+    } finally {
+      if (mounted) setState(() => _isPreparingLog = false);
     }
   }
 
@@ -419,7 +457,10 @@ class _SettingsIssuePageState extends State<SettingsIssuePage> {
     final button = ValueListenableBuilder<TextEditingValue>(
       valueListenable: titleEditingController,
       builder: (context, value, _) {
-        final canSubmit = enableIssueReporting && value.text.trim().isNotEmpty;
+        final canSubmit =
+            enableIssueReporting &&
+            !_isPreparingLog &&
+            value.text.trim().isNotEmpty;
         return FilledButton.icon(
           onPressed: canSubmit ? _openIssueLink : null,
           icon: const Icon(Symbols.open_in_new),
