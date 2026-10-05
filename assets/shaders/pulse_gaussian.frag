@@ -20,13 +20,8 @@ vec3 toSrgb(vec3 linearRgb) {
   return pow(max(linearRgb, vec3(0.0)), vec3(1.0 / 2.2));
 }
 
-vec2 mirrorUv(vec2 uv) {
-  vec2 wrapped = mod(uv, 2.0);
-  return mix(wrapped, 2.0 - wrapped, step(1.0, wrapped));
-}
-
 vec3 sampleLinear(vec2 uv) {
-  return toLinear(texture(u_texture_input, mirrorUv(uv)).rgb);
+  return toLinear(texture(u_texture_input, clamp(uv, 0.0, 1.0)).rgb);
 }
 
 void main() {

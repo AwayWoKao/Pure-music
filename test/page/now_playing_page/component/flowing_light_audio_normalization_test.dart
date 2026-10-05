@@ -88,7 +88,7 @@ void main() {
       );
     }
 
-    expect(output.low, closeTo(0.65, 0.001));
+    expect(output.low, closeTo(0.85, 0.001));
     expect(output.mid / output.low, closeTo(0.5 / 0.9, 0.001));
   });
 
@@ -119,37 +119,29 @@ void main() {
     },
   );
 
-  test('bass transient ignores startup and reacts to a real rising edge', () {
-    final detector = AudioReactiveFlowTransientDetector();
-
-    expect(detector.update(0.12), 0);
-    expect(detector.update(0.13), lessThan(0.1));
-    expect(detector.update(0.62), greaterThan(0.9));
+  test('audio curve holds the endpoints and the midpoint', () {
+    expect(audioReactiveFlowCurve(0), 0);
+    expect(audioReactiveFlowCurve(1), 1);
+    expect(audioReactiveFlowCurve(0.5), closeTo(0.5, 0.001));
   });
 
-  test('onset pulse follows energy rises instead of loudness', () {
-    final first = audioReactiveFlowOnsetPulse(
-      currentEnergy: 0.40,
-      previousEnergy: 0.12,
-      previousPulse: 0,
+  test('spectrum scale is driven by low more than mid', () {
+    expect(audioReactiveFlowSpectrumScale(0, 0), 1);
+    expect(
+      audioReactiveFlowSpectrumScale(1, 0),
+      greaterThan(audioReactiveFlowSpectrumScale(0, 1)),
     );
-    final held = audioReactiveFlowOnsetPulse(
-      currentEnergy: 0.40,
-      previousEnergy: 0.40,
-      previousPulse: first,
-    );
-    final louder = audioReactiveFlowOnsetPulse(
-      currentEnergy: 0.80,
-      previousEnergy: 0.78,
-      previousPulse: 0,
-    );
-
-    expect(first, greaterThan(0.9));
-    expect(held, closeTo(first * 0.82, 0.001));
-    expect(louder, lessThan(first));
+    expect(audioReactiveFlowSpectrumScale(1, 1), closeTo(1.55, 0.001));
   });
 
-  test('motion speed accents onsets over a loud sustain', () {
+  test('contrast and saturation stay as small color-field pushes', () {
+    expect(audioReactiveFlowContrast(0), 1);
+    expect(audioReactiveFlowContrast(1), closeTo(1.14, 0.001));
+    expect(audioReactiveFlowSaturationBoost(0), 0);
+    expect(audioReactiveFlowSaturationBoost(1), closeTo(0.08, 0.001));
+  });
+
+  test('motion speed accents onsets without doubling the clock', () {
     expect(
       audioReactiveFlowMotionSpeedTarget(energy: 0.20, onset: 0.90),
       greaterThan(
@@ -160,96 +152,10 @@ void main() {
       audioReactiveFlowMotionSpeedTarget(energy: 0, onset: 0),
       closeTo(1.0, 0.001),
     );
-  });
-
-  test(
-    'beat transient includes broadband rises while keeping low emphasis',
-    () {
-      expect(
-        audioReactiveFlowBeatEnergy(const AudioReactiveFlowResponse(1, 0, 0)),
-        greaterThan(
-          audioReactiveFlowBeatEnergy(const AudioReactiveFlowResponse(0, 1, 0)),
-        ),
-      );
-
-      final detector = AudioReactiveFlowTransientDetector();
-      detector.updateResponse(
-        const AudioReactiveFlowResponse(0.12, 0.12, 0.12),
-      );
-
-      expect(
-        detector.updateResponse(
-          const AudioReactiveFlowResponse(0.12, 0.72, 0.12),
-        ),
-        greaterThan(0.8),
-      );
-    },
-  );
-
-  test('bass transient gives a medium rising edge visible strength', () {
-    final detector = AudioReactiveFlowTransientDetector();
-    detector.update(0.30);
-
-    expect(detector.update(0.45), closeTo(0.44, 0.02));
-  });
-
-  test('bass transient resets across silence without a startup flash', () {
-    final detector = AudioReactiveFlowTransientDetector();
-    detector.update(0.18);
-    detector.update(0.70);
-
-    expect(detector.update(0), 0);
-    expect(detector.update(0.40), 0);
-  });
-
-  test('bass transient does not retrigger while low energy is falling', () {
-    final detector = AudioReactiveFlowTransientDetector();
-    detector.update(0.12);
-    detector.update(0.62);
-
-    expect(detector.update(0.55), 0);
-    expect(detector.update(0.42), 0);
-  });
-
-  test('bass pulse rises and falls without jumping to the trigger value', () {
-    final pulse = AudioReactiveFlowPulseEnvelope()..trigger(1);
-
-    final firstFrame = pulse.advance(1 / 60);
-    var peak = firstFrame;
-    for (var frame = 0; frame < 12; frame++) {
-      peak = max(peak, pulse.advance(1 / 60));
-    }
-    for (var frame = 0; frame < 60; frame++) {
-      pulse.advance(1 / 60);
-    }
-
-    expect(firstFrame, inExclusiveRange(0.33, 0.39));
-    expect(peak, greaterThan(firstFrame));
-    expect(pulse.value, lessThan(0.05));
-  });
-
-  test(
-    'bass pulse rejects weak fluctuations and immediate duplicate frames',
-    () {
-      final pulse = AudioReactiveFlowPulseEnvelope();
-
-      expect(pulse.trigger(0.10), isFalse);
-      expect(pulse.trigger(0.8), isTrue);
-      expect(pulse.trigger(1), isFalse);
-      pulse.advance(0.046);
-      expect(pulse.trigger(1), isTrue);
-    },
-  );
-
-  test('closely spaced bass hits create a new visible accent', () {
-    final pulse = AudioReactiveFlowPulseEnvelope()..trigger(1);
-    pulse.advance(0.05);
-    final beforeRetrigger = pulse.value;
-
-    expect(pulse.trigger(0.8), isTrue);
-    final afterRetrigger = pulse.advance(1 / 60);
-
-    expect(afterRetrigger, greaterThan(beforeRetrigger));
+    expect(
+      audioReactiveFlowMotionSpeedTarget(energy: 1, onset: 1),
+      closeTo(2.15, 0.001),
+    );
   });
 
   test('smallest artwork layer is cropped beyond the viewport', () {
@@ -263,13 +169,6 @@ void main() {
     expect(renderedSide, greaterThan(output.height * 2));
   });
 
-  test('audio breathing stays visible without oversized face movement', () {
-    expect(flowingLightBreathingScale(0.5), closeTo(1.02, 0.001));
-    expect(flowingLightBreathingScale(1), closeTo(1.04, 0.001));
-    expect(flowingLightBreathingScale(0.5, bassTransient: 1), 1.08);
-    expect(flowingLightBreathingScale(1, bassTransient: 1), 1.10);
-  });
-
   test('envelope FIR holds back a spectrum spike instead of copying it', () {
     final envelope = AudioReactiveFlowEnvelope();
     final first = envelope.update(const AudioReactiveFlowResponse(1, 0.6, 0.3));
@@ -279,32 +178,25 @@ void main() {
     expect(first.high, lessThan(first.mid));
   });
 
-  test('visual hit follows a beat through a spring instead of a step', () {
-    final spring = AudioReactiveFlowVisualSpring();
-
-    final firstFrame = spring.follow(1, 1 / 60);
-    var peak = firstFrame;
-    for (var frame = 0; frame < 40; frame++) {
-      peak = max(peak, spring.follow(1, 1 / 60));
-    }
-
-    expect(firstFrame, inExclusiveRange(0.10, 0.18));
-    expect(peak, greaterThan(0.85));
-    expect(peak, lessThanOrEqualTo(1.0));
-  });
-
-  test('bass transient adds a bounded local cover warp', () {
-    expect(flowingLightWarpStrength(0), 0);
-    expect(flowingLightWarpStrength(0.5), closeTo(0.007, 0.0001));
-    expect(
-      flowingLightWarpStrength(0.5, bassTransient: 1),
-      closeTo(0.049, 0.0001),
-    );
-    expect(flowingLightWarpStrength(1, bassTransient: 1), 0.055);
-  });
-
   test('artwork layers carry the cover color over the neutral fallback', () {
     expect(flowingLightArtworkOpacityCeiling(), greaterThan(0.92));
+  });
+
+  test('cover base color averages the 5x5 grid', () {
+    const width = 10;
+    const height = 10;
+    final pixels = ByteData(width * height * 4);
+    for (var i = 0; i < width * height; i++) {
+      pixels.setUint8(i * 4, 200);
+      pixels.setUint8(i * 4 + 1, 10);
+      pixels.setUint8(i * 4 + 2, 20);
+      pixels.setUint8(i * 4 + 3, 255);
+    }
+
+    expect(
+      flowingLightCoverBaseColor(pixels, width, height).toARGB32(),
+      const Color(0xFFC80A14).toARGB32(),
+    );
   });
 
   testWidgets('disabled audio-reactive flow does not subscribe to spectrum', (
@@ -357,7 +249,9 @@ void main() {
     expect(spectrum.hasListener, isFalse);
   });
 
-  testWidgets('bass pulse paints the warped artwork mesh', (tester) async {
+  testWidgets('audio-reactive spectrum updates without throwing', (
+    tester,
+  ) async {
     final spectrum = StreamController<Float32List>.broadcast();
     addTearDown(spectrum.close);
     final cover = await _createCoverPng();
