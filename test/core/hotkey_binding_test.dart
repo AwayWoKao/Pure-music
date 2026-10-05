@@ -86,6 +86,9 @@ void main() {
       expect(defaultInAppBinding(HotkeyAction.next).label, 'Ctrl + →');
       expect(defaultInAppBinding(HotkeyAction.volumeUp).label, 'Ctrl + ↑');
       expect(defaultInAppBinding(HotkeyAction.volumeDown).label, 'Ctrl + ↓');
+      expect(defaultInAppBinding(HotkeyAction.shuffle).label, 'Ctrl + S');
+      expect(defaultInAppBinding(HotkeyAction.desktopLyric).label, 'F2');
+      expect(defaultInAppBinding(HotkeyAction.sleepTimer).label, 'F8');
       expect(defaultInAppBinding(HotkeyAction.immersive).label, 'F1');
       expect(defaultInAppBinding(HotkeyAction.fullscreen).label, 'F11');
       expect(defaultInAppBinding(HotkeyAction.escape).label, 'Esc');

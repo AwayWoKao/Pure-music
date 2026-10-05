@@ -8,6 +8,7 @@ import 'package:pure_music/core/settings.dart';
 import 'package:pure_music/play_service/play_service.dart';
 import 'package:pure_music/native/bass/bass_player.dart';
 import 'package:pure_music/core/utils.dart';
+import 'package:pure_music/page/now_playing_page/component/sleep_timer_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:hotkey_manager/hotkey_manager.dart';
 import 'package:go_router/go_router.dart';
@@ -132,6 +133,12 @@ class HotkeysHelper {
         _changeVolume(0.05);
       case HotkeyAction.volumeDown:
         _changeVolume(-0.05);
+      case HotkeyAction.shuffle:
+        _toggleShuffle();
+      case HotkeyAction.desktopLyric:
+        _toggleDesktopLyric();
+      case HotkeyAction.sleepTimer:
+        _openSleepTimer();
       case HotkeyAction.immersive:
         _toggleImmersive();
       case HotkeyAction.fullscreen:
@@ -182,6 +189,42 @@ class HotkeysHelper {
     showHotkeyToast(
       text: '应用音量：${(next * 100).round()}%',
       icon: delta > 0 ? Icons.volume_up : Icons.volume_down,
+    );
+  }
+
+  static void _toggleShuffle() {
+    final playbackService = PlayService.existingPlaybackService;
+    if (playbackService == null) return;
+    if (playbackService.nowPlaying == null) {
+      showHotkeyToast(text: '没有正在播放的歌曲', icon: Icons.shuffle);
+      return;
+    }
+    final enabled = !playbackService.shuffle.value;
+    playbackService.useShuffle(enabled);
+    showHotkeyToast(
+      text: enabled ? '随机：开' : '随机：关',
+      icon: Icons.shuffle,
+    );
+  }
+
+  static Future<void> _toggleDesktopLyric() async {
+    if (!PlayService.isInitialized) return;
+    final desktopLyric = PlayService.instance.desktopLyricService;
+    if (desktopLyric.isRunning) {
+      await desktopLyric.killDesktopLyric();
+      showHotkeyToast(text: '桌面歌词：关', icon: Icons.lyrics_outlined);
+    } else {
+      await desktopLyric.startDesktopLyric();
+      showHotkeyToast(text: '桌面歌词：开', icon: Icons.lyrics);
+    }
+  }
+
+  static void _openSleepTimer() {
+    final context = routerKey.currentContext;
+    if (context == null) return;
+    showDialog<void>(
+      context: context,
+      builder: (context) => const SleepTimerDialog(),
     );
   }
 

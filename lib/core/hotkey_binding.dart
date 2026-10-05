@@ -7,6 +7,9 @@ enum HotkeyAction {
   next,
   volumeUp,
   volumeDown,
+  shuffle,
+  desktopLyric,
+  sleepTimer,
   immersive,
   fullscreen,
   escape;
@@ -17,6 +20,9 @@ enum HotkeyAction {
     next => '下一首',
     volumeUp => '音量加大',
     volumeDown => '音量减小',
+    shuffle => '随机播放',
+    desktopLyric => '桌面歌词',
+    sleepTimer => '睡眠定时',
     immersive => '沉浸模式',
     fullscreen => '全屏',
     escape => '关闭 / 返回',
@@ -29,6 +35,9 @@ const inAppHotkeyActions = <HotkeyAction>[
   HotkeyAction.next,
   HotkeyAction.volumeUp,
   HotkeyAction.volumeDown,
+  HotkeyAction.shuffle,
+  HotkeyAction.desktopLyric,
+  HotkeyAction.sleepTimer,
   HotkeyAction.immersive,
   HotkeyAction.fullscreen,
   HotkeyAction.escape,
@@ -38,6 +47,8 @@ const globalHotkeyActions = <HotkeyAction>[
   HotkeyAction.playPause,
   HotkeyAction.previous,
   HotkeyAction.next,
+  HotkeyAction.shuffle,
+  HotkeyAction.desktopLyric,
 ];
 
 class HotkeyBinding {
@@ -171,6 +182,15 @@ HotkeyBinding defaultInAppBinding(HotkeyAction action) {
         keyHid: PhysicalKeyboardKey.arrowDown.usbHidUsage,
         modifierHids: [control],
       );
+    case HotkeyAction.shuffle:
+      return HotkeyBinding(
+        keyHid: PhysicalKeyboardKey.keyS.usbHidUsage,
+        modifierHids: [control],
+      );
+    case HotkeyAction.desktopLyric:
+      return HotkeyBinding(keyHid: PhysicalKeyboardKey.f2.usbHidUsage);
+    case HotkeyAction.sleepTimer:
+      return HotkeyBinding(keyHid: PhysicalKeyboardKey.f8.usbHidUsage);
     case HotkeyAction.immersive:
       return HotkeyBinding(keyHid: PhysicalKeyboardKey.f1.usbHidUsage);
     case HotkeyAction.fullscreen:
