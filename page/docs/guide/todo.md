@@ -1,30 +1,20 @@
 ---
 outline: deep
-description: Pure Music 可能继续完善的功能规划，不代表开发顺序。
+description: 可能继续完善的功能，不代表开发顺序。
 ---
 
 # 待办 / 规划
 
-这里记录一些可能继续完善的功能。已经能使用的内容见各指南页；版本变化见 [更新日志](/guide/changelog)。
-
-顺序不代表先后。
+已经能用的见各指南页；版本变化见 [更新日志](/guide/changelog)。顺序不代表先后。
 
 ## 歌词
 
-### 更细的「只要翻译 / 只要注音」
-
-有的歌词源会把原文、翻译和注音一起返回，暂时没法只下载其中一种。播放时仍能单独**显示或隐藏**已有的翻译、注音。
+有的源会把原文、翻译、注音绑在一起返回，暂时不能只下其中一种。播放时仍可单独显示或隐藏已有的翻译、注音。
 
 ## 界面语言
 
-### 软件多语言
-
-界面目前主要是中文。以后可能支持英文等，或跟随系统语言。
-
-### 文档多语言
-
-文档站目前只有中文；软件支持更多界面语言后，文档也会一起跟进。
+软件和文档目前主要是中文。以后可能加英文，或跟随系统语言。
 
 ---
 
-有建议或遇到问题，请优先前往 [GitHub Issues](https://github.com/qingyueyin/Pure-music/issues)。[Gitee](https://gitee.com/qingyueyin/Pure-music) 仅作为下载镜像，版本更新可能稍有延迟。
+建议或问题优先去 [GitHub Issues](https://github.com/qingyueyin/Pure-music/issues)。[Gitee](https://gitee.com/qingyueyin/Pure-music) 只是下载镜像，可能滞后。
