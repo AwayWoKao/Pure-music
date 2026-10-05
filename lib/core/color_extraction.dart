@@ -1,5 +1,39 @@
 import 'package:flutter/material.dart';
 
+/// 从封面调色板里挑主题种子色：主色够鲜就用主色，否则用更有色彩的那颗。
+Color selectThemeSeedColor(List<Color> palette) {
+  if (palette.isEmpty) return const Color(0xff27272a);
+  final dominant = palette.first;
+  final dominantHsv = HSVColor.fromColor(dominant);
+  final dominantHsl = HSLColor.fromColor(dominant);
+  if (dominantHsv.saturation * dominantHsv.value >= 0.06 &&
+      dominantHsl.saturation >= 0.18) {
+    return dominant;
+  }
+
+  Color? selected;
+  var bestScore = double.negativeInfinity;
+  for (var index = 1; index < palette.length; index++) {
+    final color = palette[index];
+    final hsv = HSVColor.fromColor(color);
+    final hsl = HSLColor.fromColor(color);
+    final chroma = hsv.saturation * hsv.value;
+    if (chroma < 0.06 || hsl.saturation < 0.18) continue;
+
+    final toneFit = 1.0 - (hsl.lightness - 0.5).abs() * 2.0;
+    final score =
+        chroma * 0.65 +
+        hsl.saturation * 0.2 +
+        toneFit * 0.1 +
+        0.05 / (index + 1);
+    if (score > bestScore) {
+      bestScore = score;
+      selected = color;
+    }
+  }
+  return selected ?? palette.first;
+}
+
 class ColorExtractionService {
   static final ColorExtractionService _instance =
       ColorExtractionService._internal();

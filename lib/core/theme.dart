@@ -165,47 +165,18 @@ _independentSurfaces(bool isDark) {
   );
 }
 
-Color _selectThemeSeedColor(List<Color> palette) {
-  final dominant = palette.first;
-  final dominantHsv = HSVColor.fromColor(dominant);
-  final dominantHsl = HSLColor.fromColor(dominant);
-  if (dominantHsv.saturation * dominantHsv.value >= 0.06 &&
-      dominantHsl.saturation >= 0.18) {
-    return dominant;
-  }
-
-  Color? selected;
-  var bestScore = double.negativeInfinity;
-  for (var index = 1; index < palette.length; index++) {
-    final color = palette[index];
-    final hsv = HSVColor.fromColor(color);
-    final hsl = HSLColor.fromColor(color);
-    final chroma = hsv.saturation * hsv.value;
-    if (chroma < 0.06 || hsl.saturation < 0.18) continue;
-
-    final toneFit = 1.0 - (hsl.lightness - 0.5).abs() * 2.0;
-    final score =
-        chroma * 0.65 +
-        hsl.saturation * 0.2 +
-        toneFit * 0.1 +
-        0.05 / (index + 1);
-    if (score > bestScore) {
-      bestScore = score;
-      selected = color;
-    }
-  }
-  return selected ?? palette.first;
-}
-
 Color _configuredThemeSeedColor() {
   final settings = AppSettings.instance;
-  if (!settings.enableCoverColorExtraction) {
-    final customColor = settings.customCoverColor;
-    return customColor != null
-        ? Color(customColor)
-        : Color(AppSettings.getWindowsTheme());
+  switch (settings.themeColorSource) {
+    case ThemeColorSource.custom:
+      final customColor = settings.customCoverColor;
+      return customColor != null
+          ? Color(customColor)
+          : Color(AppSettings.getWindowsTheme());
+    case ThemeColorSource.system:
+    case ThemeColorSource.cover:
+      return Color(AppSettings.getWindowsTheme());
   }
-  return Color(AppSettings.getWindowsTheme());
 }
 
 class ThemeProvider extends ChangeNotifier {
@@ -329,6 +300,15 @@ class ThemeProvider extends ChangeNotifier {
     _notifyThemeChanged();
   }
 
+  /// 无封面跟随时，重新读取系统强调色或自定义色。
+  void refreshConfiguredSeedIfNeeded() {
+    if (AppSettings.instance.enableCoverColorExtraction &&
+        PlayService.existingPlaybackService?.nowPlaying != null) {
+      return;
+    }
+    _applySeedColor(_configuredThemeSeedColor());
+  }
+
   void handlePlatformBrightnessChanged() {
     if (themeMode != ThemeMode.system) return;
     _notifyThemeChanged();
@@ -340,7 +320,7 @@ class ThemeProvider extends ChangeNotifier {
       modified: modified,
     );
     if (palette == null || palette.isEmpty) return null;
-    return _selectThemeSeedColor(palette);
+    return selectThemeSeedColor(palette);
   }
 
   /// 直接应用预计算好的种子色，避免重复解码。
@@ -383,9 +363,7 @@ class ThemeProvider extends ChangeNotifier {
         _colorService.cachePaletteForPath(path, palette, modified: modified);
       }
 
-      return palette.isNotEmpty
-          ? _selectThemeSeedColor(palette)
-          : const Color(0xff27272a);
+      return selectThemeSeedColor(palette);
     } catch (e) {
       debugPrint('Seed color extraction failed: $e');
       return const Color(0xff27272a);

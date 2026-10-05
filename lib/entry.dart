@@ -197,9 +197,6 @@ Page<T> _slidePage<T>({
   );
 }
 
-
-
-
 GoRoute _detailRoute<T>({
   required String fallback,
   required Widget Function(T extra) builder,
@@ -207,10 +204,8 @@ GoRoute _detailRoute<T>({
   return GoRoute(
     path: 'detail',
     redirect: (context, state) => _redirectUnlessExtra<T>(state, fallback),
-    pageBuilder: (context, state) => _slidePage(
-      key: state.pageKey,
-      child: builder(state.extra as T),
-    ),
+    pageBuilder: (context, state) =>
+        _slidePage(key: state.pageKey, child: builder(state.extra as T)),
   );
 }
 
@@ -223,11 +218,8 @@ StatefulShellBranch _maintainedBranch({
     routes: [
       GoRoute(
         path: path,
-        pageBuilder: (context, state) => _slidePage(
-          key: state.pageKey,
-          maintainState: true,
-          child: child,
-        ),
+        pageBuilder: (context, state) =>
+            _slidePage(key: state.pageKey, maintainState: true, child: child),
         routes: routes,
       ),
     ],
@@ -245,12 +237,10 @@ StatefulShellBranch _builderBranch({
 
 Page<void> _audiosPage(GoRouterState state) {
   final extra = state.extra;
-  final page = extra is Audio ? AudiosPage(locateTo: extra) : const AudiosPage();
-  return _slidePage(
-    key: state.pageKey,
-    maintainState: true,
-    child: page,
-  );
+  final page = extra is Audio
+      ? AudiosPage(locateTo: extra)
+      : const AudiosPage();
+  return _slidePage(key: state.pageKey, maintainState: true, child: page);
 }
 
 String? _redirectUnlessExtra<T>(GoRouterState state, String fallback) {
@@ -265,7 +255,10 @@ Page<void> _folderDetailPage(GoRouterState state) {
       child: FolderDetailPage(folder: AudioFolder([], '', 0, 0)),
     );
   }
-  return _slidePage(key: state.pageKey, child: FolderDetailPage(folder: folder));
+  return _slidePage(
+    key: state.pageKey,
+    child: FolderDetailPage(folder: folder),
+  );
 }
 
 Page<void> _playlistDetailPage(GoRouterState state) {
@@ -391,7 +384,7 @@ class _EntryState extends State<Entry>
 
   @override
   void onWindowFocus() {
-    // Window focus handler
+    ThemeProvider.instance.refreshConfiguredSeedIfNeeded();
   }
 
   void _onPointerDown(PointerDownEvent event) {
@@ -709,7 +702,6 @@ class _EntryState extends State<Entry>
     );
   }
 
-
   Widget _windowTickerGate(Widget? child) {
     return ValueListenableBuilder<bool>(
       valueListenable: _windowResizing,
@@ -799,10 +791,7 @@ class _EntryState extends State<Entry>
             path: app_paths.CONCERT_PAGE,
             child: const ConcertPage(),
           ),
-          _builderBranch(
-            path: app_paths.STATS_PAGE,
-            child: const StatsPage(),
-          ),
+          _builderBranch(path: app_paths.STATS_PAGE, child: const StatsPage()),
           _maintainedBranch(
             path: app_paths.SETTINGS_PAGE,
             child: const SettingsPage(),
