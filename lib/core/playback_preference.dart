@@ -19,6 +19,8 @@ class PlaybackPreference {
   double lastPositionSeconds;
   bool reinitOnSetSource;
   bool replayGainEnabled;
+  ReplayGainMode replayGainMode;
+  bool skipLeadingSilence;
   TransitionMode transitionMode;
   int transitionFadeOutMs;
   int transitionFadeInMs;
@@ -32,6 +34,8 @@ class PlaybackPreference {
     this.eqEnabled = true,
     this.audioDspSettings = const AudioDspSettings(),
     this.replayGainEnabled = false,
+    this.replayGainMode = ReplayGainMode.track,
+    this.skipLeadingSilence = false,
     this.eqPreampDb = 0.0,
     this.eqAutoGainEnabled = true,
     this.eqAutoHeadroomDb = 1.0,
@@ -66,6 +70,8 @@ class PlaybackPreference {
     'lastPositionSeconds': lastPositionSeconds,
     'reinitOnSetSource': reinitOnSetSource,
     'replayGainEnabled': replayGainEnabled,
+    'replayGainMode': replayGainMode.name,
+    'skipLeadingSilence': skipLeadingSilence,
     'transitionMode': transitionMode.name,
     'transitionFadeOutMs': transitionFadeOutMs,
     'transitionFadeInMs': transitionFadeInMs,
@@ -95,6 +101,8 @@ class PlaybackPreference {
       lastPositionSeconds: session.lastPositionSeconds,
       reinitOnSetSource: session.reinitOnSetSource,
       replayGainEnabled: session.replayGainEnabled,
+      replayGainMode: session.replayGainMode,
+      skipLeadingSilence: session.skipLeadingSilence,
       transitionMode: transition.mode,
       transitionFadeOutMs: transition.fadeOutMs,
       transitionFadeInMs: transition.fadeInMs,
@@ -110,6 +118,8 @@ class PlaybackPreference {
     double lastPositionSeconds,
     bool reinitOnSetSource,
     bool replayGainEnabled,
+    ReplayGainMode replayGainMode,
+    bool skipLeadingSilence,
   })
   _sessionFromMap(Map map) {
     final lastPlaylistPaths = _normalizedPathStringList(
@@ -143,6 +153,11 @@ class PlaybackPreference {
       ),
       replayGainEnabled: _normalizedBool(
         map['replayGainEnabled'],
+        defaultValue: false,
+      ),
+      replayGainMode: _replayGainModeFromStored(map['replayGainMode']),
+      skipLeadingSilence: _normalizedBool(
+        map['skipLeadingSilence'],
         defaultValue: false,
       ),
     );

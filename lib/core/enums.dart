@@ -126,6 +126,21 @@ enum TransitionMode {
   }
 }
 
+enum ReplayGainMode {
+  /// 按单曲音量标签拉齐
+  track,
+
+  /// 按专辑音量标签拉齐，保留专辑内相对音量
+  album;
+
+  static ReplayGainMode? fromString(String name) {
+    for (final value in ReplayGainMode.values) {
+      if (_matchesStoredEnumName(name, value.name)) return value;
+    }
+    return null;
+  }
+}
+
 enum TopBarLyricAnimation {
   slideUp,
   slideDown,

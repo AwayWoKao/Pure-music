@@ -6,8 +6,10 @@ import 'package:pure_music/core/utils.dart';
 import 'package:pure_music/component/settings_tile.dart';
 import 'package:pure_music/play_service/audio_echo_log_recorder.dart';
 import 'package:pure_music/play_service/play_service.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
+import 'package:path/path.dart' as p;
 
 class RememberPlaybackPositionControl extends StatefulWidget {
   const RememberPlaybackPositionControl({super.key});
@@ -51,15 +53,120 @@ class _ReplayGainControlState extends State<ReplayGainControl> {
 
   @override
   Widget build(BuildContext context) {
+    return Column(
+      children: [
+        SettingsTile(
+          description: 'ReplayGain',
+          subtitle: pref.replayGainEnabled
+              ? (pref.replayGainMode == ReplayGainMode.album
+                    ? '按专辑音量拉齐，没有专辑标签就用单曲'
+                    : '按单曲音量拉齐，没有单曲标签就用专辑')
+              : '歌曲带音量标签时自动拉齐',
+          action: Switch(
+            value: pref.replayGainEnabled,
+            onChanged: (value) async {
+              setState(() => pref.replayGainEnabled = value);
+              PlayService.instance.playbackService.setReplayGainEnabled(value);
+              await AppPreference.instance.save();
+            },
+          ),
+        ),
+        if (pref.replayGainEnabled) ...[
+          const SizedBox(height: 16),
+          SettingsTile(
+            description: '拉齐方式',
+            subtitle: pref.replayGainMode == ReplayGainMode.album
+                ? '同一张专辑里歌曲相对大小保持原样'
+                : '每首歌单独拉到相近音量',
+            action: SegmentedButton<ReplayGainMode>(
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(value: ReplayGainMode.track, label: Text('曲目')),
+                ButtonSegment(value: ReplayGainMode.album, label: Text('专辑')),
+              ],
+              selected: {pref.replayGainMode},
+              onSelectionChanged: (selection) async {
+                final mode = selection.first;
+                setState(() => pref.replayGainMode = mode);
+                PlayService.instance.playbackService.setReplayGainMode(mode);
+                await AppPreference.instance.save();
+              },
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+
+class SkipLeadingSilenceControl extends StatefulWidget {
+  const SkipLeadingSilenceControl({super.key});
+
+  @override
+  State<SkipLeadingSilenceControl> createState() =>
+      _SkipLeadingSilenceControlState();
+}
+
+class _SkipLeadingSilenceControlState extends State<SkipLeadingSilenceControl> {
+  final pref = AppPreference.instance.playbackPref;
+
+  @override
+  Widget build(BuildContext context) {
     return SettingsTile(
-      description: 'ReplayGain',
+      description: '跳过片头空白',
+      subtitle: '分析过的歌从真正出声处起播，没分析过会先算一次',
       action: Switch(
-        value: pref.replayGainEnabled,
+        value: pref.skipLeadingSilence,
         onChanged: (value) async {
-          setState(() => pref.replayGainEnabled = value);
-          PlayService.instance.playbackService.setReplayGainEnabled(value);
+          setState(() => pref.skipLeadingSilence = value);
+          PlayService.instance.playbackService.setSkipLeadingSilence(value);
           await AppPreference.instance.save();
         },
+      ),
+    );
+  }
+}
+
+class MidiSoundfontControl extends StatefulWidget {
+  const MidiSoundfontControl({super.key});
+
+  @override
+  State<MidiSoundfontControl> createState() => _MidiSoundfontControlState();
+}
+
+class _MidiSoundfontControlState extends State<MidiSoundfontControl> {
+  Future<void> _pick() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['sf2', 'sf3'],
+    );
+    final path = result?.files.single.path;
+    if (path == null || path.isEmpty) return;
+    setState(() => AppSettings.instance.midiSoundfontPath = path);
+    PlayService.instance.playbackService.setMidiSoundfontPath(path);
+    await AppSettings.instance.saveSettings();
+  }
+
+  Future<void> _clear() async {
+    setState(() => AppSettings.instance.midiSoundfontPath = null);
+    PlayService.instance.playbackService.setMidiSoundfontPath(null);
+    await AppSettings.instance.saveSettings();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final path = AppSettings.instance.midiSoundfontPath;
+    return SettingsTile(
+      description: 'MIDI 音色库',
+      subtitle: path == null || path.isEmpty ? '未指定，MIDI 可能没有声音' : p.basename(path),
+      action: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (path != null && path.isNotEmpty)
+            TextButton(onPressed: _clear, child: const Text('清除')),
+          FilledButton(onPressed: _pick, child: const Text('选择')),
+        ],
       ),
     );
   }

@@ -17,6 +17,14 @@ import 'package:pure_music/core/utils.dart';
 import 'package:ffi/ffi.dart';
 import 'package:path/path.dart' as path;
 
+const int _bassConfigMidiDeffont = 0x10403;
+
+/// 播放预缓冲。解码可以提前准备，不直接等于听到的延迟。
+const int _playbackBufferMs = 500;
+
+/// 设备输出缓冲必须在 Init 前设置。500ms 实际不会生效，还会让人误以为暂停很钝；40ms 用来减少偶发破音。
+const int _deviceBufferMs = 40;
+
 enum PlayerState {
   /// stop() has been called or the end of an audio has been reached
   stopped,
@@ -125,6 +133,9 @@ class BassPlayer {
   bool _transitionHandledCompletion = false;
 
   double? _replayGainDb;
+  ffi.Pointer<ffi.Void>? _midiFontPathPtr;
+  bool _hasMidiSoundfont = false;
+  String? _midiFontPath;
   double _baseOutputVolume = 1.0;
   Timer? _outputGainFadeTimer;
   double? _outputGainFadeTarget;
@@ -272,6 +283,54 @@ class BassPlayer {
 
   String get bassDirectory => _bassDir;
 
+  bool get hasMidiSoundfont => _hasMidiSoundfont;
+
+  static bool isMidiPath(String audioPath) {
+    final ext = path.extension(audioPath).toLowerCase();
+    return ext == '.mid' || ext == '.midi' || ext == '.kar' || ext == '.rmi';
+  }
+
+  bool setMidiSoundfontPath(String? fontPath) {
+    final trimmed = fontPath?.trim() ?? '';
+    _releaseMidiFontPointer();
+    if (trimmed.isEmpty || !File(trimmed).existsSync()) {
+      _midiFontPath = null;
+      _bass.BASS_SetConfigPtr(_bassConfigMidiDeffont, ffi.nullptr);
+      _hasMidiSoundfont = false;
+      return false;
+    }
+    _bass.BASS_SetConfig(bass.BASS_CONFIG_UNICODE, bass.TRUE);
+    final pointer = trimmed.toNativeUtf16().cast<ffi.Void>();
+    final ok = _bass.BASS_SetConfigPtr(_bassConfigMidiDeffont, pointer) != 0;
+    if (!ok) {
+      malloc.free(pointer);
+      _midiFontPath = null;
+      _hasMidiSoundfont = false;
+      log.bass.warn(
+        'legacy',
+        '[bass] set midi soundfont failed: ${_bass.BASS_ErrorGetCode()}',
+      );
+      return false;
+    }
+    _midiFontPathPtr = pointer;
+    _midiFontPath = trimmed;
+    _hasMidiSoundfont = true;
+    return true;
+  }
+
+  void _releaseMidiFontPointer() {
+    if (_midiFontPathPtr == null) return;
+    malloc.free(_midiFontPathPtr!);
+    _midiFontPathPtr = null;
+  }
+
+  void _reapplyMidiSoundfont() {
+    final saved = _midiFontPath;
+    if (saved == null || saved.isEmpty) return;
+    setMidiSoundfontPath(saved);
+  }
+
+
   int get sourceGeneration => _mixerGeneration;
 
   bool get hasGaplessMixer => _mixerStream != null;
@@ -416,13 +475,14 @@ class BassPlayer {
   int Function(int, ffi.Pointer<ffi.Void>, int)? _bassChannelGetData;
   ffi.Pointer<ffi.Float>? _fftBuffer;
   ffi.Pointer<ffi.Float>? _wasapiFftBuffer;
+  ffi.Pointer<ffi.Float>? _freqAttrPtr;
   double? _cachedLengthSeconds;
   double _streamSampleRate = 44100.0;
   double get streamSampleRate => _streamSampleRate;
   bool get hasAudioSource => _fstream != null && _fPath != null;
   int _lastSpectrumUpdateUs = 0;
   final Stopwatch _spectrumClock = Stopwatch()..start();
-  Duration _spectrumTickPeriod = const Duration(milliseconds: 16);
+  Duration _spectrumTickPeriod = const Duration(milliseconds: 66);
   SpectrumUpdateMode spectrumUpdateMode = SpectrumUpdateMode.auto;
   static const int _spectrumBandCount = 8;
   static const int _activeSpectrumBandCount = 4;
@@ -532,22 +592,19 @@ class BassPlayer {
   void _refreshStreamSampleRate() {
     final handle = _sharedOutputHandle;
     if (handle == null) return;
-    final freqPtr = malloc.allocate<ffi.Float>(ffi.sizeOf<ffi.Float>());
-    try {
-      final ok = _bass.BASS_ChannelGetAttribute(
-        handle,
-        bass.BASS_ATTRIB_FREQ,
-        freqPtr,
-      );
-      if (ok != 0 && freqPtr.value.isFinite && freqPtr.value > 1.0) {
-        final nextRate = freqPtr.value.toDouble();
-        if ((_streamSampleRate - nextRate).abs() > 1e-3) {
-          _streamSampleRate = nextRate;
-          _spectrumBandsSampleRate = 0.0;
-        }
+    _freqAttrPtr ??= malloc.allocate<ffi.Float>(ffi.sizeOf<ffi.Float>());
+    final freqPtr = _freqAttrPtr!;
+    final ok = _bass.BASS_ChannelGetAttribute(
+      handle,
+      bass.BASS_ATTRIB_FREQ,
+      freqPtr,
+    );
+    if (ok != 0 && freqPtr.value.isFinite && freqPtr.value > 1.0) {
+      final nextRate = freqPtr.value.toDouble();
+      if ((_streamSampleRate - nextRate).abs() > 1e-3) {
+        _streamSampleRate = nextRate;
+        _spectrumBandsSampleRate = 0.0;
       }
-    } finally {
-      malloc.free(freqPtr);
     }
   }
 
@@ -1355,6 +1412,7 @@ class BassPlayer {
     // 先释放旧设备，确保可以使用 -1 (默认设备) 重新初始化
     _bass.BASS_Free();
     if (resetHandles) _resetBassHandles();
+    _applyOutputBufferConfig();
 
     if (_bass.BASS_Init(-1, 44100, 0, ffi.nullptr, ffi.nullptr) == 0) {
       switch (_bass.BASS_ErrorGetCode()) {
@@ -1394,15 +1452,18 @@ class BassPlayer {
     _bassFxLib?.close();
     _bassFxLib = null;
     _loadBassFx();
-
-    _bass.BASS_SetConfig(bass.BASS_CONFIG_BUFFER, 500);
-    _bass.BASS_SetConfig(bass.BASS_CONFIG_DEV_BUFFER, 500);
     if (_bass.BASS_SetConfig(bass.BASS_CONFIG_ASYNCFILE_BUFFER, 1024 * 1024) ==
         bass.FALSE) {
       log.bass.warn('legacy', '[bass] failed to set async file buffer to 1MB');
     } else {
       log.bass.debug('legacy', '[bass] async file buffer=1MB');
     }
+    _reapplyMidiSoundfont();
+  }
+
+  void _applyOutputBufferConfig() {
+    _bass.BASS_SetConfig(bass.BASS_CONFIG_BUFFER, _playbackBufferMs);
+    _bass.BASS_SetConfig(bass.BASS_CONFIG_DEV_BUFFER, _deviceBufferMs);
   }
 
   bool _startDevice() {
@@ -3516,6 +3577,10 @@ class BassPlayer {
     _fPath = null;
     _cachedLengthSeconds = null;
 
+    _releaseMidiFontPointer();
+    _midiFontPath = null;
+    _hasMidiSoundfont = false;
+
     if (_bass.BASS_Free() == 0) {
       switch (_bass.BASS_ErrorGetCode()) {
         case bass.BASS_ERROR_INIT:
@@ -3550,6 +3615,10 @@ class BassPlayer {
     if (_wasapiFftBuffer != null) {
       malloc.free(_wasapiFftBuffer!);
       _wasapiFftBuffer = null;
+    }
+    if (_freqAttrPtr != null) {
+      malloc.free(_freqAttrPtr!);
+      _freqAttrPtr = null;
     }
   }
 }

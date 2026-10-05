@@ -8,6 +8,8 @@ const int BASS_CONFIG_DEV_BUFFER = 27;
 
 const int BASS_CONFIG_ASYNCFILE_BUFFER = 45;
 
+const int BASS_CONFIG_UNICODE = 42;
+
 const int BASS_ERROR_UNKNOWN = -1;
 
 const int BASS_ERROR_NOTAUDIO = 17;
@@ -366,6 +368,17 @@ class Bass {
       );
   late final _BASS_SetConfig =
       _BASS_SetConfigPtr.asFunction<int Function(int, int)>();
+
+  int BASS_SetConfigPtr(int option, ffi.Pointer<ffi.Void> value) {
+    return _BASS_SetConfigPtrFn(option, value);
+  }
+
+  late final _BASS_SetConfigPtrFnPtr =
+      _lookup<
+        ffi.NativeFunction<BOOL Function(DWORD, ffi.Pointer<ffi.Void>)>
+      >('BASS_SetConfigPtr');
+  late final _BASS_SetConfigPtrFn = _BASS_SetConfigPtrFnPtr
+      .asFunction<int Function(int, ffi.Pointer<ffi.Void>)>();
 
   int BASS_ChannelStart(int handle) {
     return _BASS_ChannelStart(handle);

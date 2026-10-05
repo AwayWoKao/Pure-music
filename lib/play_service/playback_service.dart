@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:developer' as developer;
+import 'dart:convert';
 
 import 'package:pure_music/core/preference.dart';
 import 'package:pure_music/core/cache.dart';
@@ -18,6 +19,7 @@ import 'package:pure_music/native/bass/bass_player.dart';
 import 'package:pure_music/native/rust/api/smtc_flutter.dart';
 import 'package:pure_music/native/rust/api/tag_reader.dart' as rust_tag_reader;
 import 'package:pure_music/native/rust/api/library_db.dart' as rust_library_db;
+import 'package:pure_music/native/rust/api/smart_transition.dart' as rust_smart;
 import 'package:pure_music/core/sleep_blocker.dart';
 import 'package:pure_music/core/log/playback_log.dart';
 import 'package:pure_music/core/utils.dart';
@@ -64,6 +66,8 @@ class PlaybackService extends ChangeNotifier {
   int _nextGaplessTransitionId = 1;
   _PendingGaplessTransition? _pendingGaplessTransition;
   int _replayGainRequestToken = 0;
+  int _skipLeadingSilenceToken = 0;
+  bool _midiMissingFontWarned = false;
   double? _diagAt;
   double? _diagLength;
   late final SmartTransitionCoordinator _smartTransitions;
@@ -82,6 +86,69 @@ class PlaybackService extends ChangeNotifier {
     if (smartHandled || transitionHandled) return false;
     if (currentState == PlayerState.playing) return false;
     return true;
+  }
+
+  @visibleForTesting
+  static double? selectReplayGainDb({
+    required ReplayGainMode mode,
+    String? trackGain,
+    String? albumGain,
+  }) {
+    final track = parseReplayGainDb(trackGain);
+    final album = parseReplayGainDb(albumGain);
+    return switch (mode) {
+      ReplayGainMode.track => track ?? album,
+      ReplayGainMode.album => album ?? track,
+    };
+  }
+
+  @visibleForTesting
+  static double? parseReplayGainDb(String? raw) {
+    if (raw == null) return null;
+    var text = raw.trim();
+    if (text.isEmpty) return null;
+    if (text.length >= 2 && text.toLowerCase().endsWith('db')) {
+      text = text.substring(0, text.length - 2).trim();
+    }
+    return double.tryParse(text);
+  }
+
+  @visibleForTesting
+  static int? audibleStartMsFromProfileJson(String raw) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      final value = decoded['audible_start_ms'];
+      if (value is int) return value;
+      if (value is num) return value.round();
+      return int.tryParse(value?.toString() ?? '');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @visibleForTesting
+  static double? skipLeadingSilenceSeekSeconds({
+    required int audibleStartMs,
+    required int durationMs,
+  }) {
+    if (audibleStartMs < 400 || durationMs <= 0) return null;
+    final percentCap = (durationMs * 0.15).round();
+    final maxMs = percentCap < 20000 ? percentCap : 20000;
+    if (audibleStartMs > maxMs) return null;
+    return audibleStartMs / 1000.0;
+  }
+
+  @visibleForTesting
+  static String? smartTransitionExplanation(String? mode) {
+    return switch (mode) {
+      'gapless' => '已无缝衔接',
+      'silence_trim' => '已跳过尾部静音',
+      'energy_crossfade' => '已交叉淡化',
+      'beat_aligned' => '已按节拍对齐',
+      'beat_matched' => '已按节拍对齐',
+      _ => null,
+    };
   }
 
   @visibleForTesting
@@ -163,6 +230,7 @@ class PlaybackService extends ChangeNotifier {
 
   PlaybackService(this.playService) {
     unawaited(LastFmService.instance.ensureLoaded());
+    _player.setMidiSoundfontPath(AppSettings.instance.midiSoundfontPath);
     _bindExclusiveMode();
     _bindPlayerState();
     _bindSmtcControls();
@@ -372,6 +440,39 @@ class PlaybackService extends ChangeNotifier {
     _rebuildGaplessPreparation();
   }
 
+  void setReplayGainMode(ReplayGainMode mode) {
+    _synchronizeGaplessTransition();
+    _pref.replayGainMode = mode;
+    if (_pref.replayGainEnabled) {
+      final curr = nowPlaying;
+      if (curr != null) _loadCurrentReplayGain(curr);
+    }
+    _rebuildGaplessPreparation();
+  }
+
+  void setSkipLeadingSilence(bool enabled) {
+    _pref.skipLeadingSilence = enabled;
+    if (enabled) {
+      final curr = nowPlaying;
+      if (curr != null) _maybeSkipLeadingSilence(curr, reason: 'user.play');
+    } else {
+      _skipLeadingSilenceToken++;
+    }
+  }
+
+  void setMidiSoundfontPath(String? path) {
+    AppSettings.instance.midiSoundfontPath = path;
+    final applied = _player.setMidiSoundfontPath(path);
+    _midiMissingFontWarned = false;
+    final audio = nowPlaying;
+    if (audio != null && BassPlayer.isMidiPath(audio.path) && applied) {
+      final position = _player.position;
+      _player.setSource(audio.path);
+      if (position > 0.2) _player.seek(position);
+      _player.start();
+    }
+  }
+
   Future<bool> saveEqPreset(String name) => _eq.saveEqPreset(name);
   Future<bool> saveEqPresetBatch(Iterable<EqPreset> presets) =>
       _eq.saveEqPresetBatch(presets);
@@ -409,9 +510,11 @@ class PlaybackService extends ChangeNotifier {
     if (!_pref.replayGainEnabled) return null;
     try {
       final meta = await rust_tag_reader.readAudioExtraMetadata(path: path);
-      final raw = meta.replaygainTrackGain;
-      if (raw == null || raw.isEmpty) return null;
-      return double.tryParse(raw.replaceAll('dB', '').trim());
+      return selectReplayGainDb(
+        mode: _pref.replayGainMode,
+        trackGain: meta.replaygainTrackGain,
+        albumGain: meta.replaygainAlbumGain,
+      );
     } catch (_) {
       return null;
     }
@@ -434,6 +537,55 @@ class PlaybackService extends ChangeNotifier {
         }
       }),
     );
+  }
+
+
+  void _maybeSkipLeadingSilence(Audio audio, {required String reason}) {
+    if (!_pref.skipLeadingSilence || reason == 'restore') return;
+    final token = ++_skipLeadingSilenceToken;
+    unawaited(_skipLeadingSilenceIfNeeded(audio, token));
+  }
+
+  Future<void> _skipLeadingSilenceIfNeeded(Audio audio, int token) async {
+    try {
+      final libraryRoot = _supportPath ??= (await getAppDataDir()).path;
+      if (_closed || token != _skipLeadingSilenceToken || nowPlaying != audio) {
+        return;
+      }
+      final profile = await rust_smart.analyzeSmartTransitionTrack(
+        jobId: BigInt.from(0x100000000 + token),
+        path: audio.path,
+        libraryRoot: libraryRoot,
+      );
+      if (_closed || token != _skipLeadingSilenceToken || nowPlaying != audio) {
+        return;
+      }
+      final audibleStartMs = audibleStartMsFromProfileJson(profile);
+      if (audibleStartMs == null) return;
+      final durationMs = audio.duration * 1000;
+      final seekTo = skipLeadingSilenceSeekSeconds(
+        audibleStartMs: audibleStartMs,
+        durationMs: durationMs,
+      );
+      if (seekTo == null) return;
+      if (_player.position >= seekTo - 0.05) return;
+      _player.seek(seekTo);
+    } catch (error, trace) {
+      log.playback.warn(
+        'legacy',
+        '[skip silence] failed',
+        error: error,
+        stackTrace: trace,
+      );
+    }
+  }
+
+  void _warnMidiMissingFont(Audio audio) {
+    if (!BassPlayer.isMidiPath(audio.path)) return;
+    if (_player.hasMidiSoundfont) return;
+    if (_midiMissingFontWarned) return;
+    _midiMissingFontWarned = true;
+    showTextOnSnackBar('MIDI 需要音色库才能发声，请在设置 → 播放里指定');
   }
 
   void savePreference() {
@@ -888,6 +1040,10 @@ class PlaybackService extends ChangeNotifier {
       state: _player.playerState,
       rebuildTransitionPreparation: false,
     );
+    final explanation = smartTransitionExplanation(commit.planMode);
+    if (explanation != null) {
+      showTextOnSnackBar(explanation);
+    }
   }
 
   void _abortQueuedTransitionsForSleepTimer() {
@@ -1036,6 +1192,8 @@ class PlaybackService extends ChangeNotifier {
       index: audioIndex,
       origin: origin,
     );
+    _maybeSkipLeadingSilence(audio, reason: reason);
+    _warnMidiMissingFont(audio);
     _diagAt = null;
     _diagLength = null;
     _smtcDisplayRevision++;
