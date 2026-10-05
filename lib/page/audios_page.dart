@@ -5,35 +5,24 @@ import 'package:pure_music/core/page_sort.dart';
 import 'package:pure_music/component/audio_tile.dart';
 import 'package:pure_music/core/utils.dart';
 import 'package:pure_music/library/audio_library.dart';
+import 'package:pure_music/library/audio_sort.dart';
 import 'package:pure_music/page/uni_page.dart';
 import 'package:pure_music/page/uni_page_components.dart';
 import 'package:pure_music/page/page_scaffold.dart';
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
-void _sortAudiosByOrder(
-  List<Audio> list,
-  SortOrder order,
-  int Function(Audio a, Audio b) compare,
-) {
-  switch (order) {
-    case SortOrder.ascending:
-      list.sort(compare);
-    case SortOrder.decending:
-      list.sort((a, b) => compare(b, a));
-  }
-}
-
 SortMethodDesc<Audio> _naturalAudioSort({
   required IconData icon,
   required String name,
   required String Function(Audio) keyOf,
+  String Function(Audio)? alphabetValueOf,
   bool reuseEqualKeys = false,
 }) {
   return SortMethodDesc(
     icon: icon,
     name: name,
-    alphabetValueOf: keyOf,
+    alphabetValueOf: alphabetValueOf ?? keyOf,
     method: (list, order) {
       sortNaturallyBy(
         list,
@@ -60,15 +49,19 @@ SortMethodDesc<Audio> _timeAudioSort({
   return SortMethodDesc(
     icon: icon,
     name: name,
-    method: (list, order) => _sortAudiosByOrder(
-      list,
-      order,
-      (a, b) => valueOf(a).compareTo(valueOf(b)),
-    ),
+    method: (list, order) {
+      sortByIntegerThenNatural(
+        list,
+        valueOf: valueOf,
+        tieBreakOf: audioTitleSortValue,
+        descending: order == SortOrder.decending,
+      );
+    },
     backgroundMethod: (list, order, control) => sortPageByIntegerInBackground(
       list,
       valueOf,
       descending: order == SortOrder.decending,
+      tieBreakOf: audioTitleSortValue,
       control: control,
     ),
   );
@@ -79,19 +72,20 @@ List<SortMethodDesc<Audio>> _audiosSortMethods() {
     _naturalAudioSort(
       icon: Symbols.title,
       name: '标题',
-      keyOf: (audio) => audio.title,
+      keyOf: audioTitleSortValue,
+      alphabetValueOf: (audio) => audio.title,
     ),
     _naturalAudioSort(
       icon: Symbols.artist,
       name: '艺术家',
-      keyOf: (audio) => audio.artist,
-      reuseEqualKeys: true,
+      keyOf: audioArtistSortValue,
+      alphabetValueOf: (audio) => audio.artist,
     ),
     _naturalAudioSort(
       icon: Symbols.album,
       name: '专辑',
-      keyOf: (audio) => audio.album,
-      reuseEqualKeys: true,
+      keyOf: audioAlbumSortValue,
+      alphabetValueOf: (audio) => audio.album,
     ),
     _timeAudioSort(
       icon: Symbols.add,

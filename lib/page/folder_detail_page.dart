@@ -4,6 +4,7 @@ import 'package:pure_music/core/list_action_state.dart';
 import 'package:pure_music/core/mouse_back_exit.dart';
 import 'package:pure_music/core/utils.dart';
 import 'package:pure_music/library/audio_library.dart';
+import 'package:pure_music/library/audio_sort.dart';
 import 'package:pure_music/component/audio_tile.dart';
 import 'package:pure_music/component/quiet_empty_state.dart';
 import 'package:pure_music/page/uni_detail_page.dart';
@@ -12,19 +13,6 @@ import 'package:pure_music/page/uni_page_components.dart';
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
-void _sortFolderAudios(
-  List<Audio> list,
-  SortOrder order,
-  int Function(Audio a, Audio b) compare,
-) {
-  switch (order) {
-    case SortOrder.ascending:
-      list.sort(compare);
-    case SortOrder.decending:
-      list.sort((a, b) => compare(b, a));
-  }
-}
-
 List<SortMethodDesc<Audio>> _folderSortMethods() {
   return [
     ..._folderTextSorts(),
@@ -32,20 +20,26 @@ List<SortMethodDesc<Audio>> _folderSortMethods() {
     SortMethodDesc(
       icon: Symbols.timer,
       name: '时长',
-      method: (list, order) => _sortFolderAudios(
-        list,
-        order,
-        (a, b) => a.duration.compareTo(b.duration),
-      ),
+      method: (list, order) {
+        sortByIntegerThenNatural(
+          list,
+          valueOf: (audio) => audio.duration,
+          tieBreakOf: audioTitleSortValue,
+          descending: order == SortOrder.decending,
+        );
+      },
     ),
     SortMethodDesc(
       icon: Symbols.bar_chart,
       name: '播放次数',
-      method: (list, order) => _sortFolderAudios(
-        list,
-        order,
-        (a, b) => a.playCount.compareTo(b.playCount),
-      ),
+      method: (list, order) {
+        sortByIntegerThenNatural(
+          list,
+          valueOf: (audio) => audio.playCount,
+          tieBreakOf: audioTitleSortValue,
+          descending: order == SortOrder.decending,
+        );
+      },
     ),
   ];
 }
@@ -56,31 +50,37 @@ List<SortMethodDesc<Audio>> _folderTextSorts() {
       icon: Symbols.title,
       name: '标题',
       alphabetValueOf: (audio) => audio.title,
-      method: (list, order) => _sortFolderAudios(
-        list,
-        order,
-        (a, b) => a.title.naturalCompareTo(b.title),
-      ),
+      method: (list, order) {
+        sortNaturallyBy(
+          list,
+          audioTitleSortValue,
+          descending: order == SortOrder.decending,
+        );
+      },
     ),
     SortMethodDesc(
       icon: Symbols.artist,
       name: '艺术家',
       alphabetValueOf: (audio) => audio.artist,
-      method: (list, order) => _sortFolderAudios(
-        list,
-        order,
-        (a, b) => a.artist.naturalCompareTo(b.artist),
-      ),
+      method: (list, order) {
+        sortNaturallyBy(
+          list,
+          audioArtistSortValue,
+          descending: order == SortOrder.decending,
+        );
+      },
     ),
     SortMethodDesc(
       icon: Symbols.album,
       name: '专辑',
       alphabetValueOf: (audio) => audio.album,
-      method: (list, order) => _sortFolderAudios(
-        list,
-        order,
-        (a, b) => a.album.naturalCompareTo(b.album),
-      ),
+      method: (list, order) {
+        sortNaturallyBy(
+          list,
+          audioAlbumSortValue,
+          descending: order == SortOrder.decending,
+        );
+      },
     ),
   ];
 }
@@ -90,20 +90,26 @@ List<SortMethodDesc<Audio>> _folderTimeSorts() {
     SortMethodDesc(
       icon: Symbols.add,
       name: '创建时间',
-      method: (list, order) => _sortFolderAudios(
-        list,
-        order,
-        (a, b) => a.created.compareTo(b.created),
-      ),
+      method: (list, order) {
+        sortByIntegerThenNatural(
+          list,
+          valueOf: (audio) => audio.created,
+          tieBreakOf: audioTitleSortValue,
+          descending: order == SortOrder.decending,
+        );
+      },
     ),
     SortMethodDesc(
       icon: Symbols.edit,
       name: '修改时间',
-      method: (list, order) => _sortFolderAudios(
-        list,
-        order,
-        (a, b) => a.modified.compareTo(b.modified),
-      ),
+      method: (list, order) {
+        sortByIntegerThenNatural(
+          list,
+          valueOf: (audio) => audio.modified,
+          tieBreakOf: audioTitleSortValue,
+          descending: order == SortOrder.decending,
+        );
+      },
     ),
   ];
 }

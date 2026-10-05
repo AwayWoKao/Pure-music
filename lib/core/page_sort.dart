@@ -53,17 +53,27 @@ Uint32List _localeOrder(List<String> values, bool descending) {
   return indexes;
 }
 
-Uint32List _integerOrder(List<int> values, bool descending) {
-  final indexes = Uint32List(values.length);
-  for (var index = 0; index < indexes.length; index++) {
-    indexes[index] = index;
-  }
-  if (descending) {
-    indexes.sort((a, b) => values[b].compareTo(values[a]));
+Uint32List _integerOrder(
+  List<int> values,
+  bool descending,
+  List<String>? tieBreaks,
+) {
+  final indexes = List<int>.generate(values.length, (index) => index);
+  if (tieBreaks == null) {
+    indexes.sort((a, b) {
+      final cmp = values[a].compareTo(values[b]);
+      if (cmp != 0) return descending ? -cmp : cmp;
+      return a.compareTo(b);
+    });
   } else {
-    indexes.sort((a, b) => values[a].compareTo(values[b]));
+    sortByIntegerThenNatural(
+      indexes,
+      valueOf: (index) => values[index],
+      tieBreakOf: (index) => tieBreaks[index],
+      descending: descending,
+    );
   }
-  return indexes;
+  return Uint32List.fromList(indexes);
 }
 
 Future<List<String>?> _extractStringValues<T>(
@@ -188,12 +198,20 @@ Future<List<T>?> sortPageByIntegerInBackground<T>(
   List<T> items,
   int Function(T item) valueOf, {
   required bool descending,
+  String Function(T item)? tieBreakOf,
   PageSortControl? control,
 }) async {
   final values = await _extractIntegerValues(items, valueOf, control);
   if (values == null) return null;
+  List<String>? tieBreaks;
+  if (tieBreakOf != null) {
+    tieBreaks = await _extractStringValues(items, tieBreakOf, control);
+    if (tieBreaks == null) return null;
+  }
   final sortStopwatch = Stopwatch()..start();
-  final indexes = await Isolate.run(() => _integerOrder(values, descending));
+  final indexes = await Isolate.run(
+    () => _integerOrder(values, descending, tieBreaks),
+  );
   sortStopwatch.stop();
   pageSortPhaseObserver?.call('BackgroundSort', sortStopwatch.elapsed);
   if (control != null && !control.isCurrent()) return null;

@@ -3,6 +3,7 @@ import 'package:pure_music/core/list_action_state.dart';
 import 'package:pure_music/core/enums.dart';
 import 'package:pure_music/core/utils.dart';
 import 'package:pure_music/library/audio_library.dart';
+import 'package:pure_music/library/audio_sort.dart';
 import 'package:pure_music/component/album_tile.dart';
 import 'package:pure_music/component/audio_tile.dart';
 import 'package:pure_music/component/quiet_empty_state.dart';
@@ -70,17 +71,18 @@ SortMethodDesc<Audio> _artistStringSort({
   required IconData icon,
   required String name,
   required String Function(Audio) keyOf,
+  required String Function(Audio) sortValueOf,
 }) {
   return SortMethodDesc(
     icon: icon,
     name: name,
     alphabetValueOf: keyOf,
     method: (list, order) {
-      list.sort((a, b) {
-        final left = order == SortOrder.ascending ? a : b;
-        final right = order == SortOrder.ascending ? b : a;
-        return keyOf(left).naturalCompareTo(keyOf(right));
-      });
+      sortNaturallyBy(
+        list,
+        sortValueOf,
+        descending: order == SortOrder.decending,
+      );
     },
   );
 }
@@ -94,11 +96,12 @@ SortMethodDesc<Audio> _artistIntSort({
     icon: icon,
     name: name,
     method: (list, order) {
-      list.sort((a, b) {
-        final left = order == SortOrder.ascending ? a : b;
-        final right = order == SortOrder.ascending ? b : a;
-        return valueOf(left).compareTo(valueOf(right));
-      });
+      sortByIntegerThenNatural(
+        list,
+        valueOf: valueOf,
+        tieBreakOf: audioTitleSortValue,
+        descending: order == SortOrder.decending,
+      );
     },
   );
 }
@@ -109,11 +112,13 @@ List<SortMethodDesc<Audio>> _artistSortMethods() {
       icon: Symbols.title,
       name: '标题',
       keyOf: (audio) => audio.title,
+      sortValueOf: audioTitleSortValue,
     ),
     _artistStringSort(
       icon: Symbols.album,
       name: '专辑',
       keyOf: (audio) => audio.album,
+      sortValueOf: audioAlbumSortValue,
     ),
     _artistIntSort(
       icon: Symbols.add,

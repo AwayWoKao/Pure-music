@@ -7,6 +7,7 @@ import 'package:pure_music/core/mouse_back_exit.dart';
 import 'package:pure_music/core/settings.dart';
 import 'package:pure_music/core/utils.dart';
 import 'package:pure_music/library/audio_library.dart';
+import 'package:pure_music/library/audio_sort.dart';
 import 'package:pure_music/library/playlist.dart';
 import 'package:pure_music/page/playlist_cover_picker.dart';
 import 'package:pure_music/component/audio_tile.dart';
@@ -117,67 +118,70 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
     );
   }
 
-  void _sortByOrder(
-    List<Audio> list,
-    SortOrder order,
-    int Function(Audio a, Audio b) compare,
-  ) {
-    switch (order) {
-      case SortOrder.ascending:
-        list.sort(compare);
-      case SortOrder.decending:
-        list.sort((a, b) => compare(b, a));
-    }
-  }
-
   List<SortMethodDesc<Audio>> _playlistSortMethods() {
     return [
-      _audioTextSort(Symbols.title, '标题', (audio) => audio.title),
-      _audioTextSort(Symbols.artist, '艺术家', (audio) => audio.artist),
-      _audioTextSort(Symbols.album, '专辑', (audio) => audio.album),
+      _audioTextSort(Symbols.title, '标题', (audio) => audio.title, audioTitleSortValue),
+      _audioTextSort(Symbols.artist, '艺术家', (audio) => audio.artist, audioArtistSortValue),
+      _audioTextSort(Symbols.album, '专辑', (audio) => audio.album, audioAlbumSortValue),
       SortMethodDesc<Audio>(
         icon: Symbols.add_circle,
         name: '添加时间',
-        method: (list, order) => _sortByOrder(
-          list,
-          order,
-          (a, b) => widget.playlist
-              .addedAt(a.path)
-              .compareTo(widget.playlist.addedAt(b.path)),
-        ),
+        method: (list, order) {
+          sortByIntegerThenNatural(
+            list,
+            valueOf: (audio) => widget.playlist.addedAt(audio.path).millisecondsSinceEpoch,
+            tieBreakOf: audioTitleSortValue,
+            descending: order == SortOrder.decending,
+          );
+        },
       ),
       SortMethodDesc<Audio>(
         icon: Symbols.add,
         name: '创建时间',
-        method: (list, order) =>
-            _sortByOrder(list, order, (a, b) => a.created.compareTo(b.created)),
+        method: (list, order) {
+          sortByIntegerThenNatural(
+            list,
+            valueOf: (audio) => audio.created,
+            tieBreakOf: audioTitleSortValue,
+            descending: order == SortOrder.decending,
+          );
+        },
       ),
       SortMethodDesc<Audio>(
         icon: Symbols.edit,
         name: '修改时间',
-        method: (list, order) => _sortByOrder(
-          list,
-          order,
-          (a, b) => a.modified.compareTo(b.modified),
-        ),
+        method: (list, order) {
+          sortByIntegerThenNatural(
+            list,
+            valueOf: (audio) => audio.modified,
+            tieBreakOf: audioTitleSortValue,
+            descending: order == SortOrder.decending,
+          );
+        },
       ),
       SortMethodDesc<Audio>(
         icon: Symbols.timer,
         name: '时长',
-        method: (list, order) => _sortByOrder(
-          list,
-          order,
-          (a, b) => a.duration.compareTo(b.duration),
-        ),
+        method: (list, order) {
+          sortByIntegerThenNatural(
+            list,
+            valueOf: (audio) => audio.duration,
+            tieBreakOf: audioTitleSortValue,
+            descending: order == SortOrder.decending,
+          );
+        },
       ),
       SortMethodDesc<Audio>(
         icon: Symbols.bar_chart,
         name: '播放次数',
-        method: (list, order) => _sortByOrder(
-          list,
-          order,
-          (a, b) => a.playCount.compareTo(b.playCount),
-        ),
+        method: (list, order) {
+          sortByIntegerThenNatural(
+            list,
+            valueOf: (audio) => audio.playCount,
+            tieBreakOf: audioTitleSortValue,
+            descending: order == SortOrder.decending,
+          );
+        },
       ),
       SortMethodDesc<Audio>(
         icon: Symbols.drag_indicator,
@@ -191,16 +195,19 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
     IconData icon,
     String name,
     String Function(Audio audio) valueOf,
+    String Function(Audio audio) sortValueOf,
   ) {
     return SortMethodDesc<Audio>(
       icon: icon,
       name: name,
       alphabetValueOf: valueOf,
-      method: (list, order) => _sortByOrder(
-        list,
-        order,
-        (a, b) => valueOf(a).naturalCompareTo(valueOf(b)),
-      ),
+      method: (list, order) {
+        sortNaturallyBy(
+          list,
+          sortValueOf,
+          descending: order == SortOrder.decending,
+        );
+      },
     );
   }
 

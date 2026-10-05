@@ -452,29 +452,25 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
       SortMethodDesc(
         icon: Symbols.title,
         name: '名称',
+        alphabetValueOf: (item) => item.name,
         method: (list, order) {
-          switch (order) {
-            case SortOrder.ascending:
-              list.sort((a, b) => a.name.naturalCompareTo(b.name));
-              break;
-            case SortOrder.decending:
-              list.sort((a, b) => b.name.naturalCompareTo(a.name));
-              break;
-          }
+          sortNaturallyBy(
+            list,
+            (item) => item.name,
+            descending: order == SortOrder.decending,
+          );
         },
       ),
       SortMethodDesc(
         icon: Symbols.music_note,
         name: '歌曲数量',
         method: (list, order) {
-          switch (order) {
-            case SortOrder.ascending:
-              list.sort((a, b) => a.paths.length.compareTo(b.paths.length));
-              break;
-            case SortOrder.decending:
-              list.sort((a, b) => b.paths.length.compareTo(a.paths.length));
-              break;
-          }
+          sortByIntegerThenNatural(
+            list,
+            valueOf: (item) => item.paths.length,
+            tieBreakOf: (item) => item.name,
+            descending: order == SortOrder.decending,
+          );
         },
       ),
     ];

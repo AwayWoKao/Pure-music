@@ -42,6 +42,18 @@ void main() {
     expect(sorted, [4, 3, 2, 1]);
   });
 
+  test('background integer sort keeps name order for equal values', () async {
+    final source = [(2, 'Bravo'), (2, 'Alpha'), (1, 'Zulu')];
+    final sorted = await sortPageByIntegerInBackground(
+      source,
+      (item) => item.$1,
+      descending: true,
+      tieBreakOf: (item) => item.$2,
+    );
+
+    expect(sorted!.map((item) => item.$2).toList(), ['Alpha', 'Bravo', 'Zulu']);
+  });
+
   test('background sort stops before isolate work when superseded', () async {
     var current = true;
     final sorted = await sortPageByIntegerInBackground(

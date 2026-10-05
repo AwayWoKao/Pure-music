@@ -36,16 +36,18 @@ List<SortMethodDesc<Album>> _albumsSortMethods() {
       icon: Symbols.music_note,
       name: '作品数量',
       method: (list, order) {
-        final descending = order == SortOrder.decending;
-        list.sort((a, b) {
-          final cmp = a.works.length.compareTo(b.works.length);
-          return descending ? -cmp : cmp;
-        });
+        sortByIntegerThenNatural(
+          list,
+          valueOf: (item) => item.works.length,
+          tieBreakOf: (item) => item.name,
+          descending: order == SortOrder.decending,
+        );
       },
       backgroundMethod: (list, order, control) => sortPageByIntegerInBackground(
         list,
         (item) => item.works.length,
         descending: order == SortOrder.decending,
+        tieBreakOf: (item) => item.name,
         control: control,
       ),
     ),

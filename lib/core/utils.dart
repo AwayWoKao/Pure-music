@@ -62,19 +62,9 @@ extension PinyinCompare on String {
     return pinyin;
   }
 
-  /// Compares this string to [other] with pinyin first, else use the ordering of the code units.
-  ///
-  /// Returns a negative value if `this` is ordered before `other`,
-  /// a positive value if `this` is ordered after `other`,
-  /// or zero if `this` and `other` are equivalent.
+  /// 与列表自然序相同：拼音、数字、忽略装饰前缀。
   int localeCompareTo(String other) {
-    final thisContainsChinese = ChineseHelper.containsChinese(this);
-    final otherContainsChinese = ChineseHelper.containsChinese(other);
-
-    final thisCmpStr = thisContainsChinese ? this._getPinyin() : this;
-    final otherCmpStr = otherContainsChinese ? other._getPinyin() : other;
-
-    return thisCmpStr.compareTo(otherCmpStr);
+    return naturalCompareTo(other);
   }
 
   int naturalCompareTo(String other) {
@@ -118,7 +108,9 @@ extension PinyinCompare on String {
 }
 
 String alphabetSectionFor(String value) {
-  final normalized = _localeComparisonKey(value.trimLeft());
+  final prepared = _normalizeSortText(value);
+  if (prepared.isEmpty) return '#';
+  final normalized = _localeComparisonKey(prepared);
   if (normalized.isEmpty) return '#';
   final first = normalized.codeUnitAt(0);
   if (first >= 0x30 && first <= 0x39) return '0';
@@ -127,6 +119,19 @@ String alphabetSectionFor(String value) {
     return String.fromCharCode(upper);
   }
   return '#';
+}
+
+/// 多关键字自然序，空字段排在该键最后。
+String joinNaturalSortKeys(Iterable<String> keys) {
+  final buffer = StringBuffer();
+  var first = true;
+  for (final key in keys) {
+    if (!first) buffer.write('\u0001');
+    first = false;
+    final normalized = _normalizeSortText(key);
+    buffer.write(normalized.isEmpty ? '\uFFFF' : normalized);
+  }
+  return buffer.toString();
 }
 
 void sortNaturallyBy<T>(
@@ -149,10 +154,39 @@ void sortNaturallyBy<T>(
     return (item, tokens);
   }, growable: false);
   prepared.sort((a, b) {
+    final aEmpty = a.$2.isEmpty;
+    final bEmpty = b.$2.isEmpty;
+    if (aEmpty != bEmpty) return aEmpty ? 1 : -1;
     if (descending) {
       return _compareNaturalTokens(b.$2, a.$2);
     }
     return _compareNaturalTokens(a.$2, b.$2);
+  });
+  for (var i = 0; i < prepared.length; i++) {
+    list[i] = prepared[i].$1;
+  }
+}
+
+/// 数字相同时按名称排，避免同样的数量每次点排序都乱跳。
+void sortByIntegerThenNatural<T>(
+  List<T> list, {
+  required int Function(T item) valueOf,
+  required String Function(T item) tieBreakOf,
+  bool descending = false,
+}) {
+  final prepared = List<(T, int, List<_NaturalToken>)>.generate(list.length, (
+    index,
+  ) {
+    final item = list[index];
+    return (item, valueOf(item), _tokenizeForNaturalCompare(tieBreakOf(item)));
+  }, growable: false);
+  prepared.sort((a, b) {
+    final cmp = a.$2.compareTo(b.$2);
+    if (cmp != 0) return descending ? -cmp : cmp;
+    final aEmpty = a.$3.isEmpty;
+    final bEmpty = b.$3.isEmpty;
+    if (aEmpty != bEmpty) return aEmpty ? 1 : -1;
+    return _compareNaturalTokens(a.$3, b.$3);
   });
   for (var i = 0; i < prepared.length; i++) {
     list[i] = prepared[i].$1;
@@ -214,13 +248,162 @@ int _compareNaturalNumbers(_NaturalToken a, _NaturalToken b) {
   return 0;
 }
 
+const int _keySeparator = 0x0001;
+
+/// 去掉书名号、方括号标签和开头曲号，让字母条对准真正的标题。
+String _normalizeSortText(String input) {
+  var value = _toHalfwidthAscii(input).trim();
+  if (value.isEmpty) return '';
+  for (var i = 0; i < 8 && value.isNotEmpty; i++) {
+    final next = _stripOneLeadingNoise(value);
+    if (next == value) break;
+    value = next.trimLeft();
+  }
+  return value;
+}
+
+String _toHalfwidthAscii(String input) {
+  final buffer = StringBuffer();
+  for (final rune in input.runes) {
+    if (rune == 0x3000) {
+      buffer.writeCharCode(0x20);
+    } else if (rune >= 0xFF01 && rune <= 0xFF5E) {
+      buffer.writeCharCode(rune - 0xFEE0);
+    } else {
+      buffer.writeCharCode(rune);
+    }
+  }
+  return buffer.toString();
+}
+
+String _stripOneLeadingNoise(String value) {
+  final unwrapped = _unwrapWholeTitle(value);
+  if (unwrapped != value) return unwrapped;
+  final withoutTag = _stripLeadingTag(value);
+  if (withoutTag != value) return withoutTag;
+  final withoutTrack = _stripLeadingTrackPrefix(value);
+  if (withoutTrack != value) return withoutTrack;
+  return _stripLeadingDecorativeChar(value);
+}
+
+String _unwrapWholeTitle(String value) {
+  if (value.length < 2) return value;
+  final open = value.codeUnitAt(0);
+  final close = _matchingClose(open);
+  if (close == null) return value;
+  if (value.codeUnitAt(value.length - 1) != close) return value;
+  final inner = value.substring(1, value.length - 1).trim();
+  return inner.isEmpty ? value : inner;
+}
+
+int? _matchingClose(int open) {
+  return switch (open) {
+    0x300A => 0x300B,
+    0x3008 => 0x3009,
+    0x300C => 0x300D,
+    0x300E => 0x300F,
+    0x3010 => 0x3011,
+    0x3014 => 0x3015,
+    _ => null,
+  };
+}
+
+String _stripLeadingTag(String value) {
+  final pair = _leadingWrappedSegment(value);
+  if (pair == null) return value;
+  final (inner, rest) = pair;
+  if (rest.isEmpty) {
+    return inner.isEmpty ? value : inner;
+  }
+  if (inner.length > 16) return value;
+  return rest;
+}
+
+(String, String)? _leadingWrappedSegment(String value) {
+  if (value.isEmpty) return null;
+  final open = value.codeUnitAt(0);
+  final close = switch (open) {
+    0x3010 => 0x3011,
+    0x5B => 0x5D, // []
+    _ => null,
+  };
+  if (close == null) return null;
+  final end = value.indexOf(String.fromCharCode(close), 1);
+  if (end <= 0) return null;
+  final inner = value.substring(1, end).trim();
+  final rest = value.substring(end + 1).trimLeft();
+  return (inner, rest);
+}
+
+String _stripLeadingTrackPrefix(String value) {
+  if (value.isEmpty) return value;
+  var index = 0;
+  while (index < value.length && index < 3) {
+    final unit = value.codeUnitAt(index);
+    if (unit < 0x30 || unit > 0x39) break;
+    index++;
+  }
+  if (index == 0) return value;
+  if (index >= value.length) return value;
+  final sep = value.codeUnitAt(index);
+  var restStart = index + 1;
+  if (sep == 0x2E || sep == 0x3001 || sep == 0x29) {
+    while (restStart < value.length && value.codeUnitAt(restStart) == 0x20) {
+      restStart++;
+    }
+  } else if (sep == 0x20) {
+    while (restStart < value.length && value.codeUnitAt(restStart) == 0x20) {
+      restStart++;
+    }
+    if (restStart >= value.length) return value;
+    final dash = value.codeUnitAt(restStart);
+    if (dash != 0x2D && dash != 0x5F && dash != 0x2013 && dash != 0x2014) {
+      return value;
+    }
+    restStart++;
+    while (restStart < value.length && value.codeUnitAt(restStart) == 0x20) {
+      restStart++;
+    }
+  } else if (sep == 0x2D || sep == 0x5F) {
+    while (restStart < value.length && value.codeUnitAt(restStart) == 0x20) {
+      restStart++;
+    }
+  } else {
+    return value;
+  }
+  if (restStart >= value.length) return value;
+  return value.substring(restStart);
+}
+
+String _stripLeadingDecorativeChar(String value) {
+  if (value.isEmpty) return value;
+  final rune = value.runes.first;
+  if (_isSortKeepChar(rune)) return value;
+  if (rune == 0x28 || rune == 0x27 || rune == 0x22) return value;
+  return String.fromCharCodes(value.runes.skip(1));
+}
+
+bool _isSortKeepChar(int rune) {
+  if (rune >= 0x30 && rune <= 0x39) return true;
+  if (rune >= 0x41 && rune <= 0x5A) return true;
+  if (rune >= 0x61 && rune <= 0x7A) return true;
+  if (rune >= 0x4E00 && rune <= 0x9FFF) return true;
+  if (rune >= 0x3400 && rune <= 0x4DBF) return true;
+  if (rune >= 0x3040 && rune <= 0x30FF) return true;
+  if (rune >= 0xAC00 && rune <= 0xD7AF) return true;
+  return false;
+}
+
 List<_NaturalToken> _tokenizeForNaturalCompare(String input) {
-  if (input.isEmpty) return const [];
+  final prepared = input.contains(String.fromCharCode(_keySeparator))
+      ? input
+      : _normalizeSortText(input);
+  if (prepared.isEmpty) return const [];
   final tokens = <_NaturalToken>[];
   var tokenStart = 0;
   var inNumber = false;
-  for (var i = 0; i < input.length; i++) {
-    final c = input.codeUnitAt(i);
+  for (var i = 0; i < prepared.length; i++) {
+    final c = prepared.codeUnitAt(i);
     final isDigit = c >= 0x30 && c <= 0x39;
     if (i == 0) {
       inNumber = isDigit;
@@ -229,14 +412,14 @@ List<_NaturalToken> _tokenizeForNaturalCompare(String input) {
     if (isDigit == inNumber) {
       continue;
     }
-    final text = input.substring(tokenStart, i);
+    final text = prepared.substring(tokenStart, i);
     tokens.add(
       inNumber ? _NaturalToken.number(text) : _NaturalToken.text(text),
     );
     tokenStart = i;
     inNumber = isDigit;
   }
-  final text = input.substring(tokenStart);
+  final text = prepared.substring(tokenStart);
   tokens.add(
     inNumber == true ? _NaturalToken.number(text) : _NaturalToken.text(text),
   );

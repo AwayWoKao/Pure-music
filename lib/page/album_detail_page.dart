@@ -4,6 +4,7 @@ import 'package:pure_music/core/utils.dart';
 import 'package:pure_music/core/enums.dart';
 import 'package:pure_music/core/design_tokens.dart';
 import 'package:pure_music/library/audio_library.dart';
+import 'package:pure_music/library/audio_sort.dart';
 import 'package:pure_music/component/artist_tile.dart';
 import 'package:pure_music/component/audio_tile.dart';
 import 'package:pure_music/component/quiet_empty_state.dart';
@@ -37,31 +38,29 @@ void _sortWithinDisc(
   SortOrder order,
   int Function(Audio first, Audio second) compare,
 ) {
-  switch (order) {
-    case SortOrder.ascending:
-      list.sort((a, b) => _compareWithinDisc(a, b, compare));
-    case SortOrder.decending:
-      list.sort((a, b) => _compareWithinDisc(b, a, compare));
-  }
-}
-
-void _sortAlbumAudios(
-  List<Audio> list,
-  SortOrder order,
-  int Function(Audio a, Audio b) compare,
-) {
-  switch (order) {
-    case SortOrder.ascending:
-      list.sort(compare);
-    case SortOrder.decending:
-      list.sort((a, b) => compare(b, a));
-  }
+  list.sort((a, b) {
+    final left = order == SortOrder.ascending ? a : b;
+    final right = order == SortOrder.ascending ? b : a;
+    final cmp = _compareWithinDisc(left, right, compare);
+    if (cmp != 0) return cmp;
+    return a.title.naturalCompareTo(b.title);
+  });
 }
 
 List<SortMethodDesc<Audio>> _albumSortMethods() {
   return [
-    _albumTextSort(Symbols.title, '标题', (audio) => audio.title),
-    _albumTextSort(Symbols.artist, '艺术家', (audio) => audio.artist),
+    _albumTextSort(
+      Symbols.title,
+      '标题',
+      (audio) => audio.title,
+      audioTitleSortValue,
+    ),
+    _albumTextSort(
+      Symbols.artist,
+      '艺术家',
+      (audio) => audio.artist,
+      audioArtistSortValue,
+    ),
     SortMethodDesc(
       icon: Symbols.art_track,
       name: '音轨',
@@ -92,20 +91,26 @@ List<SortMethodDesc<Audio>> _albumSortMethods() {
     SortMethodDesc(
       icon: Symbols.timer,
       name: '时长',
-      method: (list, order) => _sortAlbumAudios(
-        list,
-        order,
-        (a, b) => a.duration.compareTo(b.duration),
-      ),
+      method: (list, order) {
+        sortByIntegerThenNatural(
+          list,
+          valueOf: (audio) => audio.duration,
+          tieBreakOf: audioTitleSortValue,
+          descending: order == SortOrder.decending,
+        );
+      },
     ),
     SortMethodDesc(
       icon: Symbols.bar_chart,
       name: '播放次数',
-      method: (list, order) => _sortAlbumAudios(
-        list,
-        order,
-        (a, b) => a.playCount.compareTo(b.playCount),
-      ),
+      method: (list, order) {
+        sortByIntegerThenNatural(
+          list,
+          valueOf: (audio) => audio.playCount,
+          tieBreakOf: audioTitleSortValue,
+          descending: order == SortOrder.decending,
+        );
+      },
     ),
   ];
 }
@@ -114,16 +119,19 @@ SortMethodDesc<Audio> _albumTextSort(
   IconData icon,
   String name,
   String Function(Audio audio) valueOf,
+  String Function(Audio audio) sortValueOf,
 ) {
   return SortMethodDesc(
     icon: icon,
     name: name,
     alphabetValueOf: valueOf,
-    method: (list, order) => _sortWithinDisc(
-      list,
-      order,
-      (first, second) => valueOf(first).naturalCompareTo(valueOf(second)),
-    ),
+    method: (list, order) {
+      sortNaturallyBy(
+        list,
+        sortValueOf,
+        descending: order == SortOrder.decending,
+      );
+    },
   );
 }
 

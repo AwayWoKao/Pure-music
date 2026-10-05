@@ -13,6 +13,7 @@ import 'package:pure_music/core/cache.dart';
 import 'package:pure_music/core/workload_policy.dart';
 import 'package:pure_music/core/page_sort.dart';
 import 'package:pure_music/native/rust/api/library_db.dart' as library_db;
+import 'package:pure_music/library/audio_sort.dart';
 import 'package:pure_music/library/library_page_order_cache.dart';
 import 'package:pure_music/core/utils.dart';
 import 'package:pure_music/core/search_action_state.dart';
@@ -139,12 +140,10 @@ Uint32List _sortLibraryPageIndexes({
   required bool descending,
   List<String>? naturalValues,
   List<int>? integerValues,
+  List<String>? integerTieBreaks,
   bool reuseEqualKeys = false,
 }) {
-  final indexes = Uint32List(length);
-  for (var index = 0; index < length; index++) {
-    indexes[index] = index;
-  }
+  final indexes = List<int>.generate(length, (index) => index);
   if (naturalValues != null) {
     sortNaturallyBy(
       indexes,
@@ -152,15 +151,15 @@ Uint32List _sortLibraryPageIndexes({
       descending: descending,
       reuseEqualKeys: reuseEqualKeys,
     );
-    return indexes;
+    return Uint32List.fromList(indexes);
   }
-  final values = integerValues!;
-  if (descending) {
-    indexes.sort((a, b) => values[b].compareTo(values[a]));
-  } else {
-    indexes.sort((a, b) => values[a].compareTo(values[b]));
-  }
-  return indexes;
+  sortByIntegerThenNatural(
+    indexes,
+    valueOf: (index) => integerValues![index],
+    tieBreakOf: (index) => integerTieBreaks?[index] ?? '',
+    descending: descending,
+  );
+  return Uint32List.fromList(indexes);
 }
 
 typedef _SecondaryPrepareInputs = ({
@@ -176,8 +175,10 @@ typedef _SecondaryPrepareInputs = ({
   bool albumDescending,
   List<String>? artistNaturalValues,
   List<int>? artistIntegerValues,
+  List<String>? artistIntegerTieBreaks,
   List<String>? albumNaturalValues,
   List<int>? albumIntegerValues,
+  List<String>? albumIntegerTieBreaks,
 });
 
 typedef _SecondaryPageSortRequest = ({
@@ -185,10 +186,12 @@ typedef _SecondaryPageSortRequest = ({
   int artistCount,
   List<String>? artistNaturalValues,
   List<int>? artistIntegerValues,
+  List<String>? artistIntegerTieBreaks,
   bool artistDescending,
   int albumCount,
   List<String>? albumNaturalValues,
   List<int>? albumIntegerValues,
+  List<String>? albumIntegerTieBreaks,
   bool albumDescending,
 });
 
@@ -212,6 +215,7 @@ void _sortSecondaryPageIndexes(_SecondaryPageSortRequest request) {
       length: request.artistCount,
       naturalValues: request.artistNaturalValues,
       integerValues: request.artistIntegerValues,
+      integerTieBreaks: request.artistIntegerTieBreaks,
       descending: request.artistDescending,
     );
     request.sendPort.send(<Object?>[0, _transferPageOrder(artistOrder)]);
@@ -219,6 +223,7 @@ void _sortSecondaryPageIndexes(_SecondaryPageSortRequest request) {
       length: request.albumCount,
       naturalValues: request.albumNaturalValues,
       integerValues: request.albumIntegerValues,
+      integerTieBreaks: request.albumIntegerTieBreaks,
       descending: request.albumDescending,
     );
     request.sendPort.send(<Object?>[1, _transferPageOrder(albumOrder)]);
@@ -899,7 +904,7 @@ class AudioLibrary {
     final prepared = _preparedAudiosPage;
     final preference = AppPreference.instance.audiosPagePref;
     if (prepared == null ||
-        prepared.sortMethod != preference.sortMethod.clamp(0, 4).toInt() ||
+        prepared.sortMethod != preference.sortMethod.clamp(0, audiosPageSortMethodMax).toInt() ||
         prepared.sortOrder != preference.sortOrder) {
       return null;
     }
@@ -971,7 +976,7 @@ class AudioLibrary {
     final preparedAudios = await _materializeSortedItems(source, indexes);
     final preference = AppPreference.instance.audiosPagePref;
     if (generation != _collectionGeneration ||
-        preference.sortMethod.clamp(0, 4).toInt() != sortMethod ||
+        preference.sortMethod.clamp(0, audiosPageSortMethodMax).toInt() != sortMethod ||
         preference.sortOrder != sortOrder) {
       return false;
     }
@@ -1042,7 +1047,7 @@ class AudioLibrary {
     int generation,
   ) async {
     final audioPreference = AppPreference.instance.audiosPagePref;
-    if (!_cachedPageMatches(cached, audioPreference, 4)) return false;
+    if (!_cachedPageMatches(cached, audioPreference, audiosPageSortMethodMax)) return false;
     return _installPreparedAudioOrder(
       source: audioCollection,
       indexes: cached.indexes,
@@ -1292,28 +1297,34 @@ class AudioLibrary {
   Future<void> _preparePreferredAudioPageSnapshot(int generation) async {
     final audios = List<Audio>.from(audioCollection);
     final preference = AppPreference.instance.audiosPagePref;
-    final sortMethod = preference.sortMethod.clamp(0, 4).toInt();
+    final sortMethod = preference.sortMethod.clamp(0, audiosPageSortMethodMax).toInt();
     final sortOrder = preference.sortOrder;
     final descending = sortOrder == SortOrder.decending;
     final naturalValues = switch (sortMethod) {
-      0 => audios.map((audio) => audio.title).toList(growable: false),
-      1 => audios.map((audio) => audio.artist).toList(growable: false),
-      2 => audios.map((audio) => audio.album).toList(growable: false),
+      0 => audios.map(audioTitleSortValue).toList(growable: false),
+      1 => audios.map(audioArtistSortValue).toList(growable: false),
+      2 => audios.map(audioAlbumSortValue).toList(growable: false),
       _ => null,
     };
     final integerValues = switch (sortMethod) {
       3 => audios.map((audio) => audio.created).toList(growable: false),
       4 => audios.map((audio) => audio.modified).toList(growable: false),
+      5 => audios.map((audio) => audio.duration).toList(growable: false),
+      6 => audios.map((audio) => audio.playCount).toList(growable: false),
       _ => null,
     };
+    final integerTieBreaks = integerValues == null
+        ? null
+        : audios.map(audioTitleSortValue).toList(growable: false);
     final audioCount = audios.length;
     final order = await Isolate.run(
       () => _sortLibraryPageIndexes(
         length: audioCount,
         naturalValues: naturalValues,
         integerValues: integerValues,
+        integerTieBreaks: integerTieBreaks,
         descending: descending,
-        reuseEqualKeys: sortMethod == 1 || sortMethod == 2,
+        reuseEqualKeys: false,
       ),
     );
     if (generation != _collectionGeneration) return;
@@ -1336,7 +1347,7 @@ class AudioLibrary {
       updateAudiosPageIndexes(audios);
       _preparedAudiosPage = PreparedLibraryPage(
         items: audios,
-        sortMethod: sortMethod.clamp(0, 4).toInt(),
+        sortMethod: sortMethod.clamp(0, audiosPageSortMethodMax).toInt(),
         sortOrder: sortOrder,
       );
     } else if (items is List<Artist> &&
@@ -1450,11 +1461,17 @@ class AudioLibrary {
       artistIntegerValues: prepareArtists && artistSortMethod == 1
           ? artists.map((artist) => artist.works.length).toList(growable: false)
           : null,
+      artistIntegerTieBreaks: prepareArtists && artistSortMethod == 1
+          ? artists.map((artist) => artist.name).toList(growable: false)
+          : null,
       albumNaturalValues: prepareAlbums && albumSortMethod == 0
           ? albums.map((album) => album.name).toList(growable: false)
           : null,
       albumIntegerValues: prepareAlbums && albumSortMethod == 1
           ? albums.map((album) => album.works.length).toList(growable: false)
+          : null,
+      albumIntegerTieBreaks: prepareAlbums && albumSortMethod == 1
+          ? albums.map((album) => album.name).toList(growable: false)
           : null,
     );
   }
@@ -1463,6 +1480,7 @@ class AudioLibrary {
     required int length,
     required List<String>? naturalValues,
     required List<int>? integerValues,
+    List<String>? integerTieBreaks,
     required bool descending,
   }) {
     return Isolate.run(
@@ -1470,6 +1488,7 @@ class AudioLibrary {
         length: length,
         naturalValues: naturalValues,
         integerValues: integerValues,
+        integerTieBreaks: integerTieBreaks,
         descending: descending,
       ),
     );
@@ -1487,12 +1506,14 @@ class AudioLibrary {
           length: inputs.artists.length,
           naturalValues: inputs.artistNaturalValues,
           integerValues: inputs.artistIntegerValues,
+          integerTieBreaks: inputs.artistIntegerTieBreaks,
           descending: inputs.artistDescending,
         ),
         _sortPageIndexesInIsolate(
           length: inputs.albums.length,
           naturalValues: inputs.albumNaturalValues,
           integerValues: inputs.albumIntegerValues,
+          integerTieBreaks: inputs.albumIntegerTieBreaks,
           descending: inputs.albumDescending,
         ),
       ]);
@@ -1510,6 +1531,7 @@ class AudioLibrary {
         length: inputs.artists.length,
         naturalValues: inputs.artistNaturalValues,
         integerValues: inputs.artistIntegerValues,
+        integerTieBreaks: inputs.artistIntegerTieBreaks,
         descending: inputs.artistDescending,
       );
       return (artistOrder: artistOrder, albumOrder: null, serialDone: false);
@@ -1518,6 +1540,7 @@ class AudioLibrary {
       length: inputs.albums.length,
       naturalValues: inputs.albumNaturalValues,
       integerValues: inputs.albumIntegerValues,
+      integerTieBreaks: inputs.albumIntegerTieBreaks,
       descending: inputs.albumDescending,
     );
     return (artistOrder: null, albumOrder: albumOrder, serialDone: false);
@@ -1602,10 +1625,12 @@ class AudioLibrary {
       artistCount: inputs.artists.length,
       artistNaturalValues: inputs.artistNaturalValues,
       artistIntegerValues: inputs.artistIntegerValues,
+      artistIntegerTieBreaks: inputs.artistIntegerTieBreaks,
       artistDescending: inputs.artistDescending,
       albumCount: inputs.albums.length,
       albumNaturalValues: inputs.albumNaturalValues,
       albumIntegerValues: inputs.albumIntegerValues,
+      albumIntegerTieBreaks: inputs.albumIntegerTieBreaks,
       albumDescending: inputs.albumDescending,
     ));
     try {

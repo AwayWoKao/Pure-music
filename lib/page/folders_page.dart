@@ -20,30 +20,20 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:pure_music/core/paths.dart' as app_paths;
 import 'package:path/path.dart' as p;
 
-void _sortFoldersByOrder(
-  List<AudioFolder> list,
-  SortOrder order,
-  int Function(AudioFolder a, AudioFolder b) compare,
-) {
-  switch (order) {
-    case SortOrder.ascending:
-      list.sort(compare);
-    case SortOrder.decending:
-      list.sort((a, b) => compare(b, a));
-  }
-}
-
 List<SortMethodDesc<AudioFolder>> _foldersSortMethods() {
   return [
     SortMethodDesc<AudioFolder>(
       icon: Symbols.title,
       name: '名称',
-      method: (list, order) => _sortFoldersByOrder(
-        list,
-        order,
-        (a, b) => a.displayName.localeCompareTo(b.displayName),
-      ),
-      backgroundMethod: (list, order, control) => sortPageByLocaleInBackground(
+      alphabetValueOf: (folder) => folder.displayName,
+      method: (list, order) {
+        sortNaturallyBy(
+          list,
+          (folder) => folder.displayName,
+          descending: order == SortOrder.decending,
+        );
+      },
+      backgroundMethod: (list, order, control) => sortPageNaturallyInBackground(
         list,
         (folder) => folder.displayName,
         descending: order == SortOrder.decending,
@@ -53,30 +43,38 @@ List<SortMethodDesc<AudioFolder>> _foldersSortMethods() {
     SortMethodDesc<AudioFolder>(
       icon: Symbols.edit,
       name: '修改日期',
-      method: (list, order) => _sortFoldersByOrder(
-        list,
-        order,
-        (a, b) => a.modified.compareTo(b.modified),
-      ),
+      method: (list, order) {
+        sortByIntegerThenNatural(
+          list,
+          valueOf: (folder) => folder.modified,
+          tieBreakOf: (folder) => folder.displayName,
+          descending: order == SortOrder.decending,
+        );
+      },
       backgroundMethod: (list, order, control) => sortPageByIntegerInBackground(
         list,
         (folder) => folder.modified,
         descending: order == SortOrder.decending,
+        tieBreakOf: (folder) => folder.displayName,
         control: control,
       ),
     ),
     SortMethodDesc<AudioFolder>(
       icon: Symbols.music_note,
       name: '歌曲数量',
-      method: (list, order) => _sortFoldersByOrder(
-        list,
-        order,
-        (a, b) => a.audios.length.compareTo(b.audios.length),
-      ),
+      method: (list, order) {
+        sortByIntegerThenNatural(
+          list,
+          valueOf: (folder) => folder.audios.length,
+          tieBreakOf: (folder) => folder.displayName,
+          descending: order == SortOrder.decending,
+        );
+      },
       backgroundMethod: (list, order, control) => sortPageByIntegerInBackground(
         list,
         (folder) => folder.audios.length,
         descending: order == SortOrder.decending,
+        tieBreakOf: (folder) => folder.displayName,
         control: control,
       ),
     ),
