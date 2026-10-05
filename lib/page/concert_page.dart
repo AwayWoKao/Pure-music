@@ -8,6 +8,8 @@ import 'package:pure_music/component/audio_tile.dart';
 import 'package:pure_music/component/motion.dart';
 import 'package:pure_music/component/stacked_list_view.dart';
 import 'package:pure_music/core/design_tokens.dart';
+import 'package:pure_music/core/hotkeys.dart';
+import 'package:pure_music/core/list_action_state.dart';
 import 'package:pure_music/core/paths.dart' as app_paths;
 import 'package:pure_music/core/mouse_back_exit.dart';
 import 'package:pure_music/core/settings.dart';
@@ -17,6 +19,7 @@ import 'package:pure_music/library/playlist.dart';
 import 'package:pure_music/page/page_scaffold.dart';
 import 'package:pure_music/play_service/play_service.dart';
 import 'package:pure_music/services/concert_program_store.dart';
+import 'package:pure_music/services/concert_session.dart';
 import 'package:pure_music/services/smart_sort_service.dart';
 import 'package:pure_music/services/smart_sort_options.dart';
 
@@ -44,8 +47,6 @@ enum _SourceKind {
 
 class _ConcertPageState extends State<ConcertPage> {
   static const double _audioRowExtent = 64;
-  // 幕头与尾注固定行高，保证节目单逐行累计偏移可精确计算。
-  static const double _programHeaderExtent = 40;
   static const double _footerRowExtent = 48;
 
   _ConcertPhase _phase = _ConcertPhase.select;
@@ -516,7 +517,24 @@ class _ConcertPageState extends State<ConcertPage> {
     }
   }
 
-  void _startShow() {
+  String _currentShowName() {
+    final id = _activeProgramId;
+    if (id != null) {
+      for (final program in _programs) {
+        if (program.id == id) return program.name;
+      }
+    }
+    return _selectionName();
+  }
+
+  Future<void> _restoreAndStart(ConcertProgram program) async {
+    await _restoreProgram(program);
+    if (!mounted) return;
+    if (_phase != _ConcertPhase.result) return;
+    await _startShow();
+  }
+
+  Future<void> _startShow() async {
     final result = _result;
     if (result == null || result.audios.isEmpty) return;
     final playbackService = PlayService.instance.playbackService;
@@ -525,8 +543,57 @@ class _ConcertPageState extends State<ConcertPage> {
       playbackService.useShuffle(false);
     }
     playbackService.play(0, result.audios);
-    showTextOnSnackBar('演出开始，衔接交给智能衔接接管');
+    ConcertSession.instance.begin(
+      name: _currentShowName(),
+      paths: [for (final audio in result.audios) audio.path],
+      climaxPosition: _climaxPosition,
+    );
+    final act = ConcertSession.instance.actAt(0) ?? '演出';
+    showTextOnSnackBar('$act开始 · 今晚 ${result.audios.length} 首');
     context.push(app_paths.NOW_PLAYING_PAGE);
+  }
+
+  Future<void> _saveResultAsPlaylist() async {
+    final result = _result;
+    if (result == null || result.audios.isEmpty) return;
+    final savedName = await _offerSaveAsPlaylist(result.audios);
+    if (!mounted || savedName == null) return;
+    showTextOnSnackBar('已存为歌单「$savedName」', variant: ToastVariant.success);
+  }
+
+  Future<String?> _offerSaveAsPlaylist(List<Audio> audios) async {
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => _SaveConcertPlaylistDialog(
+        initialName: _currentShowName(),
+        existingNames: {for (final playlist in playlists) playlist.name},
+      ),
+    );
+    if (!mounted || name == null || name.isEmpty) return null;
+    return _saveConcertPlaylist(name, audios);
+  }
+
+  Future<String?> _saveConcertPlaylist(String name, List<Audio> audios) async {
+    try {
+      final playlist = await createPlaylist(name);
+      for (final audio in audios) {
+        playlist.addPath(audio.path);
+      }
+      playlists.add(playlist);
+      final saved = await savePlaylists();
+      if (!saved) {
+        showTextOnSnackBar('保存歌单失败', variant: ToastVariant.error);
+        return null;
+      }
+      return playlist.name;
+    } on PlaylistAlreadyExistsException {
+      showTextOnSnackBar('该名称已存在', variant: ToastVariant.error);
+      return null;
+    } catch (error, trace) {
+      log.library.error('legacy', '演出存为歌单失败', error: error, stackTrace: trace);
+      showTextOnSnackBar('保存歌单失败', variant: ToastVariant.error);
+      return null;
+    }
   }
 
   /// 点击曲线图上的点，列表按比例滚动到对应曲目并短暂高亮。
@@ -614,6 +681,11 @@ class _ConcertPageState extends State<ConcertPage> {
           onPressed: _showEmotionCurveDialog,
           icon: const Icon(Symbols.graphic_eq),
           label: const Text('情绪曲线'),
+        ),
+        OutlinedButton.icon(
+          onPressed: _saveResultAsPlaylist,
+          icon: const Icon(Symbols.playlist_add),
+          label: const Text('保存为歌单'),
         ),
         FilledButton.icon(
           onPressed: _startShow,
@@ -736,6 +808,7 @@ class _ConcertPageState extends State<ConcertPage> {
   }
 
   Widget _recentProgramTitleRow(ConcertProgram program) {
+    final scheme = Theme.of(context).colorScheme;
     return Row(
       children: [
         Expanded(
@@ -746,8 +819,19 @@ class _ConcertPageState extends State<ConcertPage> {
             style: TextStyle(
               fontSize: AppType.body,
               fontWeight: AppType.weightMedium,
-              color: Theme.of(context).colorScheme.onSurface,
+              color: scheme.onSurface,
             ),
+          ),
+        ),
+        SizedBox(
+          width: 24,
+          height: 24,
+          child: IconButton(
+            padding: EdgeInsets.zero,
+            iconSize: 16,
+            tooltip: '开演',
+            onPressed: () => _restoreAndStart(program),
+            icon: Icon(Symbols.play_arrow, color: scheme.primary),
           ),
         ),
         SizedBox(
@@ -758,10 +842,7 @@ class _ConcertPageState extends State<ConcertPage> {
             iconSize: 16,
             tooltip: '删除',
             onPressed: () => _deleteProgram(program.id),
-            icon: Icon(
-              Symbols.close,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
+            icon: Icon(Symbols.close, color: scheme.onSurfaceVariant),
           ),
         ),
       ],
@@ -1373,41 +1454,8 @@ class _ConcertPageState extends State<ConcertPage> {
 
   // ===== 结果页：演出节目单 =====
 
-  /// 按编排曲线的关键帧比例切幕；短歌单合并段数，避免碎幕。
-  List<_ProgramSection> _computeSections(int count) {
-    if (count < 8) return const [];
-    final climax = _climaxPosition.clamp(0.55, 0.95);
-    final List<(String, double, double)> bounds;
-    if (count < 20) {
-      bounds = [
-        ('开场', 0.0, 0.3),
-        ('主轴', 0.3, climax),
-        ('压轴 · 尾声', climax, 1.0),
-      ];
-    } else {
-      bounds = [
-        ('开场', 0.0, 0.12),
-        ('升温', 0.12, 0.26),
-        ('回落', 0.26, 0.48),
-        ('冲刺', 0.48, climax),
-        ('压轴', climax, math.min(climax + 0.07, 1.0)),
-        ('尾声', math.min(climax + 0.07, 1.0), 1.0),
-      ];
-    }
-    final sections = <_ProgramSection>[];
-    var cursor = 0;
-    for (var index = 0; index < bounds.length; index++) {
-      final (name, startRatio, endRatio) = bounds[index];
-      final isLast = index == bounds.length - 1;
-      final end = isLast
-          ? count
-          : ((endRatio * count).round()).clamp(cursor, count);
-      final start = cursor;
-      if (end <= start) continue;
-      sections.add(_ProgramSection(name: name, start: start, end: end));
-      cursor = end;
-    }
-    return sections;
+  List<ConcertSection> _computeSections(int count) {
+    return concertSectionsFor(count: count, climaxPosition: _climaxPosition);
   }
 
   Widget _buildResultBody(BuildContext context) {
@@ -1415,7 +1463,7 @@ class _ConcertPageState extends State<ConcertPage> {
     if (result == null) return const SizedBox.shrink();
     final scheme = Theme.of(context).colorScheme;
     final sections = _computeSections(result.audios.length);
-    final layout = _resultLayout(sections, result.audios.length);
+    final layout = concertQueueLayout(result.audios.length, sections);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1430,23 +1478,6 @@ class _ConcertPageState extends State<ConcertPage> {
         ),
       ],
     );
-  }
-
-  List<int> _resultLayout(List<_ProgramSection> sections, int songCount) {
-    final layout = <int>[];
-    for (var sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
-      final section = sections[sectionIndex];
-      layout.add(-(sectionIndex + 1));
-      for (var song = section.start; song < section.end; song++) {
-        layout.add(song);
-      }
-    }
-    if (layout.isEmpty) {
-      for (var song = 0; song < songCount; song++) {
-        layout.add(song);
-      }
-    }
-    return layout;
   }
 
   Widget _adjusterHeader(ColorScheme scheme) {
@@ -1557,7 +1588,7 @@ class _ConcertPageState extends State<ConcertPage> {
 
   Widget _buildProgramList(
     SmartSortResult result,
-    List<_ProgramSection> sections,
+    List<ConcertSection> sections,
     List<int> layout,
     ColorScheme scheme,
   ) {
@@ -1566,7 +1597,7 @@ class _ConcertPageState extends State<ConcertPage> {
         !MediaQuery.disableAnimationsOf(context);
     final extents = <double>[
       for (final value in layout)
-        value < 0 ? _programHeaderExtent : _audioRowExtent,
+        value < 0 ? kConcertActHeaderExtent : _audioRowExtent,
       _footerRowExtent,
     ];
     final tops = <double>[0.0];
@@ -1597,7 +1628,7 @@ class _ConcertPageState extends State<ConcertPage> {
 
   Widget _programListRow(
     SmartSortResult result,
-    List<_ProgramSection> sections,
+    List<ConcertSection> sections,
     List<int> layout,
     ColorScheme scheme,
     int index,
@@ -1628,7 +1659,7 @@ class _ConcertPageState extends State<ConcertPage> {
     if (value < 0) {
       final section = sections[-value - 1];
       return SizedBox(
-        height: _programHeaderExtent,
+        height: kConcertActHeaderExtent,
         child: _ProgramHeader(name: section.name, count: section.count),
       );
     }
@@ -1642,7 +1673,7 @@ class _ConcertPageState extends State<ConcertPage> {
 
   Widget _programListItem({
     required SmartSortResult result,
-    required List<_ProgramSection> sections,
+    required List<ConcertSection> sections,
     required List<int> layout,
     required ColorScheme scheme,
     required int index,
@@ -1671,20 +1702,6 @@ class _ConcertPageState extends State<ConcertPage> {
       },
     );
   }
-}
-
-class _ProgramSection {
-  const _ProgramSection({
-    required this.name,
-    required this.start,
-    required this.end,
-  });
-
-  final String name;
-  final int start;
-  final int end;
-
-  int get count => end - start;
 }
 
 class _ProgramHeader extends StatelessWidget {
@@ -2049,4 +2066,141 @@ class _CurveChartPainter extends CustomPainter {
       oldDelegate.actualColor != actualColor ||
       oldDelegate.idealColor != idealColor ||
       oldDelegate.highlightIndex != highlightIndex;
+}
+
+class _SaveConcertPlaylistDialog extends StatefulWidget {
+  const _SaveConcertPlaylistDialog({
+    required this.initialName,
+    required this.existingNames,
+  });
+
+  final String initialName;
+  final Set<String> existingNames;
+
+  @override
+  State<_SaveConcertPlaylistDialog> createState() =>
+      _SaveConcertPlaylistDialogState();
+}
+
+class _SaveConcertPlaylistDialogState
+    extends State<_SaveConcertPlaylistDialog> {
+  late final TextEditingController _controller;
+  String? _errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialName);
+    _controller.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: _controller.text.length,
+    );
+    if (hasEquivalentPlaylistName(
+      existingNames: widget.existingNames,
+      targetName: widget.initialName,
+    )) {
+      _errorText = '该名称已存在';
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  String get _trimmedName => _controller.text.trim();
+
+  bool get _canSubmit {
+    final name = _trimmedName;
+    return name.isNotEmpty &&
+        !hasEquivalentPlaylistName(
+          existingNames: widget.existingNames,
+          targetName: name,
+        );
+  }
+
+  void _onNameChanged(String value) {
+    final name = value.trim();
+    setState(() {
+      if (name.isEmpty) {
+        _errorText = null;
+        return;
+      }
+      _errorText =
+          hasEquivalentPlaylistName(
+            existingNames: widget.existingNames,
+            targetName: name,
+          )
+          ? '该名称已存在'
+          : null;
+    });
+  }
+
+  void _submit() {
+    final name = _trimmedName;
+    if (name.isEmpty) {
+      setState(() => _errorText = '请输入歌单名称');
+      return;
+    }
+    if (hasEquivalentPlaylistName(
+      existingNames: widget.existingNames,
+      targetName: name,
+    )) {
+      setState(() => _errorText = '该名称已存在');
+      return;
+    }
+    Navigator.pop(context, name);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return AlertDialog(
+      title: const Text('存为歌单？'),
+      content: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '把这场演出的顺序存成新歌单，原来的歌单不会被改。',
+              style: TextStyle(
+                fontSize: AppType.body,
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: Spacing.md),
+            Focus(
+              onFocusChange: HotkeysHelper.onFocusChanges,
+              child: TextField(
+                autofocus: true,
+                controller: _controller,
+                onChanged: _onNameChanged,
+                onSubmitted: (_) {
+                  if (_canSubmit) _submit();
+                },
+                decoration: InputDecoration(
+                  labelText: '歌单名称',
+                  border: const OutlineInputBorder(),
+                  errorText: _errorText,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('跳过'),
+        ),
+        FilledButton(
+          onPressed: _canSubmit ? _submit : null,
+          child: const Text('保存'),
+        ),
+      ],
+    );
+  }
 }
