@@ -5,7 +5,7 @@ description: Pure Music 架构：Flutter UI、BASS 播放引擎、Rust FFI 与�
 
 # 架构
 
-面向开发者。用户功能说明见 [指南](/guide/)。
+面向开发者。用户功能说明见 [指南](/guide/quickstart)。
 
 ## 总览
 
