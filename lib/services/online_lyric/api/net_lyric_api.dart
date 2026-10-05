@@ -1,7 +1,9 @@
+import 'dart:convert';
 import 'dart:isolate';
 
 import 'package:pure_music/core/settings.dart';
 import 'package:pure_music/native/rust/api/amll_ttml.dart' as frb_amll;
+import 'package:pure_music/native/rust/api/ne.dart' as rust_ne;
 
 import 'package:pure_music/services/online_lyric/models/lyric_entry.dart';
 import 'package:pure_music/services/online_lyric/parsers/lrc_tool.dart';
@@ -192,36 +194,26 @@ Future<NetLyricResult?> qqGetLyricById({required int id}) async {
 // 网易云
 // ──────────────────────────────────────────────
 
-Future<List<NeSearchItem>> neSearchLyric({
-  required String keyword,
-  int page = 1,
-  int pageSize = 8,
-  bool forceRefresh = false,
-  Duration? timeout,
-}) async {
-  final rawResults = await iso.neSearchIsolate(
-    text: keyword,
-    offset: (page - 1) * pageSize,
-    limit: pageSize,
-    cacheBust: forceRefresh ? DateTime.now().microsecondsSinceEpoch : null,
-    timeout: timeout,
+NeSearchItem? _neSearchItemFromMap(Map item) {
+  final id = item['id']?.toString() ?? '';
+  if (id.isEmpty) return null;
+  final durationRaw = item['dt'];
+  final durationMs = durationRaw is int
+      ? durationRaw
+      : int.tryParse(durationRaw?.toString() ?? '0') ?? 0;
+  return NeSearchItem(
+    id: id,
+    title: item['name']?.toString() ?? 'UNKNOWN',
+    artist: item['artist']?.toString() ??
+        item['artists']?.toString() ??
+        'UNKNOWN',
+    album: item['album']?.toString() ?? '',
+    durationMs: durationMs,
+    picUrl: item['picUrl']?.toString() ?? '',
   );
-  return rawResults.map((e) {
-    final item = e as Map<String, dynamic>;
-    final artistList = item['artist'];
-    return NeSearchItem(
-      id: item['id'] as String,
-      title: item['name'] as String,
-      artist: (artistList ?? 'UNKNOWN') as String,
-      album: item['album'] as String,
-      durationMs: item['dt'] as int,
-      picUrl: item['picUrl']?.toString() ?? '',
-    );
-  }).toList();
 }
 
-Future<NetLyricResult?> neGetLyric({required int id, Duration? timeout}) async {
-  final result = await iso.neLyricIsolate(id: id, timeout: timeout);
+NetLyricResult? _neLyricResultFromFields(Map<String, String?> result) {
   final main = result['main'];
   if (main == null || main.isEmpty) return null;
   final format = result['format'] == 'yrc' ? LyricFormat.yrc : LyricFormat.lrc;
@@ -236,6 +228,73 @@ Future<NetLyricResult?> neGetLyric({required int id, Duration? timeout}) async {
         : result['roma'],
     format: format,
   );
+}
+
+Future<List<NeSearchItem>> _neSearchViaPublicApi({
+  required String keyword,
+  required int page,
+  required int pageSize,
+  required bool forceRefresh,
+  Duration? timeout,
+}) async {
+  final rawResults = await iso.neSearchIsolate(
+    text: keyword,
+    offset: (page - 1) * pageSize,
+    limit: pageSize,
+    cacheBust: forceRefresh ? DateTime.now().microsecondsSinceEpoch : null,
+    timeout: timeout,
+  );
+  return rawResults
+      .map((e) => _neSearchItemFromMap(e as Map))
+      .whereType<NeSearchItem>()
+      .toList();
+}
+
+Future<List<NeSearchItem>> neSearchLyric({
+  required String keyword,
+  int page = 1,
+  int pageSize = 8,
+  bool forceRefresh = false,
+  Duration? timeout,
+}) async {
+  final searchTimeout = timeout ?? const Duration(seconds: 8);
+  if (page <= 1) {
+    try {
+      final rawResults = await rust_ne
+          .neSearch(keyword: keyword, limit: pageSize)
+          .timeout(searchTimeout);
+      return rawResults
+          .map(_neSearchItemFromMap)
+          .whereType<NeSearchItem>()
+          .toList();
+    } catch (_) {}
+  }
+  return _neSearchViaPublicApi(
+    keyword: keyword,
+    page: page,
+    pageSize: pageSize,
+    forceRefresh: forceRefresh,
+    timeout: timeout,
+  );
+}
+
+Future<NetLyricResult?> neGetLyric({required int id, Duration? timeout}) async {
+  final lyricTimeout = timeout ?? const Duration(seconds: 8);
+  try {
+    final raw = await rust_ne.neLyric(songId: id).timeout(lyricTimeout);
+    final decoded = jsonDecode(raw);
+    if (decoded is Map) {
+      final parsed = _neLyricResultFromFields({
+        'main': decoded['main']?.toString(),
+        'trans': decoded['trans']?.toString(),
+        'roma': decoded['roma']?.toString(),
+        'format': decoded['format']?.toString(),
+      });
+      if (parsed != null) return parsed;
+    }
+  } catch (_) {}
+  final result = await iso.neLyricIsolate(id: id, timeout: timeout);
+  return _neLyricResultFromFields(result);
 }
 
 // ──────────────────────────────────────────────

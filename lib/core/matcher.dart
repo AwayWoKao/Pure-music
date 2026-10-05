@@ -32,7 +32,8 @@ const Duration _preferredSearchTimeout = Duration(seconds: 6);
 const Duration _preferredLyricTimeout = Duration(seconds: 5);
 const Duration _amllPreferredLyricTimeout = Duration(seconds: 8);
 const Duration _unifiedSearchTimeLimit = Duration(seconds: 17);
-const Duration _onlineSourceFallbackTimeLimit = Duration(seconds: 20);
+const Duration _onlineSourceFallbackTimeLimit = Duration(seconds: 24);
+const Duration _preferredSourceBudget = Duration(seconds: 12);
 final Map<String, Future<Lyric?>> _lyricFetchCache = {};
 final Map<String, Lyric> _lyricResultCache = {};
 final List<String> _lyricCacheAccessOrder = [];
@@ -547,6 +548,21 @@ _lyricFromSource(
   return null;
 }
 
+Duration _sourceFallbackBudget({
+  required ResultSource source,
+  required bool isPreferred,
+  required int sourcesRemaining,
+  required Duration remaining,
+}) {
+  if (source == ResultSource.amll) {
+    return _shorterDuration(remaining, const Duration(seconds: 8));
+  }
+  if (isPreferred) {
+    return _shorterDuration(remaining, _preferredSourceBudget);
+  }
+  return Duration(microseconds: remaining.inMicroseconds ~/ sourcesRemaining);
+}
+
 Future<({Lyric lyric, ResultSource source, SongSearchResult? result})?>
 getLyricWithSourceFallback(
   Audio audio,
@@ -567,9 +583,12 @@ getLyricWithSourceFallback(
     if (remaining == Duration.zero) break;
     final sourcesRemaining = sources.length - index;
     final source = sources[index];
-    final sourceBudget = source == ResultSource.amll
-        ? _shorterDuration(remaining, const Duration(seconds: 8))
-        : Duration(microseconds: remaining.inMicroseconds ~/ sourcesRemaining);
+    final sourceBudget = _sourceFallbackBudget(
+      source: source,
+      isPreferred: index == 0,
+      sourcesRemaining: sourcesRemaining,
+      remaining: remaining,
+    );
     if (sourceBudget == Duration.zero) break;
     final found = await _lyricFromSource(
       audio,

@@ -655,4 +655,27 @@ void main() {
     expect(lyric, isNull);
     expect(loadedIds, isEmpty);
   });
+
+  test('source fallback gives the preferred source a larger budget', () async {
+    Duration? preferredBudget;
+    Duration? nextBudget;
+
+    await getLyricWithSourceFallback(
+      _audio(),
+      ResultSource.qq,
+      timeLimit: const Duration(seconds: 24),
+      loadSource: (source, budget) async {
+        if (source == ResultSource.qq) {
+          preferredBudget = budget;
+          return null;
+        }
+        nextBudget ??= budget;
+        return null;
+      },
+    );
+
+    expect(preferredBudget, const Duration(seconds: 12));
+    expect(nextBudget, isNotNull);
+    expect(nextBudget!.compareTo(preferredBudget!), lessThan(0));
+  });
 }
