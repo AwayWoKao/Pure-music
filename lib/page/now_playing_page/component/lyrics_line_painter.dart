@@ -371,9 +371,18 @@ double _lyricWordEffectStrength(
   return max(absoluteStrength, relativeStrength);
 }
 
+/// 前半鼓起到峰值，中段托住，尾段再收回。
 double _lyricEffectParabola(double progress) {
   if (progress <= 0.0 || progress >= 1.0) return 0.0;
-  return 4.0 * progress * (1.0 - progress);
+  const riseEnd = 0.5;
+  const releaseStart = 0.82;
+  if (progress < riseEnd) {
+    final t = progress / riseEnd;
+    return t * t * (3.0 - 2.0 * t);
+  }
+  if (progress <= releaseStart) return 1.0;
+  final t = (progress - releaseStart) / (1.0 - releaseStart);
+  return 1.0 - t * t * (3.0 - 2.0 * t);
 }
 
 Duration lyricMedianWordDuration(List<SyncLyricWord> words) {

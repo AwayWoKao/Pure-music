@@ -281,20 +281,21 @@ void main() {
       expect(scale, lessThanOrEqualTo(1.26));
     });
 
-    test('uses the same parabola on both sides of the peak', () {
-      final risingScale = lyricCharacterScale(
-        effect: LyricWordEffect.scale,
-        duration: duration,
-        lineMedianDuration: const Duration(milliseconds: 500),
-        progress: 0.25,
-      );
-      final fallingScale = lyricCharacterScale(
-        effect: LyricWordEffect.scale,
-        duration: duration,
-        lineMedianDuration: const Duration(milliseconds: 500),
-        progress: 0.75,
-      );
-      expect(fallingScale, closeTo(risingScale, 0.0001));
+    test('holds the peak through the second half then releases', () {
+      double scaleAt(double progress) {
+        return lyricCharacterScale(
+          effect: LyricWordEffect.scale,
+          duration: duration,
+          lineMedianDuration: const Duration(milliseconds: 500),
+          progress: progress,
+        );
+      }
+
+      final peak = scaleAt(0.5);
+      expect(scaleAt(0.25), lessThan(peak));
+      expect(scaleAt(0.75), closeTo(peak, 0.0001));
+      expect(scaleAt(0.9), lessThan(peak));
+      expect(scaleAt(0.9), greaterThan(1.0));
     });
 
     test('raises the peak for more prominent long notes', () {
