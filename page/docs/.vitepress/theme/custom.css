@@ -7,7 +7,10 @@ html {
   --pm-gold: #BDA12F;
   --pm-gold-light: #D4B85C;
   --pm-gold-dark: #8B7A1E;
-  --pm-ease: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --pm-ink: #1C1A12;
+  --pm-paper: #F7F3EA;
+  --pm-paper-deep: #EFEAD9;
+  --pm-surface: #FBF8F1;
   color-scheme: light;
   accent-color: var(--pm-gold);
 
@@ -38,8 +41,8 @@ html {
   --vp-sidebar-bg-color: #F7F3EA;
   --vp-code-bg: #EFEAD9;
   --vp-home-hero-name-color: #8B7A1E;
-  --vp-home-hero-image-background-image: radial-gradient(circle, rgba(189, 161, 47, 0.22) 0%, transparent 68%);
-  --vp-home-hero-image-filter: blur(36px);
+  --vp-home-hero-image-background-image: none;
+  --vp-home-hero-image-filter: none;
 }
 
 ::selection {
@@ -50,7 +53,7 @@ html {
 .VPLocalSearchBox,
 .VPNavBar,
 .VPSidebar {
-  transition: background-color 0.3s ease, border-color 0.3s ease;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
 .dark {
@@ -105,6 +108,15 @@ body {
   caret-color: var(--pm-gold);
 }
 
+.VPNav {
+  border-bottom: 1px solid var(--vp-c-divider);
+}
+
+.VPNavBar {
+  background: var(--vp-nav-bg-color) !important;
+  backdrop-filter: blur(12px);
+}
+
 .VPNavBarTitle .logo {
   height: 28px;
   width: 28px;
@@ -124,14 +136,42 @@ body {
 
 .VPHero .name,
 .VPHero .text {
-  letter-spacing: -0.025em;
+  font-family: Georgia, 'Times New Roman', 'Songti SC', serif;
+  font-weight: 500;
+  letter-spacing: -0.04em;
 }
 
-/* logo 与背后光晕共用同一居中盒，避免错位 */
+.VPHero .name {
+  color: var(--vp-c-brand-1);
+}
+
+.VPHero .tagline {
+  max-width: 32rem;
+  color: var(--vp-c-text-2);
+}
+
 .VPHero .image-src {
-  border-radius: 22%;
+  border-radius: 18%;
   max-width: 240px !important;
   max-height: 240px !important;
+}
+
+.VPHero .image-bg {
+  display: none;
+}
+
+@media (min-width: 960px) {
+  .VPHero .container {
+    max-width: 1216px !important;
+    padding: 96px 32px 104px;
+  }
+  .VPHero .image-container {
+    width: 320px !important;
+    height: 320px !important;
+    border: 1px solid var(--vp-c-border);
+    background: var(--vp-c-bg-elv);
+    box-sizing: border-box;
+  }
 }
 
 @media (min-width: 640px) {
@@ -141,48 +181,26 @@ body {
   }
 }
 
-@media (min-width: 960px) {
-  .VPHero .container {
-    max-width: 1152px !important;
-  }
-  .VPHero .image-container {
-    position: relative !important;
-    width: 320px !important;
-    height: 320px !important;
-    margin-left: auto !important;
-    margin-right: 0 !important;
-    transform: none !important;
-  }
-  .VPHero .image-bg {
-    top: 50% !important;
-    left: 50% !important;
-    transform: translate(-50%, -50%) !important;
-  }
-  .VPHero .image-src {
-    position: absolute !important;
-    top: 50% !important;
-    left: 50% !important;
-    max-width: 280px !important;
-    max-height: 280px !important;
-    transform: translate(-50%, -50%) !important;
-  }
-}
-
 .VPButton {
-  border-radius: 980px !important;
-  transition: transform 160ms var(--pm-ease), box-shadow 220ms var(--pm-ease) !important;
+  border-radius: 8px !important;
+  transition: background-color 150ms ease, border-color 150ms ease,
+    color 150ms ease !important;
 }
 
 .VPButton.brand:hover {
-  box-shadow: 0 6px 18px rgba(189, 161, 47, 0.28);
+  background: var(--pm-gold-light) !important;
 }
 
 .VPButton:active {
-  transform: scale(0.97);
+  transform: none;
 }
 
 .VPFeature .box {
-  padding: 18px 20px !important;
+  padding: 20px !important;
+  border: 1px solid var(--vp-c-border);
+  border-radius: 10px;
+  background: var(--vp-c-bg-elv);
+  transition: background-color 150ms ease, border-color 150ms ease;
 }
 
 .VPFeature .icon {
@@ -216,8 +234,74 @@ body {
   border-color: rgba(189, 161, 47, 0.28) !important;
 }
 
-.vp-doc h1 { letter-spacing: -0.02em; }
-.vp-doc h2 { letter-spacing: -0.015em; }
+.VPFeature:hover .box {
+  background: var(--vp-c-bg-soft);
+}
+
+.VPFeatures {
+  border-top: 1px solid var(--vp-c-divider);
+  border-bottom: 1px solid var(--vp-c-divider);
+}
+
+.VPFeatures .container {
+  padding-top: 24px;
+  padding-bottom: 24px;
+}
+
+.VPSidebar {
+  border-right: 1px solid var(--vp-c-divider);
+}
+
+.VPSidebarItem .link {
+  border-left: 2px solid transparent;
+  transition: background-color 150ms ease, color 150ms ease,
+    border-color 150ms ease;
+}
+
+.VPSidebarItem .link:hover {
+  background: var(--vp-c-bg-soft);
+}
+
+.VPSidebarItem.is-active .link {
+  border-left-color: var(--vp-c-brand-1);
+  background: var(--vp-c-brand-soft);
+}
+
+.VPDoc .content {
+  max-width: 760px;
+}
+
+.VPDoc .aside {
+  width: 224px;
+}
+
+.vp-doc {
+  font-size: 15px;
+  line-height: 1.75;
+}
+
+.vp-doc h1,
+.vp-doc h2,
+.vp-doc h3 {
+  font-family: Georgia, 'Times New Roman', 'Songti SC', serif;
+  font-weight: 500;
+  letter-spacing: -0.025em;
+}
+
+.vp-doc h1 {
+  letter-spacing: -0.04em;
+}
+
+.vp-doc h2 {
+  border-top: 1px solid var(--vp-c-divider);
+  padding-top: 1.75rem;
+  margin-top: 3.5rem;
+}
+
+.vp-doc a {
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
 
 /* 更新日志等折叠块：默认收起时更易扫版本号 */
 .vp-doc details {
@@ -253,7 +337,7 @@ body {
   color: var(--vp-c-brand-1);
 }
 .vp-doc div[class*='language-'] {
-  border-radius: 12px;
+  border-radius: 8px;
   border: 1px solid var(--vp-c-border);
 }
 .vp-doc table {
@@ -270,37 +354,118 @@ body {
 }
 
 .home-section {
-  max-width: 1152px;
+  max-width: 1216px;
   margin: 0 auto;
-  padding: 48px 24px;
+  padding: 72px 24px 88px;
+  border-top: 1px solid var(--vp-c-divider);
 }
 
 .home-section h2 {
-  font-size: 1.25rem;
-  font-weight: 600;
-  letter-spacing: -0.015em;
-  margin: 0 0 1rem;
+  font-family: Georgia, 'Times New Roman', 'Songti SC', serif;
+  font-size: clamp(1.65rem, 2.4vw, 2.15rem);
+  font-weight: 500;
+  letter-spacing: -0.035em;
+  margin: 0 0 1.5rem;
   color: var(--vp-c-text-1);
 }
 
+.pm-eyebrow,
+.download-kicker {
+  color: var(--vp-c-brand-1);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
 
+.pm-showcase {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.72fr) minmax(0, 1.6fr);
+  gap: 48px;
+  align-items: center;
+  max-width: 1216px;
+  margin: 0 auto;
+  padding: 80px 24px;
+  border-top: 1px solid var(--vp-c-divider);
+}
+
+.pm-showcase-copy {
+  max-width: 360px;
+}
+
+.pm-showcase-copy h2 {
+  margin: 0.75rem 0 1rem;
+  font-family: Georgia, 'Times New Roman', 'Songti SC', serif;
+  font-size: clamp(1.8rem, 3vw, 2.8rem);
+  font-weight: 500;
+  letter-spacing: -0.04em;
+  line-height: 1.08;
+}
+
+.pm-showcase-copy p {
+  margin: 0;
+  color: var(--vp-c-text-2);
+  line-height: 1.75;
+}
+
+.pm-showcase-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-top: 24px;
+}
+
+.pm-showcase-links a {
+  color: var(--vp-c-brand-1);
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-underline-offset: 4px;
+}
+
+.pm-showcase-frame {
+  padding: 10px;
+  border: 1px solid var(--vp-c-border);
+  background: var(--vp-c-bg-soft);
+}
+
+.pm-showcase-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--vp-c-divider);
+}
+
+.pm-showcase-image-dark {
+  display: none;
+}
+
+.dark .pm-showcase-image-light {
+  display: none;
+}
+
+.dark .pm-showcase-image-dark {
+  display: block;
+}
 
 .pm-cards {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-  margin: 1.25rem 0 1.5rem;
+  gap: 16px;
+  margin: 1.5rem 0 2rem;
 }
 
 .pm-card {
   border: 1px solid var(--vp-c-border);
-  border-radius: 12px;
-  padding: 1rem 1.1rem;
-  background: var(--vp-c-bg-soft);
+  border-radius: 10px;
+  padding: 1.25rem;
+  background: var(--vp-c-bg-elv);
+  transition: background-color 150ms ease, border-color 150ms ease;
 }
 
 .pm-card:hover {
   border-color: rgba(189, 161, 47, 0.28);
+  background: var(--vp-c-bg-soft);
 }
 
 .pm-card-icon {
@@ -338,8 +503,11 @@ body {
 .pm-steps {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin: 1.25rem 0;
+  gap: 12px;
+  max-width: 760px;
+  margin: 1.5rem 0 0;
+  padding-left: 0;
+  list-style: none;
 }
 
 .pm-step {
@@ -347,8 +515,14 @@ body {
   gap: 12px;
   align-items: flex-start;
   border: 1px solid var(--vp-c-border);
-  border-radius: 12px;
-  padding: 0.875rem 1rem;
+  border-radius: 10px;
+  padding: 1rem 1.1rem;
+  background: var(--vp-c-bg-elv);
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.pm-step:hover {
+  border-color: rgba(189, 161, 47, 0.28);
   background: var(--vp-c-bg-soft);
 }
 
@@ -386,9 +560,10 @@ body {
   align-items: center;
   gap: 2rem;
   margin: 1.25rem 0 2rem;
-  padding: 1.5rem 0;
-  border-top: 1px solid var(--vp-c-divider);
-  border-bottom: 1px solid var(--vp-c-divider);
+  padding: 1.75rem;
+  border: 1px solid var(--vp-c-border);
+  border-radius: 10px;
+  background: var(--vp-c-bg-elv);
 }
 
 .download-release-main {
@@ -403,6 +578,7 @@ body {
   width: 52px;
   height: 52px;
   border-radius: 8px;
+  border: 1px solid var(--vp-c-border);
 }
 
 .download-release h2 {
@@ -416,9 +592,6 @@ body {
 
 .download-kicker {
   margin: 0 0 0.2rem !important;
-  color: var(--vp-c-brand-1);
-  font-size: 0.75rem;
-  font-weight: 600;
 }
 
 .download-description {
@@ -444,6 +617,7 @@ body {
   gap: 0.5rem;
   flex: 0 0 auto;
   min-width: 128px;
+  min-height: 40px;
   padding: 0.65rem 1rem;
   border-radius: 8px;
   background: var(--pm-gold);
@@ -451,7 +625,8 @@ body {
   text-decoration: none !important;
   font-weight: 500;
   font-size: 0.875rem;
-  transition: box-shadow 220ms var(--pm-ease), background 160ms ease;
+  transition: background-color 150ms ease, border-color 150ms ease,
+    color 150ms ease;
   box-sizing: border-box;
 }
 
@@ -490,10 +665,7 @@ body {
 .download-btn-alt:hover,
 .download-btn-alt:focus-visible {
   background: var(--vp-c-brand-soft) !important;
-  border-color: var(--vp-c-brand-1) !important;
   color: var(--vp-c-brand-1) !important;
-  box-shadow: none !important;
-  transform: none;
 }
 
 .download-btn-alt:focus-visible {
@@ -503,7 +675,6 @@ body {
 
 .download-btn-alt:active {
   background: var(--vp-c-brand-soft) !important;
-  transform: scale(0.98);
 }
 
 .download-mirror-hint {
@@ -516,11 +687,6 @@ body {
 
 .download-btn:not(.download-btn-alt):hover {
   background: var(--pm-gold-light);
-  box-shadow: 0 6px 18px rgba(189, 161, 47, 0.28);
-}
-
-.download-btn:not(.download-btn-alt):active {
-  transform: scale(0.98);
 }
 
 /* 顶栏社交图标：悬停用品牌色，避免发灰难辨 */
@@ -540,6 +706,15 @@ body {
 }
 
 @media (max-width: 768px) {
+  .pm-showcase {
+    grid-template-columns: 1fr;
+    gap: 32px;
+    padding-top: 64px;
+    padding-bottom: 64px;
+  }
+  .pm-showcase-copy {
+    max-width: 560px;
+  }
   .pm-cards { grid-template-columns: 1fr; }
   .download-release {
     grid-template-columns: 1fr;
