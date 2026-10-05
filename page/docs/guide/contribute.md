@@ -12,7 +12,7 @@ description: 如何报告问题、提交代码或改进文档。
 - 先查看[常见问题](/guide/faq)并完成相关排查
 - 还不能确认是程序问题或需要询问使用方法时，先到 [Discussions](https://github.com/qingyueyin/Pure-music/discussions/categories/general) 交流
 - 能够复现的异常使用对应的 [Issue 模板](https://github.com/qingyueyin/Pure-music/issues/new/choose) 提交
-- 「设置 → 关于 → 报告问题」可以生成并复制日志；请将完整日志、复现步骤、系统版本和相关样本附在 Issue 中
+- 「设置 → 关于 → 报告问题」会打开 Bug 表单并复制日志快照；请粘贴到「完整日志」，不要用原始的.log 文件代替。阅读方式见 [Issue 提交规范](https://github.com/qingyueyin/Pure-music/blob/main/.github/ISSUE_GUIDELINES.md)
 
 ## 提交代码
 
