@@ -5,9 +5,10 @@
 
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
+export 'library_db/play_counts.dart';
 
-// These functions are ignored because they are not marked as `pub`: `atomic_write_with_replace`, `audio_identity`, `backfill_audio_identities`, `cover_access_timestamp`, `cover_source_signature`, `cover_tier_exceeds_limit`, `cover_tier`, `ensure_database_layout`, `ensure_index_source_current`, `file_source_signature`, `has_database_layout_marker`, `index_source_signature`, `index_temp_file`, `init_schema`, `legacy_sqlite_path`, `metadata_match_key`, `migrating_sqlite_path`, `normalize_identity_part`, `open_connection`, `open_raw_connection`, `path_lookup_key`, `prune_cover_thumbnail_tier`, `read_cover_thumbnail`, `read_current_index_snapshot`, `rebuild_database_from_legacy`, `remove_database_file`, `remove_database_files`, `replace_file_atomically`, `should_rebuild_database`, `sqlite_path`, `sqlite_sidecar_path`, `stable_file_id`, `stored_index_source_signature`, `unique_play_count`, `with_cover_connection`, `with_index_write_lock`, `write_cover_thumbnail`, `write_index_json`, `write_index_snapshot_with`, `write_index_snapshot`, `write_index_value_to_sqlite`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AudioIdentity`, `CoverTier`, `IndexFolderSnapshot`, `IndexSnapshot`
+// These functions are ignored because they are not marked as `pub`: `atomic_write_with_replace`, `audio_identity`, `backfill_audio_identities`, `cover_access_timestamp`, `cover_source_signature`, `cover_tier_exceeds_limit`, `cover_tier`, `ensure_database_layout`, `ensure_index_source_current`, `file_source_signature`, `has_database_layout_marker`, `index_source_signature`, `index_temp_file`, `init_schema`, `legacy_sqlite_path`, `load_stored_audio_stats`, `metadata_match_key`, `migrating_sqlite_path`, `normalize_identity_part`, `open_connection`, `open_raw_connection`, `parse_index_folders`, `path_lookup_key`, `prune_cover_thumbnail_tier`, `read_cover_thumbnail`, `read_current_index_snapshot`, `rebuild_database_from_legacy`, `remove_database_file`, `remove_database_files`, `replace_file_atomically`, `should_rebuild_database`, `sqlite_path`, `sqlite_sidecar_path`, `stable_file_id_for_path`, `stable_file_id`, `stored_index_source_signature`, `unique_play_count`, `with_cover_connection`, `with_index_write_lock`, `write_cover_thumbnail`, `write_index_json`, `write_index_snapshot_with`, `write_index_snapshot`, `write_index_value_to_sqlite`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AudioIdentity`, `CoverTier`, `IndexFolderSnapshot`, `IndexSnapshot`, `ParsedAudioEntry`, `ParsedFolder`, `StoredAudioStats`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`
 // These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`
 
@@ -21,47 +22,6 @@ Future<Uint8List?> getCachedCover({
   path: path,
   width: width,
   height: height,
-);
-
-Future<void> incrementPlayCount({
-  required String indexPath,
-  required String path,
-}) => RustLib.instance.api.crateApiLibraryDbIncrementPlayCount(
-  indexPath: indexPath,
-  path: path,
-);
-
-Future<List<PlayCountEntry>> getTopPlayed({
-  required String indexPath,
-  required int limit,
-}) => RustLib.instance.api.crateApiLibraryDbGetTopPlayed(
-  indexPath: indexPath,
-  limit: limit,
-);
-
-Future<PlatformInt64> getPlayCount({
-  required String indexPath,
-  required String path,
-}) => RustLib.instance.api.crateApiLibraryDbGetPlayCount(
-  indexPath: indexPath,
-  path: path,
-);
-
-Future<List<PlayCountEntry>> exportPlayCounts({required String indexPath}) =>
-    RustLib.instance.api.crateApiLibraryDbExportPlayCounts(
-      indexPath: indexPath,
-    );
-
-/// 按路径或唯一的标题、艺术家、专辑组合写回播放次数；不新建曲库行。
-/// `overwrite` 为 false 时取本机与传入值的较大值，为 true 时直接使用传入值。
-Future<int> importPlayCounts({
-  required String indexPath,
-  required List<PlayCountEntry> entries,
-  required bool overwrite,
-}) => RustLib.instance.api.crateApiLibraryDbImportPlayCounts(
-  indexPath: indexPath,
-  entries: entries,
-  overwrite: overwrite,
 );
 
 Future<void> migrateIndexJsonToSqlite({required String indexPath}) => RustLib

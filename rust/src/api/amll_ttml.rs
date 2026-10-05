@@ -262,8 +262,7 @@ where
             let _ = write_index_cache(cache_file, &text);
             Ok(entries)
         }
-        Err(_) if cached.is_some() => Ok(cached.unwrap()),
-        Err(error) => Err(error),
+        Err(error) => cached.ok_or(error),
     }
 }
 
@@ -293,6 +292,39 @@ fn best_display_title(entry: &IndexEntry, terms: &[String]) -> String {
         .unwrap_or_default()
 }
 
+fn load_index_entries(cache_file: PathBuf) -> Result<Arc<Vec<IndexEntry>>, String> {
+    {
+        let cache_guard = cache()
+            .lock()
+            .map_err(|_| "AMLL index cache lock poisoned".to_string())?;
+        if let Some(cached) = cache_guard.as_ref() {
+            if cached.path == cache_file && !should_refresh_index(&cache_file) {
+                return Ok(Arc::clone(&cached.entries));
+            }
+        }
+    }
+
+    let loaded = resolve_index(
+        &cache_file,
+        should_refresh_index(&cache_file),
+        download_index_text,
+    )?;
+    let entries = Arc::new(loaded);
+    let mut cache_guard = cache()
+        .lock()
+        .map_err(|_| "AMLL index cache lock poisoned".to_string())?;
+    if let Some(cached) = cache_guard.as_ref() {
+        if cached.path == cache_file && !should_refresh_index(&cache_file) {
+            return Ok(Arc::clone(&cached.entries));
+        }
+    }
+    *cache_guard = Some(CachedIndex {
+        path: cache_file,
+        entries: Arc::clone(&entries),
+    });
+    Ok(entries)
+}
+
 fn download_index_text() -> Result<String, String> {
     let mut errors = Vec::new();
     for url in [BIKONOO_INDEX_URL, GITHUB_INDEX_URL] {
@@ -316,41 +348,7 @@ pub fn amll_search_lyrics(
     }
 
     let cache_file = Path::new(cache_dir).join(INDEX_CACHE_FILE);
-    let mut cache_guard = cache()
-        .lock()
-        .map_err(|_| "AMLL index cache lock poisoned".to_string())?;
-    let entries = match cache_guard.as_ref() {
-        Some(cached) if cached.path == cache_file && !should_refresh_index(&cache_file) => {
-            Arc::clone(&cached.entries)
-        }
-        None => {
-            let loaded = resolve_index(
-                &cache_file,
-                should_refresh_index(&cache_file),
-                download_index_text,
-            )?;
-            let entries = Arc::new(loaded);
-            *cache_guard = Some(CachedIndex {
-                path: cache_file,
-                entries: Arc::clone(&entries),
-            });
-            entries
-        }
-        Some(_) => {
-            let loaded = resolve_index(
-                &cache_file,
-                should_refresh_index(&cache_file),
-                download_index_text,
-            )?;
-            let entries = Arc::new(loaded);
-            *cache_guard = Some(CachedIndex {
-                path: cache_file,
-                entries: Arc::clone(&entries),
-            });
-            entries
-        }
-    };
-    drop(cache_guard);
+    let entries = load_index_entries(cache_file)?;
 
     let mut scored: Vec<_> = entries
         .iter()
@@ -425,7 +423,17 @@ fn http_get(url: &str, timeout_secs: u64) -> Result<String, String> {
     resp.text().map_err(|e| format!("body: {e}"))
 }
 
+fn is_safe_lyric_id(id: &str) -> bool {
+    let trimmed = id.trim();
+    !trimmed.is_empty()
+        && !trimmed.contains(['/', '\\', '?', '#', '\0'])
+        && !trimmed.contains("..")
+}
+
 pub fn amll_get_ttml(id: &str) -> Option<String> {
+    if !is_safe_lyric_id(id) {
+        return None;
+    }
     let url = format!("{BIKONOO_RAW_BASE}/{id}");
     http_get(&url, 30)
         .or_else(|_| {
@@ -436,7 +444,10 @@ pub fn amll_get_ttml(id: &str) -> Option<String> {
 }
 
 pub fn amll_clear_cache() {
-    let mut cache_guard = cache().lock().unwrap();
+    let mut cache_guard = match cache().lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
     *cache_guard = None;
 }
 
@@ -565,5 +576,16 @@ mod tests {
         assert!(ttml.is_some(), "应能下载TTML: {}", best.id);
         assert!(ttml.unwrap().starts_with("<tt"));
         std::fs::remove_dir_all(cache_file.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn rejects_unsafe_lyric_ids() {
+        assert!(is_safe_lyric_id("song.ttml"));
+        assert!(!is_safe_lyric_id("../secret"));
+        assert!(!is_safe_lyric_id("a/b.ttml"));
+        assert!(!is_safe_lyric_id("a\\b.ttml"));
+        assert!(!is_safe_lyric_id(""));
+        assert!(!is_safe_lyric_id("x?y"));
+        assert!(amll_get_ttml("../x").is_none());
     }
 }

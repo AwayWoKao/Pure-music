@@ -26,15 +26,23 @@ mod imp {
         },
     };
 
-    struct ComGuard;
+    struct ComGuard {
+        should_uninitialize: bool,
+    }
 
     impl ComGuard {
         fn new() -> Option<Self> {
             let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
-            // S_OK = success, RPC_E_CHANGED_MODE = already initialized (acceptable)
-            // S_FALSE = already initialized
-            if hr.is_ok() || hr.0 == windows::Win32::Foundation::RPC_E_CHANGED_MODE.0 {
-                Some(ComGuard)
+            // S_OK / S_FALSE: this call took a COM init ref, must CoUninitialize.
+            // RPC_E_CHANGED_MODE: already initialized with another model; do not uninit.
+            if hr.is_ok() {
+                Some(ComGuard {
+                    should_uninitialize: true,
+                })
+            } else if hr.0 == windows::Win32::Foundation::RPC_E_CHANGED_MODE.0 {
+                Some(ComGuard {
+                    should_uninitialize: false,
+                })
             } else {
                 None
             }
@@ -43,7 +51,9 @@ mod imp {
 
     impl Drop for ComGuard {
         fn drop(&mut self) {
-            unsafe { CoUninitialize() };
+            if self.should_uninitialize {
+                unsafe { CoUninitialize() };
+            }
         }
     }
 

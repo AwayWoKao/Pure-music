@@ -256,8 +256,7 @@ impl SMTCFlutter {
             *pending = None;
             self.thumbnail_wake.notify_one();
         }
-        let clear_result = self._clear_display().map_err(|error| error.to_string());
-        clear_result
+        self._clear_display().map_err(|error| error.to_string())
     }
 }
 
@@ -323,14 +322,14 @@ impl SMTCFlutter {
 
     /// 获取 SMTC 绑定的窗口：优先主窗口（系统媒体控件会显示在
     /// 主窗口的任务栏缩略图上），主窗口尚未创建时回退到隐藏窗口。
-    fn _get_smtc_window() -> Result<HWND, windows::core::Error> {
+    fn _get_smtc_window() -> Result<(HWND, bool), windows::core::Error> {
         const MAIN_CLASS_NAME: &str = "FLUTTER_RUNNER_WIN32_WINDOW";
         unsafe {
             let class_name: HSTRING = HSTRING::from(MAIN_CLASS_NAME);
             let hwnd = FindWindowW(PCWSTR(class_name.as_ptr()), PCWSTR::null());
             if hwnd.0 != 0 {
                 log::debug!(target: "smtc", "SMTC: bound to main window HWND={}", hwnd.0);
-                return Ok(hwnd);
+                return Ok((hwnd, false));
             }
         }
         let hidden = Self::_create_hidden_smtc_window()?;
@@ -339,7 +338,7 @@ impl SMTCFlutter {
             "SMTC: main window not found, bound to hidden HWND={}",
             hidden.0
         );
-        Ok(hidden)
+        Ok((hidden, true))
     }
 
     fn _init_controls(smtc: &SystemMediaTransportControls) -> Result<(), windows::core::Error> {
@@ -353,7 +352,7 @@ impl SMTCFlutter {
     }
 
     fn _new() -> Result<Self, windows::core::Error> {
-        let hwnd = Self::_get_smtc_window()?;
+        let (hwnd, created_hidden) = Self::_get_smtc_window()?;
         let interop =
             factory::<SystemMediaTransportControls, ISystemMediaTransportControlsInterop>()?;
         let _smtc: SystemMediaTransportControls = unsafe { interop.GetForWindow(hwnd) }?;
@@ -369,7 +368,7 @@ impl SMTCFlutter {
 
         Ok(Self {
             _smtc,
-            hidden_window: Some(hwnd),
+            hidden_window: created_hidden.then_some(hwnd),
             duration_ms: Mutex::new(0),
             progress_ms: AtomicU64::new(0),
             last_path: Mutex::new(None),

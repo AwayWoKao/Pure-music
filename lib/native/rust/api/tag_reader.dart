@@ -5,11 +5,14 @@
 
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
+import 'tag_reader/extra_metadata.dart';
+import 'tag_reader/index_state.dart';
+export 'tag_reader/extra_metadata.dart';
+export 'tag_reader/index_state.dart';
 
-// These functions are ignored because they are not marked as `pub`: `_get_lyric_from_lofty`, `_get_picture_by_lofty`, `_get_picture_by_windows`, `_picture_cache_key`, `_update_index_below_1_1_0`, `add_missing_audio_files`, `build_alternative_extra_metadata`, `collect_audio_files_by_folder`, `collect_symphonia_tags`, `detect_and_encode`, `discover_new_audio_folders`, `estimated_bitrate`, `file_name`, `get_embedded_picture_from_path`, `id3_tag_items`, `index_folder_snapshots_unchanged`, `indexed_audio_needs_update`, `initialize`, `is_asf_path`, `is_dff_path`, `is_dsf_path`, `is_generic_id3_path`, `is_image_attachment`, `is_lyric_item_key`, `is_midi_path`, `is_supported_audio_path`, `is_symphonia_path`, `join_deduped`, `merge_symphonia_field`, `midi_metrical_micros`, `midi_payload`, `midi_text`, `midi_track_info`, `midi_track_micros`, `new_with_path`, `optional_nonempty`, `parse_alternative_number`, `parse_midi_metadata`, `probe_indexed_path`, `push_dsf_item`, `read_alternative_extra_metadata`, `read_asf_extra_metadata`, `read_asf_picture`, `read_audio_paths_parallel`, `read_by_alternative`, `read_by_asf`, `read_by_dff`, `read_by_dsf`, `read_by_id3`, `read_by_lofty`, `read_by_midi`, `read_by_symphonia`, `read_by_win_music_properties`, `read_dff_metadata`, `read_dff_picture`, `read_dsf_audio_properties`, `read_dsf_extra_metadata`, `read_dsf_picture`, `read_from_folder`, `read_from_path`, `read_id3_from_bytes`, `read_id3_picture`, `read_midi_metadata`, `read_picture_by_alternative`, `read_symphonia_metadata`, `should_emit_index_progress`, `should_scan_indexed_audio_files`, `should_show_recording_date`, `symphonia_raw_value`, `symphonia_standard_value`, `tag_reader_worker_count_for`, `tag_reader_worker_count`, `take_extra_item`, `to_json_value`, `to_json_value`, `unknown_if_empty`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AudioFolder`, `Audio`, `DffMetadata`, `DsfAudioProperties`, `MidiMetadata`, `SymphoniaMetadata`, `SymphoniaTagCollection`, `WinRtWorkerGuard`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `drop`, `fmt`, `fmt`
-// These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`
+// These functions are ignored because they are not marked as `pub`: `_get_lyric_from_lofty`, `_get_picture_by_lofty`, `_get_picture_by_windows`, `_picture_cache_key`, `_update_index_below_1_1_0`, `add_missing_audio_files`, `audio_json_is_valid`, `backfill_audio_identity`, `build_alternative_extra_metadata`, `collect_audio_files_by_folder`, `detect_and_encode`, `discover_new_audio_folders`, `drop_invalid_duplicates_by_media_id`, `estimated_bitrate`, `evict_picture_cache_for_path`, `file_name`, `get_embedded_picture_from_path`, `id3_tag_items`, `index_folder_snapshots_unchanged`, `indexed_audio_update_from_parts`, `indexed_audio_update`, `initialize`, `is_image_attachment`, `is_lyric_item_key`, `join_deduped`, `lyrics_text_equiv`, `new_with_path`, `optional_nonempty`, `parse_alternative_number`, `probe_indexed_path`, `push_dsf_item`, `read_alternative_extra_metadata`, `read_asf_extra_metadata`, `read_asf_picture`, `read_audio_paths_parallel`, `read_by_alternative`, `read_by_lofty`, `read_by_win_music_properties`, `read_dff_picture`, `read_dsf_audio_properties`, `read_dsf_extra_metadata`, `read_dsf_picture`, `read_from_folder`, `read_from_path`, `read_id3_from_bytes`, `read_id3_picture`, `read_picture_by_alternative`, `set_audio_json_valid`, `should_emit_index_progress`, `should_scan_indexed_audio_files`, `tag_reader_worker_count_for`, `tag_reader_worker_count`, `take_extra_item`, `to_json_value`, `to_json_value`, `unknown_if_empty`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AudioFolder`, `Audio`, `IndexedAudioUpdate`, `WinRtWorkerGuard`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `drop`, `eq`, `fmt`, `fmt`, `fmt`
 
 /// for Flutter
 Future<AudioExtraMetadata> readAudioExtraMetadata({required String path}) =>
@@ -96,96 +99,6 @@ Stream<IndexActionState> updateIndex({
   indexPath: indexPath,
   forceMetadataCheck: forceMetadataCheck,
 );
-
-class AudioExtraItem {
-  final String key;
-  final String value;
-
-  const AudioExtraItem({required this.key, required this.value});
-
-  @override
-  int get hashCode => key.hashCode ^ value.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is AudioExtraItem &&
-          runtimeType == other.runtimeType &&
-          key == other.key &&
-          value == other.value;
-}
-
-class AudioExtraMetadata {
-  final String extension_;
-  final BigInt fileSize;
-  final int? channels;
-  final int? bitDepth;
-  final List<AudioExtraItem> items;
-  final String? replaygainTrackGain;
-  final String? replaygainTrackPeak;
-  final String? replaygainAlbumGain;
-  final String? replaygainAlbumPeak;
-
-  const AudioExtraMetadata({
-    required this.extension_,
-    required this.fileSize,
-    this.channels,
-    this.bitDepth,
-    required this.items,
-    this.replaygainTrackGain,
-    this.replaygainTrackPeak,
-    this.replaygainAlbumGain,
-    this.replaygainAlbumPeak,
-  });
-
-  @override
-  int get hashCode =>
-      extension_.hashCode ^
-      fileSize.hashCode ^
-      channels.hashCode ^
-      bitDepth.hashCode ^
-      items.hashCode ^
-      replaygainTrackGain.hashCode ^
-      replaygainTrackPeak.hashCode ^
-      replaygainAlbumGain.hashCode ^
-      replaygainAlbumPeak.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is AudioExtraMetadata &&
-          runtimeType == other.runtimeType &&
-          extension_ == other.extension_ &&
-          fileSize == other.fileSize &&
-          channels == other.channels &&
-          bitDepth == other.bitDepth &&
-          items == other.items &&
-          replaygainTrackGain == other.replaygainTrackGain &&
-          replaygainTrackPeak == other.replaygainTrackPeak &&
-          replaygainAlbumGain == other.replaygainAlbumGain &&
-          replaygainAlbumPeak == other.replaygainAlbumPeak;
-}
-
-class IndexActionState {
-  /// completed / total
-  final double progress;
-
-  /// describe action state
-  final String message;
-
-  const IndexActionState({required this.progress, required this.message});
-
-  @override
-  int get hashCode => progress.hashCode ^ message.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is IndexActionState &&
-          runtimeType == other.runtimeType &&
-          progress == other.progress &&
-          message == other.message;
-}
 
 class WriteTagPayload {
   final String? title;

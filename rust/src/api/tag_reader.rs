@@ -34,7 +34,6 @@ use crate::frb_generated::StreamSink;
 
 use super::library_db;
 
-
 mod format_detection;
 use format_detection::{
     is_asf_path, is_dff_path, is_dsf_path, is_generic_id3_path, is_midi_path,
@@ -52,16 +51,18 @@ use dff::read_dff_metadata;
 mod dsf;
 use dsf::DsfAudioProperties;
 
-mod index_state;
+pub mod index_state;
 pub use index_state::IndexActionState;
 
-mod symphonia;
+pub mod symphonia;
 use symphonia::read_symphonia_metadata;
 
 mod midi;
-use midi::{parse_midi_metadata, read_midi_metadata};
+use midi::read_midi_metadata;
+#[cfg(test)]
+use midi::parse_midi_metadata;
 
-mod extra_metadata;
+pub mod extra_metadata;
 use extra_metadata::should_show_recording_date;
 pub use extra_metadata::{AudioExtraItem, AudioExtraMetadata};
 
@@ -614,8 +615,6 @@ pub fn read_audio_extra_metadata(path: String) -> AudioExtraMetadata {
     }
 }
 
-
-
 const CURRENT_INDEX_VERSION: u64 = 111;
 const MAX_TAG_READER_WORKERS: usize = 4;
 const RESERVED_LOGICAL_CORES: usize = 2;
@@ -643,6 +642,9 @@ struct Audio {
     created: u64,
     /// 标签获取方式
     by: Option<String>,
+    size: u64,
+    valid: bool,
+    media_id: Option<String>,
 }
 
 impl Audio {
@@ -662,6 +664,9 @@ impl Audio {
             modified: 0,
             created: 0,
             by,
+            size: 0,
+            valid: true,
+            media_id: None,
         })
     }
 
@@ -679,7 +684,10 @@ impl Audio {
             "path": self.path,
             "modified": self.modified,
             "created": self.created,
-            "by": self.by
+            "by": self.by,
+            "size": self.size,
+            "valid": self.valid,
+            "media_id": self.media_id
         })
     }
 
@@ -717,20 +725,29 @@ impl Audio {
             .unwrap_or(Duration::ZERO)
             .as_secs();
 
+        let finalize = |mut value: Audio| {
+            value.size = file_metadata.len();
+            value.valid = true;
+            if value.media_id.is_none() {
+                value.media_id = library_db::stable_file_id_for_path(path);
+            }
+            value
+        };
+
         if let Some(value) = Self::read_by_lofty(path, modified, created) {
-            return Some(value);
+            return Some(finalize(value));
         }
         if let Some(value) = read_by_alternative(path, modified, created) {
-            return Some(value);
+            return Some(finalize(value));
         }
         match Self::read_by_win_music_properties(path, modified, created) {
-            Ok(value) => Some(value),
+            Ok(value) => Some(finalize(value)),
             Err(err) => {
                 log::warn!(target: "tag", "metadata fallback failed: {}", err);
                 let mut value = Self::new_with_path(path, None)?;
                 value.modified = modified;
                 value.created = created;
-                Some(value)
+                Some(finalize(value))
             }
         }
     }
@@ -795,6 +812,9 @@ impl Audio {
                 modified,
                 created,
                 by: Some("Lofty".to_string()),
+                size: 0,
+                valid: true,
+                media_id: None,
             });
         }
 
@@ -815,6 +835,9 @@ impl Audio {
             modified,
             created,
             by: Some("Lofty".to_string()),
+            size: 0,
+            valid: true,
+            media_id: None,
         })
     }
 
@@ -881,6 +904,9 @@ impl Audio {
             modified,
             created,
             by: Some("Windows".to_string()),
+            size: 0,
+            valid: true,
+            media_id: None,
         })
     }
 }
@@ -1262,8 +1288,8 @@ pub fn get_picture_from_path(path: String, width: u32, height: u32) -> Option<Ve
             );
 
             let mut output = Cursor::new(Vec::new());
-            if image::DynamicImage::ImageRgba8(resized_img)
-                .to_rgb8()
+            let rgb = image::DynamicImage::ImageRgba8(resized_img).to_rgb8();
+            if rgb
                 .write_to(&mut output, image::ImageFormat::Jpeg)
                 .is_ok()
             {
@@ -1282,6 +1308,8 @@ pub fn get_picture_from_path(path: String, width: u32, height: u32) -> Option<Ve
                 }
                 return Some(out);
             }
+            // 已经能解码时不要把原图大图送回界面
+            return None;
         }
     }
 
@@ -1538,10 +1566,15 @@ pub fn write_lyric_to_path(path: String, lyric: String) -> Result<(), String> {
         .save_to_path(&path, WriteOptions::default())
         .map_err(|e| format!("Error saving lyrics: {:?}", e.kind()))?;
     match _get_lyric_from_lofty(&path) {
-        Some(saved) if saved == lyric => Ok(()),
+        Some(saved) if lyrics_text_equiv(&saved, &lyric) => Ok(()),
         Some(_) => Err("written lyrics do not match the saved tag".to_string()),
         None => Err("written lyrics could not be read back".to_string()),
     }
+}
+
+fn lyrics_text_equiv(a: &str, b: &str) -> bool {
+    a.replace("\r\n", "\n").replace('\r', "\n").trim()
+        == b.replace("\r\n", "\n").replace('\r', "\n").trim()
 }
 
 /// for Flutter
@@ -1600,10 +1633,6 @@ fn detect_and_encode(img: &DynamicImage, raw_bytes: &[u8]) -> Result<(Vec<u8>, M
         Some(image::ImageFormat::Png)
     } else if raw_bytes.len() >= 3 && raw_bytes[..3] == *b"\xFF\xD8\xFF" {
         Some(image::ImageFormat::Jpeg)
-    } else if raw_bytes.len() >= 6 && raw_bytes[..6] == *b"GIF87a"
-        || raw_bytes.len() >= 6 && raw_bytes[..6] == *b"GIF89a"
-    {
-        Some(image::ImageFormat::Gif)
     } else {
         None
     };
@@ -1621,12 +1650,6 @@ fn detect_and_encode(img: &DynamicImage, raw_bytes: &[u8]) -> Result<(Vec<u8>, M
                 .map_err(|e| format!("Error encoding JPEG: {e}"))?;
             Ok((buf, MimeType::Jpeg))
         }
-        Some(f @ image::ImageFormat::Gif) => {
-            let mut buf = Vec::new();
-            img.write_to(&mut Cursor::new(&mut buf), f)
-                .map_err(|e| format!("Error encoding GIF: {e}"))?;
-            Ok((buf, MimeType::Gif))
-        }
         _ => {
             // 不支持的格式降级为 JPEG
             let mut buf = Vec::new();
@@ -1636,8 +1659,6 @@ fn detect_and_encode(img: &DynamicImage, raw_bytes: &[u8]) -> Result<(Vec<u8>, M
         }
     }
 }
-
-
 
 /// 递归收集所有子文件夹中的音频文件路径，按父目录分组。
 /// 一次遍历同时完成「统计总数」和「收集路径」，避免二次目录遍历。
@@ -1708,14 +1729,14 @@ pub fn build_index_from_folders_recursively(
                 });
             }
         });
-        if let Some(failed_index) = read_results.iter().position(Option::is_none) {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!(
-                    "failed to read audio while building index: {}",
-                    file_paths[failed_index].display()
-                ),
-            ));
+        let failed = read_results.iter().filter(|audio| audio.is_none()).count();
+        if failed > 0 {
+            log::warn!(
+                target: "tag",
+                "skipped {} unreadable files while indexing {}",
+                failed,
+                dir_path
+            );
         }
         let audios: Vec<Audio> = read_results.into_iter().flatten().collect();
         scanned += file_paths.len() as u64;
@@ -1882,11 +1903,10 @@ fn add_missing_audio_files(
 /// [_update_index_below_1_1_0] 更新 index；
 /// 如果 index version >= [LOWEST_VERSION] 则进行更新。
 ///
-/// 如果文件夹不存在，删除记录。  
-/// 显式刷新时检查每个已索引文件的修改时间，只重新读取实际变化的音乐标签。
-/// 1. 遍历该文件夹索引，判断文件是否存在，不存在则删除记录
-/// 2. 遍历该文件夹索引，如果文件修改时间变化，重新读取标签；没有则跳过它
-/// 3. 遍历该文件夹，添加索引中不存在的音乐文件
+/// 文件夹或文件暂时不见了只标无效，不删库。显式刷新时用修改时间和文件大小判断，只重读真正变过的标签。
+/// 1. 文件不存在则 valid=false，保留播放次数
+/// 2. 修改时间或大小变化才重读标签；缺 size/media_id 只补身份不读标签
+/// 3. 补上索引里没有的新文件；同 media_id 的无效记录在改名后丢掉，播放次数在入库时接回
 fn should_scan_indexed_audio_files(
     old_folder_modified: u64,
     new_folder_modified: u64,
@@ -1895,22 +1915,130 @@ fn should_scan_indexed_audio_files(
     explicit_refresh || new_folder_modified != old_folder_modified
 }
 
-fn indexed_audio_needs_update(audio_item: &serde_json::Value, metadata: &fs::Metadata) -> bool {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IndexedAudioUpdate {
+    Skip,
+    BackfillIdentity,
+    RereadTags,
+}
+
+fn audio_json_is_valid(audio_item: &serde_json::Value) -> bool {
+    audio_item
+        .get("valid")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true)
+}
+
+fn set_audio_json_valid(audio_item: &mut serde_json::Value, valid: bool) {
+    if let Some(object) = audio_item.as_object_mut() {
+        object.insert("valid".to_string(), serde_json::json!(valid));
+    }
+}
+
+fn backfill_audio_identity(
+    audio_item: &mut serde_json::Value,
+    metadata: &fs::Metadata,
+    path: &Path,
+) {
+    if let Some(object) = audio_item.as_object_mut() {
+        object.insert("size".to_string(), serde_json::json!(metadata.len()));
+        let media_id_missing = !object
+            .get("media_id")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| !value.is_empty());
+        if media_id_missing {
+            if let Some(media_id) = library_db::stable_file_id_for_path(path) {
+                object.insert("media_id".to_string(), serde_json::json!(media_id));
+            }
+        }
+    }
+}
+
+fn indexed_audio_update_from_parts(
+    audio_item: &serde_json::Value,
+    new_modified: u64,
+    new_size: u64,
+) -> IndexedAudioUpdate {
     if !audio_item
         .as_object()
         .is_some_and(|item| item.contains_key("disc"))
     {
-        return true;
+        return IndexedAudioUpdate::RereadTags;
     }
-    let old_audio_modified = audio_item["modified"].as_u64().unwrap_or(0);
+    let old_modified = audio_item["modified"].as_u64().unwrap_or(0);
+    let size_known = audio_item
+        .as_object()
+        .is_some_and(|item| item.contains_key("size"));
+    let old_size = audio_item.get("size").and_then(|value| value.as_u64());
+    if old_modified != new_modified || (size_known && old_size != Some(new_size)) {
+        return IndexedAudioUpdate::RereadTags;
+    }
+    let media_id_missing = !audio_item
+        .get("media_id")
+        .and_then(|value| value.as_str())
+        .is_some_and(|value| !value.is_empty());
+    if !size_known || media_id_missing {
+        IndexedAudioUpdate::BackfillIdentity
+    } else {
+        IndexedAudioUpdate::Skip
+    }
+}
+
+fn indexed_audio_update(
+    audio_item: &serde_json::Value,
+    metadata: &fs::Metadata,
+) -> IndexedAudioUpdate {
     let Ok(modified) = metadata.modified() else {
-        return false;
+        return IndexedAudioUpdate::Skip;
     };
-    let new_audio_modified = modified
+    let new_modified = modified
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)
         .as_secs();
-    new_audio_modified != old_audio_modified
+    indexed_audio_update_from_parts(audio_item, new_modified, metadata.len())
+}
+
+fn drop_invalid_duplicates_by_media_id(folders: &mut [serde_json::Value]) -> usize {
+    let mut valid_ids = HashSet::new();
+    for folder in folders.iter() {
+        let Some(audios) = folder.get("audios").and_then(|value| value.as_array()) else {
+            continue;
+        };
+        for audio in audios {
+            if !audio_json_is_valid(audio) {
+                continue;
+            }
+            if let Some(media_id) = audio.get("media_id").and_then(|value| value.as_str()) {
+                if !media_id.is_empty() {
+                    valid_ids.insert(media_id.to_string());
+                }
+            }
+        }
+    }
+    if valid_ids.is_empty() {
+        return 0;
+    }
+    let mut dropped = 0_usize;
+    for folder in folders.iter_mut() {
+        let Some(audios) = folder
+            .get_mut("audios")
+            .and_then(|value| value.as_array_mut())
+        else {
+            continue;
+        };
+        let before = audios.len();
+        audios.retain(|audio| {
+            if audio_json_is_valid(audio) {
+                return true;
+            }
+            let Some(media_id) = audio.get("media_id").and_then(|value| value.as_str()) else {
+                return true;
+            };
+            media_id.is_empty() || !valid_ids.contains(media_id)
+        });
+        dropped += before - audios.len();
+    }
+    dropped
 }
 
 fn probe_indexed_path<T>(result: io::Result<T>) -> io::Result<Option<T>> {
@@ -1930,10 +2058,11 @@ mod tag_reader_tests {
     use lofty::prelude::ItemKey;
 
     use super::{
+        detect_and_encode, drop_invalid_duplicates_by_media_id, indexed_audio_update_from_parts,
         is_lyric_item_key, join_deduped, parse_midi_metadata, probe_indexed_path,
         read_audio_extra_metadata, read_by_asf, should_emit_index_progress,
         should_scan_indexed_audio_files, should_show_recording_date, tag_reader_worker_count_for,
-        SUPPORTED_FORMATS,
+        IndexedAudioUpdate, SUPPORTED_FORMATS,
     };
 
     fn asf_object(guid: [u8; 16], data: Vec<u8>) -> Vec<u8> {
@@ -2112,6 +2241,14 @@ mod tag_reader_tests {
     }
 
     #[test]
+    fn gif_cover_falls_back_to_jpeg() {
+        let img = image::DynamicImage::new_rgb8(2, 2);
+        let (bytes, mime) = detect_and_encode(&img, b"GIF89a").expect("jpeg fallback");
+        assert_eq!(mime, lofty::picture::MimeType::Jpeg);
+        assert!(!bytes.is_empty());
+    }
+
+    #[test]
     fn reserves_two_logical_cores_for_playback_and_ui() {
         assert_eq!(tag_reader_worker_count_for(16, 100), 4);
         assert_eq!(tag_reader_worker_count_for(8, 100), 3);
@@ -2224,6 +2361,95 @@ mod tag_reader_tests {
         assert_eq!(rmi_metadata.title.as_deref(), Some("One"));
         assert_eq!(rmi_metadata.duration, 1);
     }
+
+    fn sample_audio_json(
+        modified: u64,
+        size: Option<u64>,
+        media_id: Option<&str>,
+    ) -> serde_json::Value {
+        let mut value = serde_json::json!({
+            "title": "t",
+            "artist": "a",
+            "album": "al",
+            "disc": 1,
+            "modified": modified,
+            "path": "C:/Music/t.mp3",
+            "valid": true
+        });
+        if let Some(size) = size {
+            value["size"] = serde_json::json!(size);
+        }
+        if let Some(media_id) = media_id {
+            value["media_id"] = serde_json::json!(media_id);
+        }
+        value
+    }
+
+    #[test]
+    fn unchanged_mtime_and_size_skip_tag_reread() {
+        let audio = sample_audio_json(100, Some(2048), Some("win:1:2"));
+        assert_eq!(
+            indexed_audio_update_from_parts(&audio, 100, 2048),
+            IndexedAudioUpdate::Skip
+        );
+    }
+
+    #[test]
+    fn same_second_size_change_rereads_tags() {
+        let audio = sample_audio_json(100, Some(2048), Some("win:1:2"));
+        assert_eq!(
+            indexed_audio_update_from_parts(&audio, 100, 4096),
+            IndexedAudioUpdate::RereadTags
+        );
+    }
+
+    #[test]
+    fn missing_size_backfills_without_reread() {
+        let audio = sample_audio_json(100, None, Some("win:1:2"));
+        assert_eq!(
+            indexed_audio_update_from_parts(&audio, 100, 2048),
+            IndexedAudioUpdate::BackfillIdentity
+        );
+    }
+
+    #[test]
+    fn skip_rate_for_unchanged_library_is_100_percent() {
+        let mut skipped = 0_u32;
+        let mut reread = 0_u32;
+        for index in 0..10_000 {
+            let audio = sample_audio_json(100, Some(2048), Some("win:1:2"));
+            match indexed_audio_update_from_parts(&audio, 100, 2048) {
+                IndexedAudioUpdate::Skip => skipped += 1,
+                IndexedAudioUpdate::RereadTags => reread += 1,
+                IndexedAudioUpdate::BackfillIdentity => {}
+            }
+            let _ = index;
+        }
+        assert_eq!(skipped, 10_000);
+        assert_eq!(reread, 0);
+    }
+
+    #[test]
+    fn renamed_file_drops_invalid_duplicate_by_media_id() {
+        let mut folders = vec![serde_json::json!({
+            "path": "C:/Music",
+            "audios": [
+                {
+                    "path": "C:/Music/old.mp3",
+                    "media_id": "win:1:2",
+                    "valid": false
+                },
+                {
+                    "path": "C:/Music/new.mp3",
+                    "media_id": "win:1:2",
+                    "valid": true
+                }
+            ]
+        })];
+        assert_eq!(drop_invalid_duplicates_by_media_id(&mut folders), 1);
+        assert_eq!(folders[0]["audios"].as_array().unwrap().len(), 1);
+        assert_eq!(folders[0]["audios"][0]["path"], "C:/Music/new.mp3");
+    }
 }
 
 fn index_folder_snapshots_unchanged(folders: &[library_db::IndexFolderSnapshot]) -> bool {
@@ -2279,29 +2505,27 @@ pub fn update_index(
     let folders = index["folders"]
         .as_array_mut()
         .ok_or_else(|| anyhow::anyhow!("missing 'folders' field"))?;
-    let previous_folder_count = folders.len();
     let mut folder_probe_error = None;
-    folders.retain(|item| {
+    for item in folders.iter() {
         let Some(path) = item["path"].as_str() else {
             folder_probe_error = Some(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "indexed folder is missing path",
             ));
-            return true;
+            break;
         };
-        match probe_indexed_path(fs::metadata(path)) {
-            Ok(Some(_)) => true,
-            Ok(None) => false,
-            Err(error) => {
-                folder_probe_error = Some(error);
-                true
-            }
+        if let Err(error) = probe_indexed_path(fs::metadata(path)) {
+            folder_probe_error = Some(error);
+            break;
         }
-    });
+    }
     if let Some(error) = folder_probe_error {
         return Err(error.into());
     }
-    index_changed |= folders.len() != previous_folder_count;
+    let mut skipped_tag_reads = 0_u64;
+    let mut tag_rereads = 0_u64;
+    let mut invalidated = 0_u64;
+    let mut revived = 0_u64;
     let total = folders
         .iter()
         .filter_map(|folder| folder["audios"].as_array())
@@ -2318,22 +2542,41 @@ pub fn update_index(
         let latest = folder_item["latest"].as_u64().unwrap_or(0);
         let old_folder_modified = folder_item["modified"].as_u64().unwrap_or(0);
 
-        let new_folder_modified = fs::metadata(&folder_path)?
-            .modified()?
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or(Duration::ZERO)
-            .as_secs();
-
         let folder_audio_count = folder_item["audios"]
             .as_array()
             .map(|audios| audios.len() as u64)
             .unwrap_or(0);
+        let folder_metadata = match probe_indexed_path(fs::metadata(&folder_path))? {
+            Some(metadata) => metadata,
+            None => {
+                if let Some(audios) = folder_item
+                    .get_mut("audios")
+                    .and_then(|value| value.as_array_mut())
+                {
+                    for audio in audios.iter_mut() {
+                        if audio_json_is_valid(audio) {
+                            set_audio_json_valid(audio, false);
+                            invalidated += 1;
+                            index_changed = true;
+                        }
+                    }
+                }
+                checked += folder_audio_count;
+                continue;
+            }
+        };
+        let new_folder_modified = folder_metadata
+            .modified()?
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO)
+            .as_secs();
         if !should_scan_indexed_audio_files(
             old_folder_modified,
             new_folder_modified,
             force_metadata_check || refresh_all_metadata,
         ) {
             checked += folder_audio_count;
+            skipped_tag_reads += folder_audio_count;
             continue;
         }
         discovery_roots.push(PathBuf::from(&folder_path));
@@ -2356,41 +2599,58 @@ pub fn update_index(
             Some(a) => a,
             None => continue,
         };
-        let previous_audio_count = audios.len();
         let mut refresh_jobs: Vec<(usize, PathBuf)> = Vec::new();
-        let mut retained_index = 0_usize;
         let mut audio_probe_error = None;
-        audios.retain(|audio_item| {
-            let Some(path) = audio_item["path"].as_str() else {
+        for (audio_index, audio_item) in audios.iter_mut().enumerate() {
+            let Some(path) = audio_item["path"].as_str().map(str::to_string) else {
                 audio_probe_error = Some(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "indexed audio is missing path",
                 ));
-                return true;
+                break;
             };
-            match probe_indexed_path(fs::metadata(path)) {
+            match probe_indexed_path(fs::metadata(&path)) {
                 Ok(Some(metadata)) => {
-                    if refresh_all_metadata || indexed_audio_needs_update(audio_item, &metadata) {
-                        refresh_jobs.push((retained_index, PathBuf::from(path)));
+                    if !audio_json_is_valid(audio_item) {
+                        set_audio_json_valid(audio_item, true);
+                        revived += 1;
+                        index_changed = true;
                     }
-                    retained_index += 1;
-                    true
+                    let update = if refresh_all_metadata {
+                        IndexedAudioUpdate::RereadTags
+                    } else {
+                        indexed_audio_update(audio_item, &metadata)
+                    };
+                    match update {
+                        IndexedAudioUpdate::RereadTags => {
+                            refresh_jobs.push((audio_index, PathBuf::from(&path)));
+                            tag_rereads += 1;
+                        }
+                        IndexedAudioUpdate::BackfillIdentity => {
+                            backfill_audio_identity(audio_item, &metadata, Path::new(&path));
+                            skipped_tag_reads += 1;
+                            index_changed = true;
+                        }
+                        IndexedAudioUpdate::Skip => {
+                            skipped_tag_reads += 1;
+                        }
+                    }
                 }
-                Ok(None) => false,
+                Ok(None) => {
+                    if audio_json_is_valid(audio_item) {
+                        set_audio_json_valid(audio_item, false);
+                        invalidated += 1;
+                        index_changed = true;
+                    }
+                }
                 Err(error) => {
                     audio_probe_error = Some(error);
-                    retained_index += 1;
-                    true
+                    break;
                 }
             }
-        });
+        }
         if let Some(error) = audio_probe_error {
             return Err(error.into());
-        }
-        let removed_count = previous_audio_count - audios.len();
-        if removed_count > 0 {
-            checked += removed_count as u64;
-            index_changed = true;
         }
 
         checked += (audios.len() - refresh_jobs.len()) as u64;
@@ -2470,9 +2730,24 @@ pub fn update_index(
         }
     }
 
+    let revived_moves = drop_invalid_duplicates_by_media_id(folders);
+    if revived_moves > 0 {
+        revived += revived_moves as u64;
+        index_changed = true;
+    }
+
     if index_changed || !sqlite_snapshot_current {
         library_db::write_index_snapshot(&index_dir, &index)?;
     }
+    log::info!(
+        target: "library",
+        "[perf] index update skipped={} reread={} invalidated={} revived={} changed={}",
+        skipped_tag_reads,
+        tag_rereads,
+        invalidated,
+        revived,
+        index_changed,
+    );
 
     let _ = sink.add(IndexActionState {
         progress: 1.0,

@@ -1,11 +1,11 @@
 use std::fs;
 use std::path::Path;
 
-use ::symphonia::core::meta::{MetadataContainer, RawValue, StandardTag, Tag as SymphoniaTag};
+use symphonia::core::meta::{MetadataContainer, RawValue, StandardTag, Tag as SymphoniaTag};
 
 use super::{join_deduped, optional_nonempty, parse_alternative_number};
 
-use ::symphonia::{
+use symphonia::{
     core::{
         codecs::CodecParameters,
         formats::{probe::Hint, Attachment, FormatOptions, TrackType},
@@ -34,15 +34,15 @@ pub(super) struct SymphoniaMetadata {
 }
 
 #[derive(Default)]
-pub(super) struct SymphoniaTagCollection {
-    pub(super) title: Option<String>,
-    pub(super) artist: Option<String>,
-    pub(super) album: Option<String>,
-    pub(super) album_artist: Option<String>,
-    pub(super) track_number: Option<u32>,
-    pub(super) disc_number: Option<u32>,
-    pub(super) items: Vec<(String, String)>,
-    pub(super) picture: Option<Vec<u8>>,
+pub struct SymphoniaTagCollection {
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub album_artist: Option<String>,
+    pub track_number: Option<u32>,
+    pub disc_number: Option<u32>,
+    pub items: Vec<(String, String)>,
+    pub picture: Option<Vec<u8>>,
 }
 
 fn symphonia_raw_value(value: &RawValue) -> Option<String> {

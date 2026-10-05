@@ -17,10 +17,7 @@ pub struct AudioExtraMetadata {
     pub replaygain_album_peak: Option<String>,
 }
 
-pub(super) fn should_show_recording_date(
-    recording_date: Option<&str>,
-    year: Option<&str>,
-) -> bool {
+pub(super) fn should_show_recording_date(recording_date: Option<&str>, year: Option<&str>) -> bool {
     match (recording_date, year) {
         (Some(date), Some(year)) => date.trim() != year.trim(),
         (Some(_), None) => true,

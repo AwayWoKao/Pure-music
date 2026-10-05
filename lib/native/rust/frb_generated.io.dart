@@ -7,6 +7,7 @@ import 'api/amll_ttml.dart';
 import 'api/color_extraction.dart';
 import 'api/installed_font.dart';
 import 'api/library_db.dart';
+import 'api/library_db/play_counts.dart';
 import 'api/logger.dart';
 import 'api/ne.dart';
 import 'api/smart_sort.dart';
@@ -15,6 +16,9 @@ import 'api/smtc_flutter.dart';
 import 'api/system_theme.dart';
 import 'api/system_volume.dart';
 import 'api/tag_reader.dart';
+import 'api/tag_reader/extra_metadata.dart';
+import 'api/tag_reader/index_state.dart';
+import 'api/tag_reader/symphonia.dart';
 import 'api/utils.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -237,6 +241,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SMTCState dco_decode_smtc_state(dynamic raw);
+
+  @protected
+  SymphoniaTagCollection dco_decode_symphonia_tag_collection(dynamic raw);
 
   @protected
   SystemTheme dco_decode_system_theme(dynamic raw);
@@ -498,6 +505,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SMTCState sse_decode_smtc_state(SseDeserializer deserializer);
+
+  @protected
+  SymphoniaTagCollection sse_decode_symphonia_tag_collection(
+    SseDeserializer deserializer,
+  );
 
   @protected
   SystemTheme sse_decode_system_theme(SseDeserializer deserializer);
@@ -822,6 +834,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_smtc_state(SMTCState self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_symphonia_tag_collection(
+    SymphoniaTagCollection self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_system_theme(SystemTheme self, SseSerializer serializer);

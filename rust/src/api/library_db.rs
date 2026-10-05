@@ -13,12 +13,9 @@ use flutter_rust_bridge::frb;
 use md5::{Digest, Md5};
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 
-
-
-mod play_counts;
+pub mod play_counts;
 pub use play_counts::{
-    export_play_counts, get_play_count, get_top_played, import_play_counts,
-    increment_play_count,
+    export_play_counts, get_play_count, get_top_played, import_play_counts, increment_play_count,
 };
 
 const SMALL_COVER_MAX_DIMENSION: u32 = 128;
@@ -257,6 +254,10 @@ fn stable_file_id(path: &Path) -> Option<String> {
 #[cfg(not(any(windows, unix)))]
 fn stable_file_id(_path: &Path) -> Option<String> {
     None
+}
+
+pub(crate) fn stable_file_id_for_path(path: &Path) -> Option<String> {
+    stable_file_id(path)
 }
 
 fn normalize_identity_part(value: &str) -> String {
@@ -668,6 +669,14 @@ fn init_schema(conn: &Connection) -> Result<()> {
     if !metadata_key_col {
         conn.execute_batch("ALTER TABLE audios ADD COLUMN metadata_key TEXT;")?;
     }
+    let file_size_col = conn.prepare("SELECT file_size FROM audios LIMIT 1").is_ok();
+    if !file_size_col {
+        conn.execute_batch("ALTER TABLE audios ADD COLUMN file_size INTEGER NOT NULL DEFAULT 0;")?;
+    }
+    let valid_col = conn.prepare("SELECT valid FROM audios LIMIT 1").is_ok();
+    if !valid_col {
+        conn.execute_batch("ALTER TABLE audios ADD COLUMN valid INTEGER NOT NULL DEFAULT 1;")?;
+    }
     let cover_last_accessed_col = conn
         .prepare("SELECT last_accessed FROM cover_thumbnails LIMIT 1")
         .is_ok();
@@ -679,6 +688,7 @@ fn init_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_audios_media_id ON audios(media_id);
          CREATE INDEX IF NOT EXISTS idx_audios_metadata_key ON audios(metadata_key);
+         CREATE INDEX IF NOT EXISTS idx_audios_valid ON audios(valid);
          DROP INDEX IF EXISTS idx_audios_folder_path;",
     )?;
     let identity_backfill: Option<String> = conn
@@ -963,6 +973,8 @@ struct ParsedAudioEntry {
     modified: u64,
     created: u64,
     by: Option<String>,
+    file_size: u64,
+    valid: bool,
 }
 
 struct ParsedFolder {
@@ -998,10 +1010,25 @@ fn parse_index_folders(folders: &[serde_json::Value]) -> Result<Vec<ParsedFolder
             parsed_audios.push(ParsedAudioEntry {
                 path: path.to_string(),
                 path_key: path_lookup_key(path),
-                title: audio.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                artist: audio.get("artist").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                album: audio.get("album").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                album_artist: audio.get("album_artist").and_then(|v| v.as_str()).map(String::from),
+                title: audio
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                artist: audio
+                    .get("artist")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                album: audio
+                    .get("album")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                album_artist: audio
+                    .get("album_artist")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
                 track: audio.get("track").and_then(|v| v.as_u64()).unwrap_or(0),
                 disc: audio.get("disc").and_then(|v| v.as_u64()).unwrap_or(0),
                 duration: audio.get("duration").and_then(|v| v.as_u64()).unwrap_or(0),
@@ -1010,6 +1037,8 @@ fn parse_index_folders(folders: &[serde_json::Value]) -> Result<Vec<ParsedFolder
                 modified: audio.get("modified").and_then(|v| v.as_u64()).unwrap_or(0),
                 created: audio.get("created").and_then(|v| v.as_u64()).unwrap_or(0),
                 by: audio.get("by").and_then(|v| v.as_str()).map(String::from),
+                file_size: audio.get("size").and_then(|v| v.as_u64()).unwrap_or(0),
+                valid: audio.get("valid").and_then(|v| v.as_bool()).unwrap_or(true),
             });
         }
         result.push(ParsedFolder {
@@ -1031,7 +1060,8 @@ struct StoredAudioStats {
 }
 
 fn load_stored_audio_stats(tx: &Transaction) -> Result<Vec<StoredAudioStats>> {
-    let mut stmt = tx.prepare("SELECT path, media_id, metadata_key, play_count, modified FROM audios")?;
+    let mut stmt =
+        tx.prepare("SELECT path, media_id, metadata_key, play_count, modified FROM audios")?;
     let rows = stmt.query_map([], |row| {
         Ok(StoredAudioStats {
             path: row.get(0)?,
@@ -1193,8 +1223,8 @@ fn write_index_value_to_sqlite(index_dir: &Path, index: &serde_json::Value) -> R
                 OR folders.latest IS NOT excluded.latest",
         )?;
         let mut audio_stmt = tx.prepare(
-            "INSERT INTO audios(path, folder_path, title, artist, album, album_artist, track, disc, duration, bitrate, sample_rate, modified, created, by, play_count, media_id, metadata_key)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+            "INSERT INTO audios(path, folder_path, title, artist, album, album_artist, track, disc, duration, bitrate, sample_rate, modified, created, by, play_count, media_id, metadata_key, file_size, valid)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
              ON CONFLICT(path) DO UPDATE SET
                folder_path = excluded.folder_path,
                title = excluded.title,
@@ -1211,7 +1241,9 @@ fn write_index_value_to_sqlite(index_dir: &Path, index: &serde_json::Value) -> R
                by = excluded.by,
                play_count = excluded.play_count,
                media_id = excluded.media_id,
-               metadata_key = excluded.metadata_key
+               metadata_key = excluded.metadata_key,
+               file_size = excluded.file_size,
+               valid = excluded.valid
              WHERE audios.folder_path IS NOT excluded.folder_path
                 OR audios.title IS NOT excluded.title
                 OR audios.artist IS NOT excluded.artist
@@ -1227,12 +1259,17 @@ fn write_index_value_to_sqlite(index_dir: &Path, index: &serde_json::Value) -> R
                 OR audios.by IS NOT excluded.by
                 OR audios.play_count IS NOT excluded.play_count
                 OR audios.media_id IS NOT excluded.media_id
-                OR audios.metadata_key IS NOT excluded.metadata_key",
+                OR audios.metadata_key IS NOT excluded.metadata_key
+                OR audios.file_size IS NOT excluded.file_size
+                OR audios.valid IS NOT excluded.valid",
         )?;
 
         for folder in &parsed_folders {
-            folder_changes +=
-                folder_stmt.execute(params![folder.path, folder.modified as i64, folder.latest as i64])?;
+            folder_changes += folder_stmt.execute(params![
+                folder.path,
+                folder.modified as i64,
+                folder.latest as i64
+            ])?;
 
             for audio in &folder.audios {
                 let path_key = &audio.path_key;
@@ -1278,6 +1315,8 @@ fn write_index_value_to_sqlite(index_dir: &Path, index: &serde_json::Value) -> R
                     play_count,
                     identity.media_id,
                     identity.metadata_key,
+                    audio.file_size as i64,
+                    if audio.valid { 1 } else { 0 },
                 ])?;
             }
         }
@@ -1370,7 +1409,7 @@ pub fn read_index_from_sqlite(index_path: String) -> Result<Vec<IndexFolder>> {
     {
         let mut stmt = conn.prepare(
             "SELECT folder_path, title, artist, album, album_artist, track, disc, duration, bitrate, sample_rate, path, modified, created, by, play_count
-             FROM audios ORDER BY folder_path, path",
+             FROM audios WHERE valid != 0 ORDER BY folder_path, path",
         )?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
@@ -2027,6 +2066,72 @@ mod tests {
             .unwrap(),
             0
         );
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn invalid_audios_stay_in_sqlite_but_are_hidden_from_library_read() {
+        let base = test_dir("soft_invalid_hidden");
+        let missing = base.join("gone.flac");
+        let present = base.join("keep.flac");
+        std::fs::write(&present, [1, 2, 3, 4]).unwrap();
+        let mut missing_audio = test_audio(&missing);
+        missing_audio["valid"] = serde_json::json!(false);
+        missing_audio["size"] = serde_json::json!(4);
+        let mut present_audio = test_audio(&present);
+        present_audio["valid"] = serde_json::json!(true);
+        present_audio["size"] = serde_json::json!(4);
+        sync_test_index(
+            &base,
+            &test_index(&base, vec![missing_audio, present_audio]),
+        );
+
+        increment_play_count(
+            base.to_string_lossy().to_string(),
+            missing.to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        let folders = read_index_from_sqlite(base.to_string_lossy().to_string()).unwrap();
+        assert_eq!(folders.len(), 1);
+        assert_eq!(folders[0].audios.len(), 1);
+        assert_eq!(folders[0].audios[0].path, present.to_string_lossy());
+
+        let conn = open_connection(&base).unwrap();
+        let stored: i64 = conn
+            .query_row("SELECT COUNT(*) FROM audios", [], |row| row.get(0))
+            .unwrap();
+        let hidden_count: i64 = conn
+            .query_row(
+                "SELECT play_count FROM audios WHERE path = ?1",
+                [missing.to_string_lossy().to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        drop(conn);
+        assert_eq!(stored, 2);
+        assert_eq!(hidden_count, 1);
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn file_size_roundtrips_through_sqlite() {
+        let base = test_dir("file_size_roundtrip");
+        let path = base.join("track.flac");
+        std::fs::write(&path, [1, 2, 3, 4, 5]).unwrap();
+        let mut audio = test_audio(&path);
+        audio["size"] = serde_json::json!(5);
+        sync_test_index(&base, &test_index(&base, vec![audio]));
+        let conn = open_connection(&base).unwrap();
+        let size: i64 = conn
+            .query_row(
+                "SELECT file_size FROM audios WHERE path = ?1",
+                [path.to_string_lossy().to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        drop(conn);
+        assert_eq!(size, 5);
         std::fs::remove_dir_all(base).unwrap();
     }
 }

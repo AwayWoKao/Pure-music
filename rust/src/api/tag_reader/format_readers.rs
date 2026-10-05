@@ -31,6 +31,9 @@ pub(super) fn read_by_dsf(path: &Path, modified: u64, created: u64) -> Option<Au
         modified,
         created,
         by: Some("DSF".to_string()),
+        size: 0,
+        valid: true,
+        media_id: None,
     })
 }
 
@@ -50,6 +53,9 @@ pub(super) fn read_by_midi(path: &Path, modified: u64, created: u64) -> Option<A
         modified,
         created,
         by: Some("midly".to_string()),
+        size: 0,
+        valid: true,
+        media_id: None,
     })
 }
 
@@ -69,6 +75,9 @@ pub(super) fn read_by_dff(path: &Path, modified: u64, created: u64) -> Option<Au
         modified,
         created,
         by: Some("DFF".to_string()),
+        size: 0,
+        valid: true,
+        media_id: None,
     })
 }
 
@@ -90,6 +99,9 @@ pub(super) fn read_by_symphonia(path: &Path, modified: u64, created: u64) -> Opt
         modified,
         created,
         by: Some("Symphonia".to_string()),
+        size: 0,
+        valid: true,
+        media_id: None,
     })
 }
 
@@ -122,6 +134,9 @@ pub(super) fn read_by_id3(path: &Path, modified: u64, created: u64) -> Option<Au
         modified,
         created,
         by: Some("ID3".to_string()),
+        size: 0,
+        valid: true,
+        media_id: None,
     })
 }
 
@@ -154,6 +169,9 @@ pub(super) fn read_by_asf(path: &Path, modified: u64, created: u64) -> Option<Au
         modified,
         created,
         by: Some("ratag".to_string()),
+        size: 0,
+        valid: true,
+        media_id: None,
     })
 }
 
