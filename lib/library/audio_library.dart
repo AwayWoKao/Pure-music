@@ -15,6 +15,7 @@ import 'package:pure_music/core/page_sort.dart';
 import 'package:pure_music/native/rust/api/library_db.dart' as library_db;
 import 'package:pure_music/library/library_page_order_cache.dart';
 import 'package:pure_music/core/utils.dart';
+import 'package:pure_music/core/search_action_state.dart';
 import 'package:pure_music/play_service/play_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
@@ -1714,6 +1715,7 @@ class AudioLibrary {
       audio.albumArtist ?? '',
       AppSettings.instance.artistSplitRegex,
     );
+    audio._invalidateSearchCache();
     _buildCollections();
     libraryVersion.value++;
     artistPageVersion.value++;
@@ -2529,6 +2531,9 @@ class Audio {
   /// 播放次数（从 library.sqlite 读取/写入）
   int playCount;
 
+  String? _searchNorm;
+  String? _searchPinyin;
+
   /// 缓存 ImageProvider 实例，避免每次创建新实例导致 Flutter ImageCache 失效
   /// 使用 WeakReference 让 CoverImageCache 的 LRU 驱逐后能被 GC 回收
   WeakReference<ImageProvider>? _coverImage;
@@ -2631,7 +2636,7 @@ class Audio {
       pool.artistList(pooledAlbumArtist ?? ''),
       disc: disc,
       playCount: playCount,
-    );
+    ).._primeSearchCache(pool);
   }
 
   Audio._withArtistLists(
@@ -2656,6 +2661,23 @@ class Audio {
   String get _pathLookupKey =>
       _pathLookupKeyCache ??= _audioPathLookupKey(path);
 
+  void _primeSearchCache(_AudioLoadPool pool) {
+    _searchNorm = pool.text(normalizedSearchQuery(title).toLowerCase());
+    _searchPinyin = pool.text(title.getPinyinInitials().toLowerCase());
+  }
+
+  void _invalidateSearchCache() {
+    _searchNorm = null;
+    _searchPinyin = null;
+  }
+
+  bool matchesSearchQuery(String queryInLowerCase) {
+    final norm = _searchNorm ??= normalizedSearchQuery(title).toLowerCase();
+    if (norm.contains(queryInLowerCase)) return true;
+    final pinyin = _searchPinyin ??= title.getPinyinInitials().toLowerCase();
+    return pinyin.contains(queryInLowerCase);
+  }
+
   void _replaceMetadataFrom(Audio other) {
     if (modified != other.modified) {
       evictCoverCacheIfPresent();
@@ -2667,7 +2689,12 @@ class Audio {
       _folderCoverResolution = null;
       _pathLookupKeyCache = other._pathLookupKeyCache;
     }
+    final titleChanged = title != other.title;
     title = other.title;
+    if (titleChanged) {
+      _searchNorm = other._searchNorm;
+      _searchPinyin = other._searchPinyin;
+    }
     artist = other.artist;
     album = other.album;
     albumArtist = other.albumArtist;

@@ -30,7 +30,7 @@ class UnionSearchResult {
     if (scope == null || scope == SearchScope.music) {
       for (int i = 0; i < library.audioCollection.length; i++) {
         final audio = library.audioCollection[i];
-        if (_matchesQuery(audio.title, queryInLowerCase)) {
+        if (audio.matchesSearchQuery(queryInLowerCase)) {
           result.audios.add(audio);
         }
       }
