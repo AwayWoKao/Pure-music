@@ -50,9 +50,7 @@ void main() {
       if (entity is! File || !entity.path.endsWith('.dart')) continue;
       final relative = entity.path.replaceAll('\\', '/');
       if (relative.contains('frb_generated')) continue;
-      if (relative.endsWith('lib/native/rust/api/kg.dart') ||
-          relative.endsWith('lib/native/rust/api/qq.dart') ||
-          relative.endsWith('lib/core/log/app_log.dart')) {
+      if (relative.endsWith('lib/core/log/app_log.dart')) {
         continue;
       }
       final module = _moduleFor(relative);

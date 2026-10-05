@@ -187,36 +187,50 @@ function Update-VersionJson([string]$version) {
     $portableSha = Get-FileSha256IfPresent $portablePath
     $installerSize = if (Test-Path -LiteralPath $installerPath -PathType Leaf) { (Get-Item -LiteralPath $installerPath).Length } else { $null }
     $portableSize = if (Test-Path -LiteralPath $portablePath -PathType Leaf) { (Get-Item -LiteralPath $portablePath).Length } else { $null }
+    $installerChecksumPath = Join-Path $outputDir "$installerName.sha256"
+    $portableChecksumPath = Join-Path $outputDir "$portableName.sha256"
+    $installerChecksumUrl = if (Test-Path -LiteralPath $installerChecksumPath -PathType Leaf) { "$installerUrl.sha256" } else { $null }
+    $portableChecksumUrl = if (Test-Path -LiteralPath $portableChecksumPath -PathType Leaf) { "$portableUrl.sha256" } else { $null }
+    $giteeInstallerChecksumUrl = if ($null -eq $installerChecksumUrl) { $null } else { "$giteeInstallerUrl.sha256" }
+    $giteePortableChecksumUrl = if ($null -eq $portableChecksumUrl) { $null } else { "$giteePortableUrl.sha256" }
 
     $shaInstallerJson = if ($null -eq $installerSha) { 'null' } else { '"' + $installerSha + '"' }
     $shaPortableJson = if ($null -eq $portableSha) { 'null' } else { '"' + $portableSha + '"' }
     $installerSizeJson = if ($null -eq $installerSize) { 'null' } else { [string]$installerSize }
     $portableSizeJson = if ($null -eq $portableSize) { 'null' } else { [string]$portableSize }
+    $installerChecksumJson = if ($null -eq $installerChecksumUrl) { 'null' } else { '"' + $installerChecksumUrl + '"' }
+    $portableChecksumJson = if ($null -eq $portableChecksumUrl) { 'null' } else { '"' + $portableChecksumUrl + '"' }
+    $giteeInstallerChecksumJson = if ($null -eq $giteeInstallerChecksumUrl) { 'null' } else { '"' + $giteeInstallerChecksumUrl + '"' }
+    $giteePortableChecksumJson = if ($null -eq $giteePortableChecksumUrl) { 'null' } else { '"' + $giteePortableChecksumUrl + '"' }
     $sizeJson = if ($null -eq $installerSize) { $portableSizeJson } else { [string]$installerSize }
+    $githubReleaseUrl = "https://github.com/qingyueyin/Pure-music/releases/tag/v$version"
 
     $json = [System.Text.StringBuilder]::new()
     [void]$json.AppendLine("{")
     [void]$json.AppendLine("  ""tag_name"": ""v$version"",")
     [void]$json.AppendLine("  ""name"": ""v$version"",")
     [void]$json.AppendLine("  ""body"": ""## 更新内容\n\n请前往 GitHub Releases 查看完整更新日志"",")
-    [void]$json.AppendLine("  ""html_url"": ""https://github.com/qingyueyin/Pure-music/releases"",")
+    [void]$json.AppendLine("  ""html_url"": ""$githubReleaseUrl"",")
     [void]$json.AppendLine("  ""gitee_release_url"": ""$giteeReleaseUrl"",")
     [void]$json.AppendLine("  ""installer_url"": ""$installerUrl"",")
     [void]$json.AppendLine("  ""gitee_installer_url"": ""$giteeInstallerUrl"",")
     [void]$json.AppendLine("  ""installer_sha256"": $shaInstallerJson,")
-    [void]$json.AppendLine("  ""installer_checksum_url"": null,")
-    [void]$json.AppendLine("  ""gitee_installer_checksum_url"": null,")
+    [void]$json.AppendLine("  ""installer_checksum_url"": $installerChecksumJson,")
+    [void]$json.AppendLine("  ""gitee_installer_checksum_url"": $giteeInstallerChecksumJson,")
     [void]$json.AppendLine("  ""installer_size"": $installerSizeJson,")
     [void]$json.AppendLine("  ""portable_url"": ""$portableUrl"",")
     [void]$json.AppendLine("  ""gitee_portable_url"": ""$giteePortableUrl"",")
     [void]$json.AppendLine("  ""portable_sha256"": $shaPortableJson,")
-    [void]$json.AppendLine("  ""portable_checksum_url"": null,")
-    [void]$json.AppendLine("  ""gitee_portable_checksum_url"": null,")
+    [void]$json.AppendLine("  ""portable_checksum_url"": $portableChecksumJson,")
+    [void]$json.AppendLine("  ""gitee_portable_checksum_url"": $giteePortableChecksumJson,")
     [void]$json.AppendLine("  ""portable_size"": $portableSizeJson,")
     [void]$json.AppendLine("  ""size"": $sizeJson")
     [void]$json.AppendLine("}")
     Write-Utf8NoBom $versionJsonPath $json.ToString()
-    Write-Host "Generated update/version.json: tag=v$version" -ForegroundColor Gray
+    Write-Host "Generated update/version.json: tag=v$version installerSha=$([bool]$installerSha) portableSha=$([bool]$portableSha)" -ForegroundColor Gray
+    if ($null -eq $installerSha -or $null -eq $portableSha) {
+        Write-Host "In-app update needs sha256 for both installer and portable zip. Upload the .sha256 files with the packages." -ForegroundColor Yellow
+    }
 }
 
 function New-StagingContainer() {
@@ -533,6 +547,16 @@ function New-PortablePackage([string]$version, [bool]$buildFirst, [bool]$makeZip
 
         Invoke-Step "validate portable package" {
             Test-KeyFiles $finalAppDir
+            foreach ($fileName in @(
+                "PORTABLE_README.txt",
+                "upgrade_from_previous.ps1",
+                "apply_portable_update.ps1"
+            )) {
+                $supportFile = Join-Path $artifactRoot ".update\$fileName"
+                if (-not (Test-Path -LiteralPath $supportFile -PathType Leaf)) {
+                    throw "Portable update file missing from package: $supportFile"
+                }
+            }
         }
 
         if ($makeZip) {

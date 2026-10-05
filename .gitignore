@@ -72,6 +72,7 @@ CMakeCache.txt
 nul
 
 # Temporary files
+_tmp_*.py
 *.swp
 *.swo
 *~
