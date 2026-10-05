@@ -59,7 +59,7 @@ void main() {
     expect(layout.computeMaxScrollOffset(0), 0);
   });
 
-  testWidgets('rail movement fits all columns, then animates the row change', (
+  testWidgets('rail movement does not bounce tiles to another row', (
     tester,
   ) async {
     final key = GlobalKey<_GridHarnessState>();
@@ -69,15 +69,6 @@ void main() {
     key.currentState!.setRail(160, 240);
     await tester.pump();
     expect(tester.getTopLeft(item).dy, closeTo(top, 0.01));
-    expect(tester.getBottomRight(item).dx, lessThanOrEqualTo(620.01));
-    key.currentState!.setRail(240, 240);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 140));
-    final middle = tester.getTopLeft(item).dy;
-    expect(middle, greaterThan(top));
-    expect(middle, lessThan(top + 68));
-    await tester.pumpAndSettle();
-    expect(tester.getTopLeft(item).dy, closeTo(top + 68, 0.01));
     expect(tester.takeException(), isNull);
   });
 
@@ -140,12 +131,14 @@ class _GridHarnessState extends State<_GridHarness> {
       child: SizedBox(
         width: 780 - rail,
         height: 300,
-        child: SidebarGridTransition(
+        child: SidebarFrozenViewport(
+          child: SidebarGridTransition(
           controller: controller,
           gridDelegate: _delegate,
           itemCount: 200,
           itemBuilder: (context, index) =>
               SizedBox(key: ValueKey('tile-$index'), child: Text('$index')),
+        ),
         ),
       ),
     ),

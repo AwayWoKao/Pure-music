@@ -1,6 +1,6 @@
 // ignore_for_file: camel_case_types
 
-import 'dart:ui';
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:pure_music/core/design_tokens.dart';
@@ -11,6 +11,7 @@ import 'package:pure_music/component/frosted_chrome.dart';
 import 'package:pure_music/component/motion.dart';
 import 'package:pure_music/component/responsive_builder.dart';
 import 'package:pure_music/core/paths.dart' as app_paths;
+import 'package:pure_music/core/sidebar_perf_auto.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_symbols_icons/symbols.dart';
@@ -38,19 +39,12 @@ class SideNav extends StatefulWidget {
     super.key,
     this.navigationShell,
     this.onExpandedChanged,
-    this.expansion,
   });
 
   final StatefulNavigationShell? navigationShell;
   final ValueChanged<bool>? onExpandedChanged;
-
-  /// When set, width is owned by the parent and this value only drives labels.
-  final double? expansion;
   static const double collapsedWidth = 80.0;
   static const double expandedWidth = 240.0;
-
-  static double widthFor(double expansion) =>
-      lerpDouble(collapsedWidth, expandedWidth, expansion.clamp(0.0, 1.0))!;
 
   @override
   State<SideNav> createState() => _SideNavState();
@@ -58,9 +52,24 @@ class SideNav extends StatefulWidget {
 
 class _SideNavState extends State<SideNav> {
   final sidebarExpanded = ValueNotifier(AppPreference.instance.sidebarExpanded);
-  static const double _collapsedWidth = SideNav.collapsedWidth;
+  late final VoidCallback _toggleBound;
+  Timer? _saveSidebarTimer;
   static const double _expandedWidth = SideNav.expandedWidth;
   static const double _itemHeight = 54.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _toggleBound = _toggleSidebar;
+    SidebarPerfAuto.bindToggle(_toggleBound);
+  }
+
+  @override
+  void dispose() {
+    _saveSidebarTimer?.cancel();
+    SidebarPerfAuto.unbindToggle();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -103,7 +112,6 @@ class _SideNavState extends State<SideNav> {
       builder: (context, expanded, _) => _SmoothLargeSideNav(
         isDrawer: isDrawer,
         expanded: isDrawer || expanded,
-        expansion: widget.expansion,
         expandedWidth: expandedWidth,
         colorScheme: scheme,
         selectedIndex: selectedIndex,
@@ -129,7 +137,10 @@ class _SideNavState extends State<SideNav> {
     sidebarExpanded.value = newVal;
     widget.onExpandedChanged?.call(newVal);
     AppPreference.instance.sidebarExpanded = newVal;
-    AppPreference.instance.save();
+    _saveSidebarTimer?.cancel();
+    _saveSidebarTimer = Timer(MotionDuration.sidebar, () {
+      AppPreference.instance.save();
+    });
   }
 
   void _onDestinationSelected(
@@ -172,7 +183,6 @@ class _SmoothLargeSideNav extends StatelessWidget {
   const _SmoothLargeSideNav({
     required this.isDrawer,
     required this.expanded,
-    this.expansion,
     required this.expandedWidth,
     required this.colorScheme,
     required this.selectedIndex,
@@ -183,7 +193,6 @@ class _SmoothLargeSideNav extends StatelessWidget {
 
   final bool isDrawer;
   final bool expanded;
-  final double? expansion;
   final double expandedWidth;
   final ColorScheme colorScheme;
   final int? selectedIndex;
@@ -191,47 +200,35 @@ class _SmoothLargeSideNav extends StatelessWidget {
   final void Function(int) onSelect;
   final void Function(int) onReturnHome;
 
-  static const double _collapsedWidth = _SideNavState._collapsedWidth;
   static const double _itemHeight = _SideNavState._itemHeight;
 
   @override
   Widget build(BuildContext context) {
-    final expansion = this.expansion;
-    if (expansion != null) {
-      return RepaintBoundary(child: _buildPanel(context, expansion));
-    }
-    final reduceMotion = MediaQuery.disableAnimationsOf(context);
-    return RepaintBoundary(
-      child: TweenAnimationBuilder<double>(
-        duration: reduceMotion ? Duration.zero : MotionDuration.sidebar,
-        curve: MotionCurve.sidebar,
-        tween: Tween<double>(end: expanded ? 1.0 : 0.0),
-        builder: (context, t, _) => _buildPanel(context, t),
+    return RepaintBoundary(child: _buildPanel(context));
+  }
+
+  Widget _buildPanel(BuildContext context) {
+    final innerWidth = expandedWidth;
+    final itemWidth = math.max(0.0, innerWidth - 16.0);
+    final panel = Padding(
+      padding: const EdgeInsets.all(8.0),
+      child: _panelChrome(context, itemWidth),
+    );
+    return SizedBox(
+      width: double.infinity,
+      height: double.infinity,
+      child: ClipRect(
+        child: OverflowBox(
+          alignment: Alignment.centerLeft,
+          minWidth: innerWidth,
+          maxWidth: innerWidth,
+          child: panel,
+        ),
       ),
     );
   }
 
-  Widget _buildPanel(BuildContext context, double t) {
-    final fillParent = expansion != null;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final visibleWidth = fillParent
-            ? constraints.maxWidth
-            : SideNav.widthFor(t).clamp(_collapsedWidth, expandedWidth);
-        final itemWidth = math.max(0.0, visibleWidth - 16.0);
-        return SizedBox(
-          width: fillParent ? double.infinity : visibleWidth,
-          height: double.infinity,
-          child: Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: _panelChrome(context, itemWidth, t),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _panelChrome(BuildContext context, double itemWidth, double t) {
+  Widget _panelChrome(BuildContext context, double itemWidth) {
     return ListenableBuilder(
       listenable: AppSettings.backgroundNotifier,
       builder: (context, _) => FrostedChrome(
@@ -241,17 +238,17 @@ class _SmoothLargeSideNav extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const SizedBox(height: 12),
-            _toggleItem(itemWidth, t),
+            _toggleItem(itemWidth),
             const SizedBox(height: 8),
-            Expanded(child: _destinationList(context, itemWidth, t)),
+            Expanded(child: _destinationList(context, itemWidth)),
           ],
         ),
       ),
     );
   }
 
-  Widget _toggleItem(double itemWidth, double t) {
-    final expandedVisual = t >= 0.5;
+  Widget _toggleItem(double itemWidth) {
+    final expandedVisual = expanded;
     return _NavItem(
       height: _itemHeight,
       width: itemWidth,
@@ -265,13 +262,13 @@ class _SmoothLargeSideNav extends StatelessWidget {
           : expandedVisual
           ? '收起'
           : '展开',
-      expandedT: t,
+      showLabel: expanded,
       selected: false,
       onTap: onToggle,
     );
   }
 
-  Widget _destinationList(BuildContext context, double itemWidth, double t) {
+  Widget _destinationList(BuildContext context, double itemWidth) {
     return ListView(
       padding: const EdgeInsets.symmetric(vertical: 6),
       children: [
@@ -284,7 +281,7 @@ class _SmoothLargeSideNav extends StatelessWidget {
               Column(
                 children: [
                   for (var i = 0; i < destinations.length; i++)
-                    _destinationItem(context, itemWidth, t, i),
+                    _destinationItem(context, itemWidth, i),
                 ],
               ),
             ],
@@ -297,7 +294,6 @@ class _SmoothLargeSideNav extends StatelessWidget {
   Widget _destinationItem(
     BuildContext context,
     double itemWidth,
-    double t,
     int i,
   ) {
     final selected = selectedIndex == i;
@@ -306,7 +302,7 @@ class _SmoothLargeSideNav extends StatelessWidget {
       width: itemWidth,
       icon: destinations[i].icon,
       label: destinations[i].label,
-      expandedT: t,
+      showLabel: expanded,
       selected: selected,
       onTap: () {
         onSelect(i);
@@ -345,7 +341,7 @@ class _NavItem extends StatelessWidget {
     required this.width,
     required this.icon,
     required this.label,
-    required this.expandedT,
+    required this.showLabel,
     required this.selected,
     required this.onTap,
     this.onDoubleTap,
@@ -355,7 +351,7 @@ class _NavItem extends StatelessWidget {
   final double width;
   final IconData icon;
   final String label;
-  final double expandedT;
+  final bool showLabel;
   final bool selected;
   final VoidCallback onTap;
   final VoidCallback? onDoubleTap;
@@ -364,7 +360,7 @@ class _NavItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final fg = selected ? scheme.onSecondaryContainer : scheme.onSurface;
-    final textOpacity = expandedT.clamp(0.0, 1.0);
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
     return Align(
       alignment: Alignment.centerLeft,
       child: SizedBox(
@@ -379,7 +375,7 @@ class _NavItem extends StatelessWidget {
             onDoubleTap: onDoubleTap,
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 4),
-              child: ClipRect(child: _row(fg, textOpacity)),
+              child: ClipRect(child: _row(fg, reduceMotion)),
             ),
           ),
         ),
@@ -387,7 +383,7 @@ class _NavItem extends StatelessWidget {
     );
   }
 
-  Widget _row(Color fg, double textOpacity) {
+  Widget _row(Color fg, bool reduceMotion) {
     const iconSize = 24.0;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -397,8 +393,10 @@ class _NavItem extends StatelessWidget {
           width: iconSize,
           child: Icon(icon, size: iconSize, color: fg.withValues(alpha: 0.90)),
         ),
-        Opacity(
-          opacity: textOpacity,
+        AnimatedOpacity(
+          duration: reduceMotion ? Duration.zero : MotionDuration.sidebarLabel,
+          curve: MotionCurve.sidebar,
+          opacity: showLabel ? 1.0 : 0.0,
           child: Padding(
             padding: const EdgeInsets.only(left: 8.0),
             child: Text(

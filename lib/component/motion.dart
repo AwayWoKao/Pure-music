@@ -194,10 +194,25 @@ class SidebarMotionScope extends InheritedWidget {
     return context.dependOnInheritedWidgetOfExactType<SidebarMotionScope>();
   }
 
+  /// 只判断侧栏壳在不在，不订阅展开/收起动画。
+  static bool hasScope(BuildContext context) {
+    return context.getInheritedWidgetOfExactType<SidebarMotionScope>() != null;
+  }
+
   /// 形态断点用窗口宽，有侧栏时不跟开合后的正文宽走。
   static double layoutWidthOf(BuildContext context, double localWidth) {
-    if (maybeOf(context) == null) return localWidth;
+    if (!hasScope(context)) return localWidth;
     return MediaQuery.sizeOf(context).width;
+  }
+
+  /// 网格列数按窗口减去展开后的侧栏算，展开/收起不改列数。
+  static const double expandedRailReserve = 240.0;
+
+  static double columnLayoutWidthOf(BuildContext context) {
+    return math.max(
+      0.0,
+      MediaQuery.sizeOf(context).width - expandedRailReserve,
+    );
   }
 
   @override
@@ -208,7 +223,7 @@ class SidebarMotionScope extends InheritedWidget {
   }
 }
 
-class SidebarFrozenViewport extends StatefulWidget {
+class SidebarFrozenViewport extends StatelessWidget {
   const SidebarFrozenViewport({
     super.key,
     required this.child,
@@ -219,75 +234,11 @@ class SidebarFrozenViewport extends StatefulWidget {
   final bool enabled;
 
   @override
-  State<SidebarFrozenViewport> createState() => _SidebarFrozenViewportState();
-}
-
-class _SidebarFrozenViewportState extends State<SidebarFrozenViewport> {
-  double? _lastStableWidth;
-  double? _lastTotalWidth;
-  Widget? _layoutChild;
-  Widget? _cachedViewport;
-  Widget? _cachedChild;
-  double? _cachedWidth;
-  bool _wasFrozen = false;
-
-  Widget _viewportFor(double width, Widget child) {
-    if (_cachedViewport != null &&
-        identical(_cachedChild, child) &&
-        _cachedWidth == width) {
-      return _cachedViewport!;
-    }
-    _cachedChild = child;
-    _cachedWidth = width;
-    _cachedViewport = ClipRect(
-      child: RepaintBoundary(
-        child: OverflowBox(
-          alignment: Alignment.topLeft,
-          minWidth: width,
-          maxWidth: width,
-          child: child,
-        ),
-      ),
-    );
-    return _cachedViewport!;
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final motion = SidebarMotionScope.maybeOf(context);
-    final windowWidth = MediaQuery.sizeOf(context).width;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        final freeze = widget.enabled && (motion?.isAnimating ?? false);
-        if (!freeze) {
-          _lastStableWidth = width;
-          _lastTotalWidth = windowWidth;
-          _layoutChild = widget.child;
-          _wasFrozen = false;
-        } else {
-          if (_lastTotalWidth != null &&
-              (windowWidth - _lastTotalWidth!).abs() > 1.0) {
-            _lastStableWidth = width;
-          }
-          _lastTotalWidth = windowWidth;
-          if (!_wasFrozen) {
-            _layoutChild ??= widget.child;
-            _wasFrozen = true;
-          }
-          // 收起时外壳会一次性拉宽；允许变宽，避免把将要滑入的内容冻在窄宽度。
-          if (_lastStableWidth != null && width > _lastStableWidth! + 1.0) {
-            _lastStableWidth = width;
-          }
-        }
-        final layoutWidth = freeze ? (_lastStableWidth ?? width) : width;
-        return _viewportFor(layoutWidth, _layoutChild ?? widget.child);
-      },
-    );
+    return child;
   }
 }
 
-/// 侧栏宽度连续变化，正文按剩余宽度实时排版。
 class SpringRailScaffold extends StatelessWidget {
   const SpringRailScaffold({
     super.key,
@@ -312,8 +263,11 @@ class SpringRailScaffold extends StatelessWidget {
       builder: (context, constraints) {
         final t = progress.clamp(0.0, 1.0);
         final targetT = (targetProgress ?? progress).clamp(0.0, 1.0);
-        final railWidth = (collapsedWidth + (expandedWidth - collapsedWidth) * t)
-            .clamp(0.0, constraints.maxWidth);
+        final railWidth =
+            (collapsedWidth + (expandedWidth - collapsedWidth) * t).clamp(
+              0.0,
+              constraints.maxWidth,
+            );
         final targetRailWidth =
             (collapsedWidth + (expandedWidth - collapsedWidth) * targetT).clamp(
               0.0,
@@ -462,6 +416,13 @@ class DirectionalTabView extends StatefulWidget {
   final int index;
   final List<Widget> children;
 
+  static bool _suppressNextIndexMotion = false;
+
+  /// 由页面 `push` 引起的分栏切换不再走侧栏短位移，把推入推出交给统一的页面过渡。
+  static void suppressNextIndexMotion() {
+    _suppressNextIndexMotion = true;
+  }
+
   @override
   State<DirectionalTabView> createState() => _DirectionalTabViewState();
 }
@@ -507,6 +468,12 @@ class _DirectionalTabViewState extends State<DirectionalTabView>
   void didUpdateWidget(covariant DirectionalTabView oldWidget) {
     super.didUpdateWidget(oldWidget);
     _syncChannelCount();
+    if (DirectionalTabView._suppressNextIndexMotion) {
+      DirectionalTabView._suppressNextIndexMotion = false;
+      if (oldWidget.index == widget.index) return;
+      _snapToIndex(widget.index);
+      return;
+    }
     if (oldWidget.index == widget.index) return;
     final direction = widget.index > oldWidget.index ? 1.0 : -1.0;
     final requestId = ++_transitionRequestId;
@@ -531,6 +498,17 @@ class _DirectionalTabViewState extends State<DirectionalTabView>
     if (oldWidget.index < _channels.length) {
       final outgoing = _channels[oldWidget.index];
       outgoing.animateTo(offset: -_tabExitDistance * direction, opacity: 0);
+    }
+  }
+
+  void _snapToIndex(int index) {
+    _transitionRequestId++;
+    for (var i = 0; i < _channels.length; i++) {
+      _channels[i].snap(
+        opacity: i == index ? 1 : 0,
+        offset: 0,
+        listMotionReady: i == index,
+      );
     }
   }
 
@@ -656,6 +634,20 @@ class _TabMotionChannel {
       ),
     );
     return [opacityAnimation, offsetAnimation];
+  }
+
+  void snap({
+    required double opacity,
+    required double offset,
+    required bool listMotionReady,
+  }) {
+    this.opacity
+      ..stop()
+      ..value = opacity;
+    this.offset
+      ..stop()
+      ..value = offset;
+    this.listMotionReady.value = listMotionReady;
   }
 
   void dispose() {
