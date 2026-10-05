@@ -177,12 +177,34 @@ class Ttml extends Lyric {
         }
       }
 
+      _assignTransitionAgentsFromFollowingLine(linesWithGaps);
       return Ttml(linesWithGaps, LyricFormat.local, ttml, isDuet);
     } catch (e, stack) {
       if (kDebugMode) {
         print('TTML parse failed: $e\n$stack');
       }
       return null;
+    }
+  }
+
+  static bool _isBlankTransitionLine(TtmlLine line) {
+    return line.words.isEmpty &&
+        line.bgWords.isEmpty &&
+        line.bgText == null &&
+        line.bg == null;
+  }
+
+  static void _assignTransitionAgentsFromFollowingLine(List<TtmlLine> lines) {
+    String? followingAgent;
+    for (var i = lines.length - 1; i >= 0; i--) {
+      final line = lines[i];
+      if (!_isBlankTransitionLine(line)) {
+        if (line.agent != null && line.agent!.isNotEmpty) {
+          followingAgent = line.agent;
+        }
+        continue;
+      }
+      if (followingAgent != null) line.agent = followingAgent;
     }
   }
 

@@ -41,6 +41,27 @@ void main() {
       expect(line.content, '太陽まった');
       expect(line.words.map((w) => w.content), ['太', '陽', 'まっ', 'た']);
     });
+
+    test('blank interludes inherit the following line agent', () {
+      final lyric = Ttml.fromTtmlText(_ttml('''
+<p begin="00:06.000" end="00:08.000" ttm:agent="v1">
+  <span begin="00:06.000" end="00:08.000">Left</span>
+</p>
+<p begin="00:16.000" end="00:18.000" ttm:agent="v2">
+  <span begin="00:16.000" end="00:18.000">Right</span>
+</p>
+'''));
+      expect(lyric, isNotNull);
+      final lines = lyric!.lines.cast<TtmlLine>();
+      expect(lines, hasLength(4));
+      expect(lines[0].words, isEmpty);
+      expect(lines[0].agent, 'v1');
+      expect(lines[1].agent, 'v1');
+      expect(lines[2].words, isEmpty);
+      expect(lines[2].agent, 'v2');
+      expect(lines[3].agent, 'v2');
+    });
+
     test('creates timing for direct background text', () {
       final lyric = Ttml.fromTtmlText(_ttml('''
 <p begin="00:00.000" end="00:03.000">
