@@ -2,21 +2,16 @@ bool canSaveChangedSetting<T>({
   required T current,
   required T next,
   required bool isSaving,
-}) =>
-    !isSaving && current != next;
+}) => !isSaving && current != next;
 
 bool canSaveChangedDoubleSetting({
   required double current,
   required double next,
   required bool isSaving,
   double tolerance = 0.000001,
-}) =>
-    !isSaving && (current - next).abs() > tolerance;
+}) => !isSaving && (current - next).abs() > tolerance;
 
-bool canClearTextValue({
-  required String text,
-  required bool isBusy,
-}) =>
+bool canClearTextValue({required String text, required bool isBusy}) =>
     !isBusy && text.trim().isNotEmpty;
 
 bool canEditTextValue({required bool isBusy}) => !isBusy;
@@ -26,15 +21,13 @@ bool canChangeSetting({required bool isSaving}) => !isSaving;
 bool canResetOptionalSetting<T>({
   required T? current,
   required bool isSaving,
-}) =>
-    !isSaving && current != null;
+}) => !isSaving && current != null;
 
 bool canSaveListSettingChanges({
   required bool isEditing,
   required bool isSaving,
   required bool hasChanges,
-}) =>
-    !isEditing && !isSaving && hasChanges;
+}) => !isEditing && !isSaving && hasChanges;
 
 bool canTogglePendingListItem({required bool isSaving}) => !isSaving;
 
@@ -59,8 +52,9 @@ bool canAddUniqueTextListItem({
   if (isSaving) return false;
   final item = normalizedTextListItem(input);
   if (item.isEmpty) return false;
-  return !existingItems
-      .any((existing) => normalizedTextListItem(existing) == item);
+  return !existingItems.any(
+    (existing) => normalizedTextListItem(existing) == item,
+  );
 }
 
 const defaultArtistSeparators = ['/', '、'];
@@ -146,14 +140,20 @@ int? _normalizedIntSettingNumber(Object? value) {
 const defaultWindowSizeSetting = (width: 1280.0, height: 756.0);
 const minimumWindowSizeSetting = (width: 360.0, height: 240.0);
 
+String encodedWindowSizeSetting(double width, double height) =>
+    '${width.toStringAsFixed(1)},${height.toStringAsFixed(1)}';
+
+String encodedWindowPositionSetting(double x, double y) =>
+    '${x.toStringAsFixed(1)},${y.toStringAsFixed(1)}';
+
 ({double width, double height}) normalizedWindowSizeSetting(Object? value) {
   final parts = switch (value) {
     String() => _normalizedWindowSizeString(value).split(','),
     Iterable() => value.toList(growable: false),
     Map() when value.containsKey('width') && value.containsKey('height') => [
-        value['width'],
-        value['height'],
-      ],
+      value['width'],
+      value['height'],
+    ],
     _ => null,
   };
   if (parts == null || parts.length != 2) return defaultWindowSizeSetting;
@@ -189,6 +189,23 @@ double? _normalizedWindowSizeNumber(Object? value) {
   };
   if (number == null || !number.isFinite) return null;
   return number;
+}
+
+({double x, double y})? normalizedWindowPositionSetting(Object? value) {
+  final parts = switch (value) {
+    String() => value.trim().split(','),
+    Iterable() => value.toList(growable: false),
+    Map() when value.containsKey('x') && value.containsKey('y') => [
+      value['x'],
+      value['y'],
+    ],
+    _ => null,
+  };
+  if (parts == null || parts.length != 2) return null;
+  final x = _normalizedWindowSizeNumber(parts[0]);
+  final y = _normalizedWindowSizeNumber(parts[1]);
+  if (x == null || y == null) return null;
+  return (x: x, y: y);
 }
 
 String? normalizedStringSetting(Object? value) {

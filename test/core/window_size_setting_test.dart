@@ -12,4 +12,27 @@ void main() {
       height: 756.0,
     ));
   });
+
+  test('encoded window size roundtrips through the decoder', () {
+    expect(normalizedWindowSizeSetting(encodedWindowSizeSetting(1440, 900)), (
+      width: 1440.0,
+      height: 900.0,
+    ));
+  });
+
+  test('a comma-only payload restores the default size', () {
+    expect(normalizedWindowSizeSetting(','), defaultWindowSizeSetting);
+  });
+
+  test('window position keeps negatives for a left-side monitor', () {
+    expect(normalizedWindowPositionSetting('-1920.0,80.0'), (
+      x: -1920.0,
+      y: 80.0,
+    ));
+  });
+
+  test('invalid window position is ignored', () {
+    expect(normalizedWindowPositionSetting(','), isNull);
+    expect(normalizedWindowPositionSetting(null), isNull);
+  });
 }

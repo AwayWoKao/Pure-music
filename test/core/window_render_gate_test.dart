@@ -78,7 +78,9 @@ void main() {
     expect(gate.framesEnabled.value, isTrue);
   });
 
-  testWidgets('resumed or inactive lifecycle forces foreground', (tester) async {
+  testWidgets('tray-hidden stays paused across resumed or inactive lifecycle', (
+    tester,
+  ) async {
     final applied = <bool>[];
     final gate = WindowRenderGate(applyFramesEnabled: applied.add);
     addTearDown(gate.detach);
@@ -89,15 +91,12 @@ void main() {
     applied.clear();
 
     gate.didChangeAppLifecycleState(AppLifecycleState.inactive);
-    expect(gate.framesEnabled.value, isTrue);
-    expect(applied, [true]);
+    expect(gate.framesEnabled.value, isFalse);
+    expect(applied, isEmpty);
 
-    gate.setTrayHidden(true);
-    await tester.pump();
-    applied.clear();
     gate.didChangeAppLifecycleState(AppLifecycleState.resumed);
-    expect(gate.framesEnabled.value, isTrue);
-    expect(applied, [true]);
+    expect(gate.framesEnabled.value, isFalse);
+    expect(applied, isEmpty);
   });
 
   testWidgets('hidden lifecycle does not pause a visible window', (
