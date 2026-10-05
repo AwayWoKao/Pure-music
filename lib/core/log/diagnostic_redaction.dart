@@ -1,5 +1,5 @@
 final diagnosticWindowsPathPattern = RegExp(
-  r'(?:[A-Za-z]:\\|\\\\)[^|"\r\n]*?(?=\s+\((?:error|code)\b|[|"\r\n]|$)',
+  r'(?:[A-Za-z]:[\\/]|\\\\)[^|"\r\n]*?(?=\s+\((?:error|code)\b|[|"\r\n]|$)',
   caseSensitive: false,
 );
 final diagnosticUnixPathPattern = RegExp(
@@ -11,7 +11,7 @@ final diagnosticUrlQueryPattern = RegExp(
   caseSensitive: false,
 );
 final diagnosticSecretFieldPattern = RegExp(
-  r'\b(access[_-]?key|auth[_-]?token|token|device[_-]?id|session[_-]?id)\s*[:=]\s*[^&\s|]+',
+  r'\b(access[_-]?key|api[_-]?key|auth[_-]?token|token|device[_-]?id|session[_-]?id|session[_-]?key|shared[_-]?secret|password|secret)\s*[:=]\s*[^&\s|]+',
   caseSensitive: false,
 );
 
