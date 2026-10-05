@@ -355,6 +355,7 @@ class LyricService extends ChangeNotifier {
       LyricWritePromptHistory();
   Timer? _promptTimer;
   int _promptGeneration = 0;
+  bool _onlineFallbackForWrite = false;
   LyricService(this.playService) {
     playService.playbackService.playerStateNotifier.addListener(
       _syncLineAdvanceTimer,
@@ -606,53 +607,26 @@ class LyricService extends ChangeNotifier {
 
   Audio? _getNowPlaying() => playService.playbackService.nowPlaying;
 
-  Future<void> writeCurrentLyricToTag({
+  Future<String?> saveCurrentLyricAsLrc({
     LyricTagWordFormat? wordFormat,
-    String? expectedPath,
+    String? path,
+    Lyric? lyric,
   }) async {
-    final nowPlaying = _getNowPlaying();
-    if (nowPlaying == null) throw StateError('当前没有正在播放的歌曲');
-    final audioPath = nowPlaying.path;
-    if (expectedPath != null && expectedPath != audioPath) {
-      throw StateError('当前歌曲已切换');
-    }
-
-    final lyric = _currLyric ?? await currLyricFuture;
-    if (lyric == null) throw StateError('当前歌曲没有可写入的歌词');
+    final audioPath = path ?? _getNowPlaying()?.path;
+    if (audioPath == null) return null;
+    final toWrite = lyric ?? _currLyric ?? await currLyricFuture;
+    if (toWrite == null) return null;
 
     final lrcText = serializeLyricToLrc(
-      lyric,
+      toWrite,
       wordFormat: wordFormat ?? AppSettings.instance.lyricTagWordFormat,
       includeTranslation: AppSettings.instance.lyricTagIncludeTranslation,
       includeRomanization: AppSettings.instance.lyricTagIncludeRomanization,
     );
-    if (lrcText.trim().isEmpty) {
-      throw StateError('当前歌词内容为空');
-    }
-    if (_getNowPlaying()?.path != audioPath) {
-      throw StateError('当前歌曲已切换');
-    }
-
-    await writeLyricToPath(path: audioPath, lyric: lrcText);
-  }
-
-  Future<String?> saveCurrentLyricAsLrc({
-    LyricTagWordFormat? wordFormat,
-  }) async {
-    final nowPlaying = _getNowPlaying();
-    if (nowPlaying == null) return null;
-
-    final lyric = _currLyric ?? await currLyricFuture;
-    if (lyric == null) return null;
-
-    final lrcText = serializeLyricToLrc(
-      lyric,
-      wordFormat: wordFormat ?? AppSettings.instance.lyricTagWordFormat,
-    );
     if (lrcText.trim().isEmpty) return null;
 
-    final dir = p.dirname(nowPlaying.path);
-    final base = p.basenameWithoutExtension(nowPlaying.path);
+    final dir = p.dirname(audioPath);
+    final base = p.basenameWithoutExtension(audioPath);
     final outPath = p.join(dir, '$base.lrc');
     final outFile = File(outPath);
 
@@ -668,7 +642,7 @@ class LyricService extends ChangeNotifier {
     return outPath;
   }
 
-  /// 供 widget 使用
+  /// 给 widget 使用
   Future<Lyric?> currLyricFuture = Future.value(null);
   LyricSourceType _activeLyricSourceType = LyricSourceType.local;
   // 非在线来源细分：true=外置文件，false=内嵌标签，null=尚未确定
@@ -1147,17 +1121,20 @@ class LyricService extends ChangeNotifier {
     required ResultSource preferredSource,
     required int requestToken,
     required String audioPath,
+    bool persistFallbackSource = true,
   }) {
     final fallbackFuture = _loadOnlineLyricWithFallback(audio, preferredSource);
     final lyricFuture = fallbackFuture.then((result) => result?.lyric);
-    final future = lyricFuture;
     fallbackFuture.then((result) {
       if (result == null ||
-          !_isCurrentLyricRequest(requestToken, audioPath, future)) {
+          requestToken != _lyricRequestToken ||
+          _activeLyricPath != audioPath ||
+          playService.playbackService.nowPlaying?.path != audioPath) {
         return;
       }
       _activeLyricSourceType = _lyricSourceTypeFromResultSource(result.source);
       final hitResult = result.result;
+      if (!persistFallbackSource) return;
       if (hitResult == null || result.source == preferredSource) return;
       persistLyricSource(audioPath, hitResult.toLyricSource()).catchError((
         error,
@@ -1186,6 +1163,7 @@ class LyricService extends ChangeNotifier {
 
   void updateLyric() {
     _cancelLyricWritePrompt();
+    _onlineFallbackForWrite = false;
     final nowPlaying = _getNowPlaying();
     if (nowPlaying == null) return;
     final audioPath = nowPlaying.path;
@@ -1193,8 +1171,6 @@ class LyricService extends ChangeNotifier {
     _activeLyricSourceType = LyricSourceType.local;
     _activeLocalIsExternal = null;
     final lyricSource = lyricSources[audioPath];
-    final isFromWeb =
-        lyricSource != null && lyricSource.source != LyricSourceType.local;
     final usesLocalLyric =
         lyricSource?.source == LyricSourceType.local ||
         (lyricSource == null && AppSettings.instance.localLyricFirst);
@@ -1215,10 +1191,39 @@ class LyricService extends ChangeNotifier {
         future: currLyricFuture,
         usesLocalLyric: usesLocalLyric,
         localCacheKey: localCacheKey,
-        isFromWeb: isFromWeb,
       );
     });
     notifyListeners();
+  }
+
+  Future<Lyric?> _loadLocalLyricThenOnlineFallback(
+    Audio nowPlaying,
+    String audioPath,
+    int requestToken,
+  ) async {
+    final local = await _loadLocalLyric(audioPath, notifyFailure: false);
+    if (local != null) return local;
+    if (requestToken != _lyricRequestToken || _activeLyricPath != audioPath) {
+      return null;
+    }
+    _onlineFallbackForWrite = true;
+    final preferredSource = AppSettings.instance.preferredOnlineSource;
+    final rs = switch (preferredSource) {
+      LyricSourceType.qq => ResultSource.qq,
+      LyricSourceType.kugou => ResultSource.kugou,
+      LyricSourceType.ne => ResultSource.ne,
+      LyricSourceType.amll => ResultSource.amll,
+      LyricSourceType.local => ResultSource.qq,
+    };
+    _activeLyricSourceType = _lyricSourceTypeFromResultSource(rs);
+    _reportLyricUpdate(mode: 'online', source: rs.name);
+    return _startOnlineLyricWithFallback(
+      audio: nowPlaying,
+      preferredSource: rs,
+      requestToken: requestToken,
+      audioPath: audioPath,
+      persistFallbackSource: false,
+    );
   }
 
   Future<Lyric?> _lyricFutureForUpdate(
@@ -1230,7 +1235,11 @@ class LyricService extends ChangeNotifier {
     if (lyricSource == null) {
       if (AppSettings.instance.localLyricFirst) {
         _reportLyricUpdate(mode: 'local', source: 'local');
-        return _loadLocalLyric(audioPath, notifyFailure: true);
+        return _loadLocalLyricThenOnlineFallback(
+          nowPlaying,
+          audioPath,
+          requestToken,
+        );
       }
       final preferredSource = AppSettings.instance.preferredOnlineSource;
       final rs = switch (preferredSource) {
@@ -1273,7 +1282,6 @@ class LyricService extends ChangeNotifier {
     required Future<Lyric?> future,
     required bool usesLocalLyric,
     required String? localCacheKey,
-    required bool isFromWeb,
   }) {
     if (!_isCurrentLyricRequest(requestToken, audioPath, future)) return;
     log.lyric.debug(
@@ -1283,12 +1291,12 @@ class LyricService extends ChangeNotifier {
     if (value != null) {
       _nextLyricLine = 0;
       _setCurrLyric(value);
-      if (usesLocalLyric) {
+      if (usesLocalLyric && !_onlineFallbackForWrite) {
         _putLocalLyricCache(localCacheKey!, value);
       }
-      if (isFromWeb || value.source == LyricFormat.web) {
+      if (!usesLocalLyric || _onlineFallbackForWrite) {
         _scheduleLyricWritePrompt(audioPath);
-        unawaited(_autoSaveExternalLyric(audioPath));
+        unawaited(_autoSaveExternalLyric(audioPath, value));
       }
     } else {
       _currLyric = null;
@@ -1301,15 +1309,16 @@ class LyricService extends ChangeNotifier {
     _promptGeneration += 1;
     _promptTimer?.cancel();
     _promptTimer = null;
+    hideLyricWritePrompt();
   }
 
   /// 网络歌词加载成功后，延迟弹出写入标签提示或自动写入
   void _scheduleLyricWritePrompt(String audioPath) {
     _cancelLyricWritePrompt();
-    if (!enableOnlineLyricWriting) return;
-    if (!_lyricWritePromptHistory.shouldPrompt(audioPath)) return;
     final settings = AppSettings.instance;
-    final useAutoWrite = settings.autoWriteLyricToTag;
+    if (settings.lyricWriteMode == LyricWriteMode.off) return;
+    if (!_lyricWritePromptHistory.shouldPrompt(audioPath)) return;
+    final useAutoWrite = settings.lyricWriteMode == LyricWriteMode.auto;
     final delay = Duration(
       seconds: useAutoWrite
           ? settings.autoWriteLyricToTagDelay
@@ -1335,35 +1344,57 @@ class LyricService extends ChangeNotifier {
           _getNowPlaying()?.path != audioPath) {
         return;
       }
-      if (existing != null && existing.trim().isNotEmpty) {
-        _lyricWritePromptHistory.markEmbeddedLyricFound(audioPath);
+      final hasEmbedded = existing != null && existing.trim().isNotEmpty;
+      final lyric = _currLyric;
+      if (lyric == null) return;
+      final lrcText = serializeLyricToLrc(
+        lyric,
+        wordFormat: AppSettings.instance.lyricTagWordFormat,
+        includeTranslation: AppSettings.instance.lyricTagIncludeTranslation,
+        includeRomanization: AppSettings.instance.lyricTagIncludeRomanization,
+      );
+      if (lrcText.trim().isEmpty) return;
+      if (useAutoWrite && !hasEmbedded) {
+        _writeLyricTextToTag(audioPath, lrcText, notifyUser: false);
         return;
       }
-      if (useAutoWrite) {
-        _handleAutoWrite(audioPath);
-        return;
-      }
-      final shown = showLyricWritePrompt(
+      showLyricWritePrompt(
         title: nowPlaying.title,
-        onWrite: () => _handlePromptWrite(audioPath),
+        message: hasEmbedded
+            ? '文件里已有歌词，用网上这首覆盖吗？'
+            : '写入标签？',
+        confirmLabel: hasEmbedded ? '覆盖' : '写入',
+        onWrite: () => _writeLyricTextToTag(audioPath, lrcText, notifyUser: true),
         onDismiss: () => _handlePromptDismiss(audioPath),
       );
-      if (shown) {
-        _lyricWritePromptHistory.markPromptShown(audioPath);
-      }
     });
   }
 
-  void _handlePromptWrite(String audioPath) {
-    _lyricWritePromptHistory.markPromptShown(audioPath);
-    writeCurrentLyricToTag(expectedPath: audioPath)
+  void _writeLyricTextToTag(
+    String audioPath,
+    String lrcText, {
+    required bool notifyUser,
+  }) {
+    writeLyricToPath(path: audioPath, lyric: lrcText)
         .then((_) {
-          showTextOnSnackBar('歌词已写入标签', variant: ToastVariant.success);
+          _lyricWritePromptHistory.markPromptShown(audioPath);
+          if (notifyUser) {
+            showTextOnSnackBar('歌词已写入标签', variant: ToastVariant.success);
+          }
         })
         .catchError((e, trace) {
           _lyricWritePromptHistory.markWriteFailed(audioPath);
-          log.lyric.error('legacy', '写入歌词标签失败', error: e, stackTrace: trace);
-          showTextOnSnackBar('写入标签失败，请查看日志', variant: ToastVariant.error);
+          if (notifyUser) {
+            log.lyric.error(
+              'legacy',
+              '写入歌词标签失败',
+              error: e,
+              stackTrace: trace,
+            );
+            showTextOnSnackBar('写入标签失败，请查看日志', variant: ToastVariant.error);
+          } else {
+            log.lyric.error('legacy', '自动写入歌词标签失败: $e');
+          }
         });
   }
 
@@ -1371,31 +1402,13 @@ class LyricService extends ChangeNotifier {
   void _handlePromptDismiss(String audioPath) {
     _lyricWritePromptHistory.markPromptShown(audioPath);
     _cancelLyricWritePrompt();
-    showTextOnSnackBar('本次提示已跳过');
-  }
-
-  /// 自动写入：静默写入，不弹窗
-  void _handleAutoWrite(String audioPath) {
-    _lyricWritePromptHistory.markPromptShown(audioPath);
-
-    writeCurrentLyricToTag(expectedPath: audioPath)
-        .then((_) {
-          // 静默成功，不打扰用户
-        })
-        .catchError((e) {
-          _lyricWritePromptHistory.markWriteFailed(audioPath);
-          log.lyric.error('legacy', '自动写入歌词标签失败: $e');
-        });
   }
 
   /// 网络歌词加载成功后，静默保存同名外置 .lrc 文件，已存在则先备份为 .bak
-  Future<void> _autoSaveExternalLyric(String audioPath) async {
-    if (!enableOnlineLyricWriting) return;
+  Future<void> _autoSaveExternalLyric(String audioPath, Lyric lyric) async {
     if (!AppSettings.instance.autoSaveExternalLyric) return;
-    final nowPlaying = _getNowPlaying();
-    if (nowPlaying == null || nowPlaying.path != audioPath) return;
     try {
-      await saveCurrentLyricAsLrc();
+      await saveCurrentLyricAsLrc(path: audioPath, lyric: lyric);
     } catch (e) {
       log.lyric.error('legacy', '自动保存外置歌词失败: $e');
     }
