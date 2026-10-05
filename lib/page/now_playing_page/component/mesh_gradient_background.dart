@@ -8,9 +8,9 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter_shaders/flutter_shaders.dart';
 import 'package:pure_music/page/now_playing_page/component/now_playing_background_inputs.dart';
 
-const _kDarkMeshScrim = Color(0x2E171717);
-const _kLightMeshScrim = Color(0x24F0F0F0);
-const _kMeshRenderExtent = 360.0;
+const _kDarkMeshScrim = Color(0x38171717);
+const _kLightMeshScrim = Color(0x2AF0F0F0);
+const _kMeshRenderExtent = 540.0;
 const _kMeshColorCount = 4;
 const _kShaderColorCount = 4;
 

@@ -19,59 +19,59 @@ import 'package:pure_music/page/now_playing_page/component/lyrics_line_painter.d
 import 'package:pure_music/page/now_playing_page/component/now_playing_background.dart';
 import 'package:pure_music/play_service/smtc_bridge.dart';
 
-final Uint8List _blueCover = base64Decode(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABAQMAAAAl21bKAAAAA1BMVEUAAACnej3aAAAAAXRSTlMAQObYZgAAAApJREFUCNdjYAAAAAIAAeIhvDMAAAAASUVORK5CYII=',
-);
+late Uint8List _blueCover;
+late Uint8List _redCover;
 
-final Uint8List _redCover = base64Decode(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAANSURBVBhXY/jPwPAfAAUAAf+mXJtdAAAAAElFTkSuQmCC',
-);
-
-final SyncLyricLine _benchmarkLyric = SyncLyricLine(
-  Duration.zero,
-  const Duration(seconds: 8),
-  <SyncLyricWord>[
-    SyncLyricWord(Duration.zero, const Duration(milliseconds: 720), 'Flowing '),
-    SyncLyricWord(
-      const Duration(milliseconds: 720),
-      const Duration(milliseconds: 780),
-      'colors ',
-    ),
-    SyncLyricWord(
-      const Duration(milliseconds: 1500),
-      const Duration(milliseconds: 950),
-      'follow ',
-    ),
-    SyncLyricWord(
-      const Duration(milliseconds: 2450),
-      const Duration(milliseconds: 680),
-      'every ',
-    ),
-    SyncLyricWord(
-      const Duration(milliseconds: 3130),
-      const Duration(milliseconds: 1700),
-      'heartbeat',
-    ),
-  ],
-  '流动的色彩跟随每一次心跳',
-  'Liu dong de se cai gen sui mei yi ci xin tiao',
-)
-  ..bgWords = <SyncLyricWord>[
-    SyncLyricWord(
-      const Duration(milliseconds: 3300),
-      const Duration(milliseconds: 900),
-      'Stay ',
-    ),
-    SyncLyricWord(
-      const Duration(milliseconds: 4200),
-      const Duration(milliseconds: 1300),
-      'close',
-    ),
-  ]
-  ..bgText = 'Stay close'
-  ..bgTranslation = '靠近一些'
-  ..bgStart = const Duration(milliseconds: 3300)
-  ..bgEnd = const Duration(milliseconds: 5500);
+final SyncLyricLine _benchmarkLyric =
+    SyncLyricLine(
+        Duration.zero,
+        const Duration(seconds: 8),
+        <SyncLyricWord>[
+          SyncLyricWord(
+            Duration.zero,
+            const Duration(milliseconds: 720),
+            'Flowing ',
+          ),
+          SyncLyricWord(
+            const Duration(milliseconds: 720),
+            const Duration(milliseconds: 780),
+            'colors ',
+          ),
+          SyncLyricWord(
+            const Duration(milliseconds: 1500),
+            const Duration(milliseconds: 950),
+            'follow ',
+          ),
+          SyncLyricWord(
+            const Duration(milliseconds: 2450),
+            const Duration(milliseconds: 680),
+            'every ',
+          ),
+          SyncLyricWord(
+            const Duration(milliseconds: 3130),
+            const Duration(milliseconds: 1700),
+            'heartbeat',
+          ),
+        ],
+        '流动的色彩跟随每一次心跳',
+        'Liu dong de se cai gen sui mei yi ci xin tiao',
+      )
+      ..bgWords = <SyncLyricWord>[
+        SyncLyricWord(
+          const Duration(milliseconds: 3300),
+          const Duration(milliseconds: 900),
+          'Stay ',
+        ),
+        SyncLyricWord(
+          const Duration(milliseconds: 4200),
+          const Duration(milliseconds: 1300),
+          'close',
+        ),
+      ]
+      ..bgText = 'Stay close'
+      ..bgTranslation = '靠近一些'
+      ..bgStart = const Duration(milliseconds: 3300)
+      ..bgEnd = const Duration(milliseconds: 5500);
 
 const _benchmarkLyricConfig = LyricRenderConfig(
   textAlign: LyricTextAlign.left,
@@ -93,6 +93,14 @@ const _steadyPhaseDuration = Duration(seconds: 15);
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await RustLib.init();
+  _blueCover = await _patternedCover(
+    const Color(0xFF1E88E5),
+    const Color(0xFF0D47A1),
+  );
+  _redCover = await _patternedCover(
+    const Color(0xFFE53935),
+    const Color(0xFFB71C1C),
+  );
   runApp(const _BackgroundBenchmarkApp());
 }
 
@@ -155,23 +163,17 @@ class _BackgroundBenchmarkAppState extends State<_BackgroundBenchmarkApp> {
       debugPrint('PERF_PHASE warmup');
       await Future<void>.delayed(const Duration(seconds: 2));
       final reports = <Map<String, Object?>>[];
-      reports.add(
-        await _measurePhase('mesh_active', _steadyPhaseDuration),
-      );
+      reports.add(await _measurePhase('mesh_active', _steadyPhaseDuration));
 
       setState(() => _enableAnimation = false);
-      reports.add(
-        await _measurePhase('mesh_idle', const Duration(seconds: 3)),
-      );
+      reports.add(await _measurePhase('mesh_idle', const Duration(seconds: 3)));
 
       setState(() {
         _enableAnimation = true;
         _mode = NowPlayingBackgroundMode.flowingCover;
       });
       await Future<void>.delayed(const Duration(seconds: 1));
-      reports.add(
-        await _measurePhase('flow_active', _steadyPhaseDuration),
-      );
+      reports.add(await _measurePhase('flow_active', _steadyPhaseDuration));
 
       _timings.clear();
       final switchRssBefore = ProcessInfo.currentRss;
@@ -200,9 +202,7 @@ class _BackgroundBenchmarkAppState extends State<_BackgroundBenchmarkApp> {
         _showLyrics = true;
       });
       await Future<void>.delayed(const Duration(seconds: 1));
-      reports.add(
-        await _measurePhase('lyrics_active', _steadyPhaseDuration),
-      );
+      reports.add(await _measurePhase('lyrics_active', _steadyPhaseDuration));
 
       setState(() {
         _showBackground = true;
@@ -210,19 +210,13 @@ class _BackgroundBenchmarkAppState extends State<_BackgroundBenchmarkApp> {
       });
       await Future<void>.delayed(const Duration(seconds: 1));
       reports.add(
-        await _measurePhase(
-          'mesh_with_lyrics',
-          _steadyPhaseDuration,
-        ),
+        await _measurePhase('mesh_with_lyrics', _steadyPhaseDuration),
       );
 
       setState(() => _mode = NowPlayingBackgroundMode.flowingCover);
       await Future<void>.delayed(const Duration(seconds: 1));
       reports.add(
-        await _measurePhase(
-          'flow_with_lyrics',
-          _steadyPhaseDuration,
-        ),
+        await _measurePhase('flow_with_lyrics', _steadyPhaseDuration),
       );
       reports.add(await _measureSmtcPhase());
 
@@ -264,22 +258,24 @@ class _BackgroundBenchmarkAppState extends State<_BackgroundBenchmarkApp> {
 
       final metadataClock = Stopwatch()..start();
       for (var index = 0; index < 100; index++) {
-        unawaited(smtc.updateDisplay(
-          title: 'Track $index',
-          artist: 'Benchmark',
-          album: 'Runtime',
-          duration: 60000,
-          path: audioFile.path,
-        ));
+        unawaited(
+          smtc.updateDisplay(
+            title: 'Track $index',
+            artist: 'Benchmark',
+            album: 'Runtime',
+            duration: 60000,
+            path: audioFile.path,
+          ),
+        );
       }
       await smtc.flush();
       metadataClock.stop();
 
       final stateClock = Stopwatch()..start();
       for (var index = 0; index < 200; index++) {
-        unawaited(smtc.updateState(
-          index.isEven ? SMTCState.playing : SMTCState.paused,
-        ));
+        unawaited(
+          smtc.updateState(index.isEven ? SMTCState.playing : SMTCState.paused),
+        );
       }
       await smtc.flush();
       stateClock.stop();
@@ -335,9 +331,7 @@ class _BackgroundBenchmarkAppState extends State<_BackgroundBenchmarkApp> {
         'timelineRepeatCalls': repeatCalls,
         'rssAfterFirstStressMb': _toMb(rssAfterFirstStress),
         'rssAfterRepeatStressMb': _toMb(rssAfterRepeatStress),
-        'rssRepeatGrowthMb': _toMb(
-          rssAfterRepeatStress - rssAfterFirstStress,
-        ),
+        'rssRepeatGrowthMb': _toMb(rssAfterRepeatStress - rssAfterFirstStress),
         'rssBeforeMb': _toMb(rssBefore),
         'rssAfterMb': _toMb(rssAfter),
         'rssGrowthMb': _toMb(rssAfter - rssBefore),
@@ -450,7 +444,9 @@ class _BackgroundBenchmarkAppState extends State<_BackgroundBenchmarkApp> {
                         accelerateTailHighlight: false,
                         useMaterialYouColor: false,
                         opacity: 1.0,
-                        lineMedianWordDuration: const Duration(milliseconds: 900),
+                        lineMedianWordDuration: const Duration(
+                          milliseconds: 900,
+                        ),
                       ),
                       scheme: scheme,
                     ),
@@ -480,6 +476,34 @@ double _milliseconds(Duration duration) {
     (duration.inMicroseconds / Duration.microsecondsPerMillisecond)
         .toStringAsFixed(3),
   );
+}
+
+Future<Uint8List> _patternedCover(Color primary, Color secondary) async {
+  const size = 256;
+  final recorder = PictureRecorder();
+  final canvas = Canvas(recorder);
+  final fill = Paint();
+  const cell = 16.0;
+  for (var row = 0; row < size / cell; row++) {
+    for (var column = 0; column < size / cell; column++) {
+      fill.color = (row + column).isEven ? primary : secondary;
+      canvas.drawRect(
+        Rect.fromLTWH(column * cell, row * cell, cell, cell),
+        fill,
+      );
+    }
+  }
+  fill
+    ..color = const Color(0x66FFFFFF)
+    ..strokeWidth = 1
+    ..style = PaintingStyle.stroke;
+  for (var index = 0; index < 32; index++) {
+    canvas.drawLine(Offset(index * 8, 0), Offset(0, index * 8), fill);
+  }
+  final image = await recorder.endRecording().toImage(size, size);
+  final bytes = await image.toByteData(format: ImageByteFormat.png);
+  image.dispose();
+  return bytes!.buffer.asUint8List();
 }
 
 Uint8List _silentWavBytes() {
@@ -521,29 +545,33 @@ Map<String, double> _cpuReport(double cpuSeconds, Duration elapsed) {
 
 typedef _GetCurrentProcessNative = IntPtr Function();
 typedef _GetCurrentProcessDart = int Function();
-typedef _GetProcessTimesNative = Int32 Function(
-  IntPtr process,
-  Pointer<Uint64> creationTime,
-  Pointer<Uint64> exitTime,
-  Pointer<Uint64> kernelTime,
-  Pointer<Uint64> userTime,
-);
-typedef _GetProcessTimesDart = int Function(
-  int process,
-  Pointer<Uint64> creationTime,
-  Pointer<Uint64> exitTime,
-  Pointer<Uint64> kernelTime,
-  Pointer<Uint64> userTime,
-);
+typedef _GetProcessTimesNative =
+    Int32 Function(
+      IntPtr process,
+      Pointer<Uint64> creationTime,
+      Pointer<Uint64> exitTime,
+      Pointer<Uint64> kernelTime,
+      Pointer<Uint64> userTime,
+    );
+typedef _GetProcessTimesDart =
+    int Function(
+      int process,
+      Pointer<Uint64> creationTime,
+      Pointer<Uint64> exitTime,
+      Pointer<Uint64> kernelTime,
+      Pointer<Uint64> userTime,
+    );
 
 class _WindowsCpuClock {
   _WindowsCpuClock()
-      : _getCurrentProcess = DynamicLibrary.open('kernel32.dll')
-            .lookupFunction<_GetCurrentProcessNative, _GetCurrentProcessDart>(
-                'GetCurrentProcess'),
-        _getProcessTimes = DynamicLibrary.open('kernel32.dll')
-            .lookupFunction<_GetProcessTimesNative, _GetProcessTimesDart>(
-                'GetProcessTimes');
+    : _getCurrentProcess = DynamicLibrary.open('kernel32.dll')
+          .lookupFunction<_GetCurrentProcessNative, _GetCurrentProcessDart>(
+            'GetCurrentProcess',
+          ),
+      _getProcessTimes = DynamicLibrary.open('kernel32.dll')
+          .lookupFunction<_GetProcessTimesNative, _GetProcessTimesDart>(
+            'GetProcessTimes',
+          );
 
   final _GetCurrentProcessDart _getCurrentProcess;
   final _GetProcessTimesDart _getProcessTimes;
