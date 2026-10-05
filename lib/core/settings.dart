@@ -293,6 +293,7 @@ class AppSettings {
   bool enableTitleBarFrostedGlass = false;
   bool enableSidebarFrostedGlass = false;
   Size windowSize = const Size(1280, 756);
+  Offset? windowPosition;
   bool isWindowMaximized = false;
   WindowCloseBehavior windowCloseBehavior = WindowCloseBehavior.exit;
   bool preventSleepOnNowPlaying = false;
@@ -701,6 +702,13 @@ class AppSettings {
       _instance.windowSize = Size(size.width, size.height);
     }
 
+    final position = normalizedWindowPositionSetting(
+      settingsMap['WindowPosition'],
+    );
+    if (position != null) {
+      _instance.windowPosition = Offset(position.x, position.y);
+    }
+
     final isMaximized = settingsMap['IsWindowMaximized'];
     if (isMaximized != null) {
       _instance.isWindowMaximized = normalizedBoolSetting(
@@ -1107,12 +1115,14 @@ class AppSettings {
     required bool isMinimized,
   }) async {
     Size sizeToSave = windowSize;
+    Offset? positionToSave = windowPosition;
     if (!isMaximized && !isFullScreen && !isMinimized) {
       final currentSize = await windowManager.getSize();
       if (currentSize.width >= minimumWindowSizeSetting.width &&
           currentSize.height >= minimumWindowSizeSetting.height) {
         sizeToSave = currentSize;
       }
+      positionToSave = await windowManager.getPosition();
     }
     final normalizedSize = normalizedWindowSizeSetting([
       sizeToSave.width,
@@ -1124,6 +1134,13 @@ class AppSettings {
       sizeToSave.width,
       sizeToSave.height,
     );
+    if (positionToSave != null) {
+      windowPosition = positionToSave;
+      settingsMap['WindowPosition'] = encodedWindowPositionSetting(
+        positionToSave.dx,
+        positionToSave.dy,
+      );
+    }
     final settingsStr = json.encode(settingsMap);
     final dir = await getSettingsDir();
     final settingsPath = path.join(dir.path, 'settings.json');

@@ -34,7 +34,6 @@ import 'package:pure_music/component/app_scroll_behavior.dart';
 import 'package:pure_music/core/app_fonts.dart';
 import 'package:pure_music/core/cache.dart';
 import 'package:pure_music/core/immersive.dart';
-import 'package:pure_music/core/memory_monitor.dart';
 import 'package:pure_music/core/mouse_back_exit.dart';
 import 'package:pure_music/core/matcher.dart';
 import 'package:pure_music/core/preference.dart';
@@ -287,6 +286,7 @@ class _EntryState extends State<Entry>
     with WindowListener, WidgetsBindingObserver {
   final ValueNotifier<bool> _windowResizing = ValueNotifier(false);
   Timer? _resizeIdleTimer;
+  Timer? _geometrySaveTimer;
 
   @override
   void initState() {
@@ -311,6 +311,7 @@ class _EntryState extends State<Entry>
   @override
   void dispose() {
     _resizeIdleTimer?.cancel();
+    _geometrySaveTimer?.cancel();
     _windowResizing.dispose();
     AppSettings.backgroundNotifier.removeListener(_applyWindowTransparent);
     WidgetsBinding.instance.removeObserver(this);
@@ -344,11 +345,6 @@ class _EntryState extends State<Entry>
 
   @override
   void onWindowMinimize() {
-    MemoryMonitorService.instance.trimTrayHidden();
-    log.memory.debug(
-      'legacy',
-      '[mem] window minimized - trimmed invisible caches',
-    );
     PlayService.existingPlaybackService?.startSmtcKeepAlive();
   }
 
@@ -372,6 +368,12 @@ class _EntryState extends State<Entry>
   @override
   void onWindowResized() {
     _finishWindowResize();
+    _scheduleGeometrySave();
+  }
+
+  @override
+  void onWindowMoved() {
+    _scheduleGeometrySave();
   }
 
   void _finishWindowResize() {
@@ -380,6 +382,14 @@ class _EntryState extends State<Entry>
     if (_windowResizing.value) {
       _windowResizing.value = false;
     }
+  }
+
+  void _scheduleGeometrySave() {
+    _geometrySaveTimer?.cancel();
+    _geometrySaveTimer = Timer(const Duration(milliseconds: 160), () {
+      _geometrySaveTimer = null;
+      unawaited(AppSettings.instance.saveSettings());
+    });
   }
 
   @override

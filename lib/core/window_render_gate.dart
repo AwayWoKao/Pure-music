@@ -63,6 +63,8 @@ class WindowRenderGate with WidgetsBindingObserver {
     switch (state) {
       case AppLifecycleState.resumed:
       case AppLifecycleState.inactive:
+        // 藏进托盘后不能把系统焦点当成「窗口回来了」
+        if (_trayHidden) return;
         enterForeground();
       case AppLifecycleState.hidden:
       case AppLifecycleState.paused:

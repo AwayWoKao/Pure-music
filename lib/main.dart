@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui' show PlatformDispatcher;
+import 'dart:ui' show FlutterView, PlatformDispatcher;
 
 import 'package:pure_music/core/application_log.dart';
 import 'package:pure_music/core/preference.dart';
@@ -21,6 +21,7 @@ import 'package:pure_music/core/theme.dart';
 import 'package:pure_music/core/log/rust_log_line.dart';
 import 'package:pure_music/core/utils.dart';
 import 'package:pure_music/core/window_lifecycle.dart';
+import 'package:pure_music/core/window_placement.dart';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:flutter_single_instance/flutter_single_instance.dart';
@@ -32,31 +33,27 @@ Future<void> initWindow() async {
     minimumWindowSizeSetting.width,
     minimumWindowSizeSetting.height,
   );
-  Size targetSize = AppSettings.instance.windowSize;
   final view = WidgetsBinding.instance.platformDispatcher.views.first;
-  final display = view.display;
-  final displayW = display.size.width / display.devicePixelRatio;
-  final displayH = display.size.height / display.devicePixelRatio;
-  final maxW = (displayW - 16.0)
-      .clamp(minimumSize.width, double.infinity)
-      .toDouble();
-  final maxH = (displayH - 16.0)
-      .clamp(minimumSize.height, double.infinity)
-      .toDouble();
-  targetSize = Size(
-    targetSize.width.clamp(minimumSize.width, maxW),
-    targetSize.height.clamp(minimumSize.height, maxH),
+  final targetSize = _clampWindowSize(
+    AppSettings.instance.windowSize,
+    minimumSize,
+    view,
   );
+  final restorePosition = _restoreWindowPosition(targetSize, view);
 
   WindowOptions windowOptions = WindowOptions(
     minimumSize: minimumSize,
     size: targetSize,
-    center: true,
+    center: restorePosition == null,
     skipTaskbar: false,
     titleBarStyle: TitleBarStyle.hidden,
   );
   windowManager.waitUntilReadyToShow(windowOptions, () async {
     if (WindowLifecycleService.instance.isExiting) return;
+    if (restorePosition != null) {
+      await windowManager.setPosition(restorePosition);
+      if (WindowLifecycleService.instance.isExiting) return;
+    }
     await windowManager.show();
     if (WindowLifecycleService.instance.isExiting) return;
     if (AppSettings.instance.isWindowMaximized) {
@@ -65,6 +62,47 @@ Future<void> initWindow() async {
     }
     await windowManager.focus();
   });
+}
+
+Size _clampWindowSize(Size target, Size minimumSize, FlutterView view) {
+  final dpr = view.display.devicePixelRatio;
+  final virtual = windowsVirtualScreen();
+  final maxW = virtual != null
+      ? virtual.width / dpr
+      : view.display.size.width / dpr - 16.0;
+  final maxH = virtual != null
+      ? virtual.height / dpr
+      : view.display.size.height / dpr - 16.0;
+  return Size(
+    target.width
+        .clamp(
+          minimumSize.width,
+          maxW.clamp(minimumSize.width, double.infinity),
+        )
+        .toDouble(),
+    target.height
+        .clamp(
+          minimumSize.height,
+          maxH.clamp(minimumSize.height, double.infinity),
+        )
+        .toDouble(),
+  );
+}
+
+Offset? _restoreWindowPosition(Size targetSize, FlutterView view) {
+  final saved = AppSettings.instance.windowPosition;
+  if (saved == null) return null;
+  final screen = windowsVirtualScreen();
+  if (screen == null) return saved;
+  if (windowPlacementIsOnscreen(
+    position: saved,
+    size: targetSize,
+    devicePixelRatio: view.display.devicePixelRatio,
+    screen: screen,
+  )) {
+    return saved;
+  }
+  return null;
 }
 
 Future<void> loadPrefFont() async {

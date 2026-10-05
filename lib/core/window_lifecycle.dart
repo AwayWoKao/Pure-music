@@ -6,6 +6,7 @@ import 'package:pure_music/core/memory_monitor.dart';
 import 'package:pure_music/core/paths.dart' as app_paths;
 import 'package:pure_music/core/preference.dart';
 import 'package:pure_music/core/settings.dart';
+import 'package:pure_music/core/sleep_blocker.dart';
 import 'package:pure_music/core/utils.dart';
 import 'package:pure_music/core/window_render_gate.dart';
 import 'package:pure_music/library/audio_library.dart';
@@ -315,6 +316,7 @@ class WindowLifecycleService with WindowListener, TrayListener {
       return false;
     }
     WindowRenderGate.instance.setTrayHidden(true);
+    SleepBlocker.instance.setMainWindowVisible(false);
     PlayService.existingPlaybackService?.startSmtcKeepAlive();
     MemoryMonitorService.instance.trimTrayHidden();
     _scheduleTrayTrim();
@@ -325,6 +327,7 @@ class WindowLifecycleService with WindowListener, TrayListener {
     if (_isExiting) return;
     _cancelTrayTrim();
     WindowRenderGate.instance.enterForeground();
+    SleepBlocker.instance.setMainWindowVisible(true);
     await WindowRenderGate.instance.waitForWarmup();
     if (_isExiting) return;
     await windowManager.show();
@@ -408,11 +411,13 @@ class WindowLifecycleService with WindowListener, TrayListener {
 
   @override
   void onWindowFocus() {
+    if (!WindowRenderGate.instance.shouldRender) return;
     WindowRenderGate.instance.enterForeground();
   }
 
   @override
   void onWindowRestore() {
+    if (!WindowRenderGate.instance.shouldRender) return;
     WindowRenderGate.instance.enterForeground();
   }
 

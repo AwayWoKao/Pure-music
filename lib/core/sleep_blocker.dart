@@ -4,8 +4,20 @@ import 'dart:io';
 import 'package:pure_music/core/settings.dart';
 import 'package:pure_music/core/utils.dart';
 
-typedef _SetThreadExecutionStateNative = ffi.Uint32 Function(ffi.Uint32 esFlags);
+typedef _SetThreadExecutionStateNative =
+    ffi.Uint32 Function(ffi.Uint32 esFlags);
 typedef _SetThreadExecutionStateDart = int Function(int esFlags);
+
+bool sleepBlockerShouldPreventSleep({
+  required bool pageVisible,
+  required bool playerPlaying,
+  required bool mainWindowVisible,
+  required bool preventSleepOnNowPlaying,
+}) =>
+    pageVisible &&
+    playerPlaying &&
+    mainWindowVisible &&
+    preventSleepOnNowPlaying;
 
 class SleepBlocker {
   static SleepBlocker? _instance;
@@ -16,30 +28,37 @@ class SleepBlocker {
   bool _blocked = false;
   bool _pageVisible = false;
   bool _playerPlaying = false;
+  bool _mainWindowVisible = true;
 
   static const int _esContinuous = 0x80000000;
   static const int _esSystemRequired = 0x00000001;
   static const int _esDisplayRequired = 0x00000002;
 
-  bool get _shouldBlock =>
-      _pageVisible &&
-      _playerPlaying &&
-      AppSettings.instance.preventSleepOnNowPlaying;
+  bool get _shouldBlock => sleepBlockerShouldPreventSleep(
+    pageVisible: _pageVisible,
+    playerPlaying: _playerPlaying,
+    mainWindowVisible: _mainWindowVisible,
+    preventSleepOnNowPlaying: AppSettings.instance.preventSleepOnNowPlaying,
+  );
 
   void _load() {
     if (_setThreadExecutionState != null) return;
     try {
       final kernel32 = ffi.DynamicLibrary.open('kernel32.dll');
       _setThreadExecutionState = kernel32
-          .lookupFunction<_SetThreadExecutionStateNative, _SetThreadExecutionStateDart>(
-            'SetThreadExecutionState',
-          );
+          .lookupFunction<
+            _SetThreadExecutionStateNative,
+            _SetThreadExecutionStateDart
+          >('SetThreadExecutionState');
       log.playback.debug(
         'legacy',
         '[sleep_blocker] loaded SetThreadExecutionState',
       );
     } catch (e, trace) {
-      log.playback.warn('legacy', '[sleep_blocker] failed to load SetThreadExecutionState: $e\n$trace');
+      log.playback.warn(
+        'legacy',
+        '[sleep_blocker] failed to load SetThreadExecutionState: $e\n$trace',
+      );
     }
   }
 
@@ -60,6 +79,12 @@ class SleepBlocker {
       '[sleep_blocker] setPlayerPlaying: $playing (was: $_playerPlaying)',
     );
     _playerPlaying = playing;
+    reevaluate();
+  }
+
+  void setMainWindowVisible(bool visible) {
+    if (visible == _mainWindowVisible) return;
+    _mainWindowVisible = visible;
     reevaluate();
   }
 
@@ -98,7 +123,7 @@ class SleepBlocker {
     if (shouldBlock == _blocked) return;
     log.playback.debug(
       'legacy',
-      '[sleep_blocker] state change: _pageVisible=$_pageVisible, _playerPlaying=$_playerPlaying, preventSleep=${AppSettings.instance.preventSleepOnNowPlaying}, _shouldBlock=$shouldBlock, _blocked=$_blocked',
+      '[sleep_blocker] state change: _pageVisible=$_pageVisible, _playerPlaying=$_playerPlaying, mainWindowVisible=$_mainWindowVisible, preventSleep=${AppSettings.instance.preventSleepOnNowPlaying}, _shouldBlock=$shouldBlock, _blocked=$_blocked',
     );
     if (shouldBlock) {
       block();

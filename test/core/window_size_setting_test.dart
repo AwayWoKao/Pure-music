@@ -23,4 +23,16 @@ void main() {
   test('a comma-only payload restores the default size', () {
     expect(normalizedWindowSizeSetting(','), defaultWindowSizeSetting);
   });
+
+  test('window position keeps negatives for a left-side monitor', () {
+    expect(normalizedWindowPositionSetting('-1920.0,80.0'), (
+      x: -1920.0,
+      y: 80.0,
+    ));
+  });
+
+  test('invalid window position is ignored', () {
+    expect(normalizedWindowPositionSetting(','), isNull);
+    expect(normalizedWindowPositionSetting(null), isNull);
+  });
 }

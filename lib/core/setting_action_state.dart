@@ -143,6 +143,9 @@ const minimumWindowSizeSetting = (width: 360.0, height: 240.0);
 String encodedWindowSizeSetting(double width, double height) =>
     '${width.toStringAsFixed(1)},${height.toStringAsFixed(1)}';
 
+String encodedWindowPositionSetting(double x, double y) =>
+    '${x.toStringAsFixed(1)},${y.toStringAsFixed(1)}';
+
 ({double width, double height}) normalizedWindowSizeSetting(Object? value) {
   final parts = switch (value) {
     String() => _normalizedWindowSizeString(value).split(','),
@@ -186,6 +189,23 @@ double? _normalizedWindowSizeNumber(Object? value) {
   };
   if (number == null || !number.isFinite) return null;
   return number;
+}
+
+({double x, double y})? normalizedWindowPositionSetting(Object? value) {
+  final parts = switch (value) {
+    String() => value.trim().split(','),
+    Iterable() => value.toList(growable: false),
+    Map() when value.containsKey('x') && value.containsKey('y') => [
+      value['x'],
+      value['y'],
+    ],
+    _ => null,
+  };
+  if (parts == null || parts.length != 2) return null;
+  final x = _normalizedWindowSizeNumber(parts[0]);
+  final y = _normalizedWindowSizeNumber(parts[1]);
+  if (x == null || y == null) return null;
+  return (x: x, y: y);
 }
 
 String? normalizedStringSetting(Object? value) {
