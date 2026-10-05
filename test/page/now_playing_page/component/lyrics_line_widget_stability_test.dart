@@ -104,6 +104,28 @@ void main() {
     expect(active, greaterThan(0));
   });
 
+  test('background vocal height collapses over the exit window', () {
+    final active = _measureHeight(
+      currentTimeMs: 11000.0,
+      isMainLine: true,
+      isHighlightActive: true,
+      isBackgroundActive: true,
+    );
+    final collapsing = _measureHeight(
+      currentTimeMs: 11600.0,
+      isMainLine: true,
+      isHighlightActive: true,
+    );
+    final collapsed = _measureHeight(
+      currentTimeMs: _afterBackgroundMs,
+      isMainLine: true,
+      isHighlightActive: true,
+    );
+
+    expect(collapsing, lessThan(active));
+    expect(collapsing, greaterThan(collapsed));
+  });
+
   test('background vocal height grows only after its authored start', () {
     final beforeTrigger = _measureHeight(
       currentTimeMs: _beforeBackgroundMs,

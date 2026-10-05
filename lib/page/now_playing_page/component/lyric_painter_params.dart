@@ -13,6 +13,7 @@ class LyricPainterParams {
   final ValueListenable<double>? currentTimeListenable;
   final ValueListenable<double>? backgroundVocalVisibilityListenable;
   final double blurSigma;
+  final ValueListenable<double>? blurSigmaListenable;
   final LyricRenderConfig config;
   final bool isMainLine;
   final bool isHighlightActive;
@@ -35,6 +36,7 @@ class LyricPainterParams {
     this.currentTimeListenable,
     this.backgroundVocalVisibilityListenable,
     required this.blurSigma,
+    this.blurSigmaListenable,
     required this.config,
     required this.isMainLine,
     required this.isHighlightActive,
@@ -63,6 +65,7 @@ class LyricPainterParams {
         (currentTimeListenable != null ||
             other.currentTimeMs == currentTimeMs) &&
         other.blurSigma == blurSigma &&
+        other.blurSigmaListenable == blurSigmaListenable &&
         other.config == config &&
         other.isMainLine == isMainLine &&
         other.isHighlightActive == isHighlightActive &&
@@ -87,6 +90,7 @@ class LyricPainterParams {
     backgroundVocalVisibilityListenable,
     currentTimeListenable == null ? currentTimeMs : null,
     blurSigma,
+    blurSigmaListenable,
     config,
     Object.hash(
       isMainLine,

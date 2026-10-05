@@ -962,6 +962,24 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
     _departingBackgroundVocalLines.clear();
   }
 
+  double _backgroundVocalFactorForLine(int index) {
+    final lines = widget.lyric.lines;
+    if (index < 0 || index >= lines.length) return 0.0;
+    final line = lines[index];
+    if (line is! SyncLyricLine) return 0.0;
+    return lyricBackgroundHeightFactor(
+      currentTimeMs: _displayPositionMs,
+      startMs: lyricBackgroundStartMs(line),
+      endMs: lyricBackgroundEndMs(line),
+      isMainLine: index == _mainLine || _parallelGroupLines.contains(index),
+      isBackgroundActive: _backgroundActiveLyricLines.contains(index),
+      isBackgroundVisible: widget.lyric is Ttml
+          ? _parallelGroupLines.contains(index)
+          : null,
+      exitVisibility: _backgroundExitValues[index]?.value,
+    );
+  }
+
   void _prepareBackgroundExitValues(Set<int> next) {
     _backgroundVocalExitGeneration++;
     _backgroundVocalExitController.stop();
@@ -981,8 +999,11 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
     final now = _backgroundExitClock.elapsedMilliseconds;
     for (final index in next) {
       if (_backgroundExitValues.containsKey(index)) continue;
-      _backgroundExitValues[index] = ValueNotifier(1.0);
-      _backgroundExitStartedMs[index] = now;
+      final startVisibility = _backgroundVocalFactorForLine(index);
+      if (startVisibility <= 0.001) continue;
+      final elapsed = lyricBackgroundExitElapsedMs(startVisibility);
+      _backgroundExitValues[index] = ValueNotifier(startVisibility);
+      _backgroundExitStartedMs[index] = now - elapsed.round();
     }
   }
 
@@ -1061,7 +1082,7 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
 
     double measureSyncLine(SyncLyricLine line, bool isMain) {
       if (line.words.isEmpty) {
-        return isMain && line.length > const Duration(seconds: 3) ? 40.0 : 0.0;
+        return lyricTransitionLayoutHeight(line, isMain: isMain);
       }
       return LyricsLinePainter(
         params: LyricPainterParams(
@@ -1089,19 +1110,8 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
       final isLineByLine =
           line is SyncLyricLine &&
           config.displayMode == LyricDisplayMode.lineByLine;
-      if (isMain) {
-        if (line is SyncLyricLine && !isLineByLine) {
-          if (line.words.isEmpty && line.length > const Duration(seconds: 3)) {
-            return 40.0;
-          }
-        } else if (line is LrcLine) {
-          if (line.isBlank &&
-              line.length > const Duration(seconds: 3) &&
-              line.start == Duration.zero) {
-            return 40.0;
-          }
-        }
-      }
+      final transitionHeight = lyricTransitionLayoutHeight(line, isMain: isMain);
+      if (transitionHeight > 0) return transitionHeight;
 
       if (line is SyncLyricLine && !isLineByLine) {
         if (line.words.isEmpty) return 0.0;
@@ -1942,6 +1952,9 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
 
   void _seekToLyricLine(int i) {
     _discardPendingLyricLineUpdates();
+    _pendingStaggerScroll = false;
+    _jumpDeltaY = 0;
+    _jumpTriggerId++;
     playbackService.seek(widget.lyric.lines[i].start.inMilliseconds / 1000);
     setState(() {
       _mainLine = i;

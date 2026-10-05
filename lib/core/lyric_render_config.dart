@@ -1,5 +1,3 @@
-import 'dart:math';
-
 import 'package:flutter/material.dart';
 
 import 'package:pure_music/core/enums.dart';
@@ -7,6 +5,8 @@ import 'package:pure_music/core/settings.dart';
 import 'package:flutter/foundation.dart';
 
 const lyricVerticalLiftDurationMs = 2000;
+// 非当前行 1/2/3/4+ 档模糊，远行封顶，避免连续 sigma 重建滤镜。
+const List<double> lyricBlurSigmaByDistance = [1.0, 1.5, 2.0, 2.5];
 
 @immutable
 class LyricRenderConfig {
@@ -39,8 +39,6 @@ class LyricRenderConfig {
   final double subTranslationScale;
   final double activeLineScaleMultiplier;
   final double inactiveLineScaleMultiplier;
-  final double blurSigmaStep;
-  final double blurSigmaMax;
   final Duration implicitAnimationDuration;
   final int viewportLeadingLines;
   final int viewportTrailingLines;
@@ -74,8 +72,6 @@ class LyricRenderConfig {
     this.subTranslationScale = 0.70,
     this.activeLineScaleMultiplier = 1.0,
     this.inactiveLineScaleMultiplier = 0.90,
-    this.blurSigmaStep = 0.6,
-    this.blurSigmaMax = 2.5,
     this.implicitAnimationDuration = const Duration(milliseconds: 300),
     this.viewportLeadingLines = 2,
     this.viewportTrailingLines = 3,
@@ -113,8 +109,6 @@ class LyricRenderConfig {
     double? subTranslationScale,
     double? activeLineScaleMultiplier,
     double? inactiveLineScaleMultiplier,
-    double? blurSigmaStep,
-    double? blurSigmaMax,
     Duration? implicitAnimationDuration,
     int? viewportLeadingLines,
     int? viewportTrailingLines,
@@ -153,8 +147,6 @@ class LyricRenderConfig {
           activeLineScaleMultiplier ?? this.activeLineScaleMultiplier,
       inactiveLineScaleMultiplier:
           inactiveLineScaleMultiplier ?? this.inactiveLineScaleMultiplier,
-      blurSigmaStep: blurSigmaStep ?? this.blurSigmaStep,
-      blurSigmaMax: blurSigmaMax ?? this.blurSigmaMax,
       implicitAnimationDuration:
           implicitAnimationDuration ?? this.implicitAnimationDuration,
       viewportLeadingLines: viewportLeadingLines ?? this.viewportLeadingLines,
@@ -197,8 +189,6 @@ class LyricRenderConfig {
         other.subTranslationScale == subTranslationScale &&
         other.activeLineScaleMultiplier == activeLineScaleMultiplier &&
         other.inactiveLineScaleMultiplier == inactiveLineScaleMultiplier &&
-        other.blurSigmaStep == blurSigmaStep &&
-        other.blurSigmaMax == blurSigmaMax &&
         other.implicitAnimationDuration == implicitAnimationDuration &&
         other.viewportLeadingLines == viewportLeadingLines &&
         other.viewportTrailingLines == viewportTrailingLines &&
@@ -234,8 +224,6 @@ class LyricRenderConfig {
     subTranslationScale,
     activeLineScaleMultiplier,
     inactiveLineScaleMultiplier,
-    blurSigmaStep,
-    blurSigmaMax,
     implicitAnimationDuration,
     viewportLeadingLines,
     viewportTrailingLines,
@@ -264,8 +252,10 @@ class LyricRenderConfig {
   }
 
   double blurSigmaForDistance(int distance) {
-    if (!enableBlur) return 0.0;
-    return min(distance * blurSigmaStep, blurSigmaMax);
+    if (!enableBlur || distance <= 0) return 0.0;
+    final last = lyricBlurSigmaByDistance.length;
+    final index = distance >= last ? last - 1 : distance - 1;
+    return lyricBlurSigmaByDistance[index];
   }
 
   double gapBoost({required bool isMainLine}) {

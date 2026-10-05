@@ -1,4 +1,4 @@
-import 'dart:math' show cos, max, pi;
+import 'dart:math' show cos, exp, max, pi, sin, sqrt;
 
 import 'package:flutter/foundation.dart' show Listenable, ValueListenable;
 import 'package:flutter/material.dart';
@@ -27,10 +27,46 @@ bool lyricLineHasBackgroundVocal(LyricLine line) {
       line.bg != null;
 }
 
+double lyricBackgroundStartMs(SyncLyricLine line) {
+  return (line.bgStart ?? line.bg?.start ?? line.start).inMilliseconds
+      .toDouble();
+}
+
+double lyricBackgroundEndMs(SyncLyricLine line) {
+  var end = (line.bgEnd ?? line.bg?.end ?? (line.start + line.length))
+      .inMilliseconds
+      .toDouble();
+  if (line.bgWords.isNotEmpty) {
+    final last = line.bgWords.last;
+    final lastEnd = (last.start.inMilliseconds + last.length.inMilliseconds)
+        .toDouble();
+    if (lastEnd > end) end = lastEnd;
+  }
+  return end;
+}
+
 double lyricBackgroundExitVisibility(double elapsedMs) {
   final progress = (elapsedMs / lyricBackgroundVocalExitDuration.inMilliseconds)
       .clamp(0.0, 1.0);
   return 1.0 - Curves.easeInCubic.transform(progress);
+}
+
+double lyricBackgroundExitElapsedMs(double visibility) {
+  final target = visibility.clamp(0.0, 1.0);
+  final duration = lyricBackgroundVocalExitDuration.inMilliseconds.toDouble();
+  if (target >= 0.999) return 0.0;
+  if (target <= 0.001) return duration;
+  var lo = 0.0;
+  var hi = duration;
+  for (var i = 0; i < 16; i++) {
+    final mid = (lo + hi) / 2;
+    if (lyricBackgroundExitVisibility(mid) > target) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+  return (lo + hi) / 2;
 }
 
 double lyricBackgroundHeightFactor({
@@ -43,22 +79,102 @@ double lyricBackgroundHeightFactor({
   double? exitVisibility,
 }) {
   if (exitVisibility != null) return exitVisibility.clamp(0.0, 1.0);
-  if ((!isMainLine && !isBackgroundActive) ||
-      endMs <= startMs ||
-      currentTimeMs < startMs ||
-      currentTimeMs >= endMs) {
-    return 0.0;
+  if (endMs <= startMs) return 0.0;
+  final hosted =
+      isMainLine || isBackgroundActive || isBackgroundVisible == true;
+  if (!hosted || currentTimeMs < startMs) return 0.0;
+  if (currentTimeMs < endMs) {
+    return Curves.easeOutBack.transform(
+      ((currentTimeMs - startMs) / _bgEntryDuration).clamp(0.0, 1.0),
+    );
   }
-  return Curves.easeOutBack.transform(
-    ((currentTimeMs - startMs) / _bgEntryDuration).clamp(0.0, 1.0),
-  );
+  return lyricBackgroundExitVisibility(currentTimeMs - endMs);
 }
+
+@visibleForTesting
+List<double> debugLyricCharYLifts = const [];
 
 double lyricExitLift(double lastLift, double floatProgress) {
   if (lastLift == 0) return 0;
   final t = floatProgress.clamp(0.0, 1.0);
-  if (t <= 0) return 0;
   return lastLift * t;
+}
+
+// 汉字和假名用更慢的音节错开，不含谚文。
+bool lyricUsesSoftLift(String text) {
+  for (final rune in text.runes) {
+    if ((rune >= 0x3040 && rune <= 0x30FF) ||
+        (rune >= 0x3400 && rune <= 0x4DBF) ||
+        (rune >= 0x4E00 && rune <= 0x9FFF)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+double lyricDurationLiftSpring(double tSec, double wordDurationSec) {
+  if (tSec <= 0) return 0;
+  final d = wordDurationSec < 0.001
+      ? 0.001
+      : (wordDurationSec > 3.0 ? 3.0 : wordDurationSec);
+  final w = 2 * pi / d;
+  return 1 - (1 + w * tSec) * exp(-w * tSec);
+}
+
+double lyricSoftLiftSpring(double tSec) {
+  if (tSec <= 0) return 0;
+  const stiffness = 14.0;
+  const damping = 7.0;
+  final omega0 = sqrt(stiffness);
+  final zeta = damping / (2 * omega0);
+  final wd = omega0 * sqrt(1 - zeta * zeta);
+  final decay = exp(-zeta * omega0 * tSec);
+  final b = -zeta * omega0 / wd;
+  return 1 + decay * (-cos(wd * tSec) + b * sin(wd * tSec));
+}
+
+// 按词时长错开抬升，抬满后停住；组内保持仍由行状态负责。
+double lyricVerticalCharLiftPx({
+  required double nowMs,
+  required double wordStartMs,
+  required double wordDurationSec,
+  required int syllableIndex,
+  required int syllableCount,
+  required bool softLift,
+  required double liftPeak,
+}) {
+  final n = syllableCount < 1 ? 1 : syllableCount;
+  final d = wordDurationSec <= 0 ? 0.001 : wordDurationSec;
+  final step = d / n * (softLift ? 0.8 : 0.4);
+  final tSec = (nowMs - wordStartMs) / 1000.0 - (syllableIndex + 1) * step;
+  final spring = softLift
+      ? lyricSoftLiftSpring(tSec)
+      : lyricDurationLiftSpring(tSec, d);
+  return -spring * liftPeak;
+}
+
+double lyricCosineLiftPx({
+  required double charCenter,
+  required double cursorX,
+  required double lineEndX,
+  required double fontSize,
+  required double liftPeak,
+}) {
+  const window = 3.0;
+  final windowPx = window * fontSize;
+  final u = (charCenter - cursorX + windowPx / 2) / windowPx;
+  final remaining = lineEndX - cursorX;
+  final q = remaining < windowPx / 2
+      ? (1.0 - remaining / (windowPx / 2)).clamp(0.0, 1.0)
+      : 0.0;
+  final q2 = q * q;
+  final factor = switch (u) {
+    <= 0.0 => 1.0,
+    >= 1.0 => 0.0,
+    _ => cos(pi * u) * (1 - q2) / 2 + (1 + q2) / 2,
+  };
+  final maxLift = (liftPeak / 2.0 * 0.10 * fontSize).roundToDouble();
+  return -(factor * maxLift);
 }
 
 class LyricCharLiftCache {
@@ -487,7 +603,7 @@ class LyricsLinePainter extends CustomPainter {
       params.currentTimeListenable;
   ValueListenable<double>? get backgroundVocalVisibilityListenable =>
       params.backgroundVocalVisibilityListenable;
-  double get blurSigma => params.blurSigma;
+  double get blurSigma => params.blurSigmaListenable?.value ?? params.blurSigma;
   LyricRenderConfig get config => params.config;
   bool get isMainLine => params.isMainLine;
   bool get isHighlightActive => params.isHighlightActive;
@@ -520,7 +636,7 @@ class LyricsLinePainter extends CustomPainter {
   static final _measureCache = <String, double>{};
   static const _maxMeasureCacheSize = 500;
   static final _blurFilterCache = <double, MaskFilter>{};
-  static const _maxBlurFilterCacheSize = 12;
+  static const _maxBlurFilterCacheSize = 24;
   static final _blurPaintCache = <int, Paint>{};
   static const _maxBlurPaintCacheSize = 64;
 
@@ -533,6 +649,7 @@ class LyricsLinePainter extends CustomPainter {
            params.currentTimeListenable,
            params.backgroundVocalVisibilityListenable,
            params.liftDecayListenable,
+           params.blurSigmaListenable,
          ]),
        );
 
@@ -571,7 +688,7 @@ class LyricsLinePainter extends CustomPainter {
 
   Paint? _blurForeground(Color color) {
     if (blurSigma <= 0.01 || color.a <= 0.0) return null;
-    final sigmaKey = (blurSigma * 2).round();
+    final sigmaKey = (blurSigma * 10).round();
     final key = color.toARGB32() * 31 + sigmaKey;
     final cached = _blurPaintCache[key];
     if (cached != null) {
@@ -663,7 +780,7 @@ class LyricsLinePainter extends CustomPainter {
   }
 
   static MaskFilter _blurFilter(double sigma) {
-    final key = (sigma * 2).roundToDouble() / 2;
+    final key = (sigma * 10).roundToDouble() / 10;
     final cached = _blurFilterCache[key];
     if (cached != null) {
       _blurFilterCache.remove(key);
@@ -690,34 +807,15 @@ class LyricsLinePainter extends CustomPainter {
   }
 
   double _bgHeightFactor(SyncLyricLine syncLine) {
-    final start = (syncLine.bgStart ?? syncLine.bg?.start ?? syncLine.start)
-        .inMilliseconds
-        .toDouble();
     return lyricBackgroundHeightFactor(
       currentTimeMs: _effectiveCurrentTimeMs,
-      startMs: start,
-      endMs: _bgEndMs(syncLine),
+      startMs: lyricBackgroundStartMs(syncLine),
+      endMs: lyricBackgroundEndMs(syncLine),
       isMainLine: isMainLine,
       isBackgroundActive: isBackgroundActive,
       isBackgroundVisible: params.isBackgroundVisible,
       exitVisibility: backgroundVocalVisibilityListenable?.value,
     );
-  }
-
-  double _bgEndMs(SyncLyricLine syncLine) {
-    var end =
-        (syncLine.bgEnd ??
-                syncLine.bg?.end ??
-                (syncLine.start + syncLine.length))
-            .inMilliseconds
-            .toDouble();
-    if (syncLine.bgWords.isNotEmpty) {
-      final last = syncLine.bgWords.last;
-      final lastEnd = (last.start.inMilliseconds + last.length.inMilliseconds)
-          .toDouble();
-      if (lastEnd > end) end = lastEnd;
-    }
-    return end;
   }
 
   static TextPainter obtainTextPainter() {
@@ -994,7 +1092,15 @@ class LyricsLinePainter extends CustomPainter {
       );
 
       double? prevNonPunctProgress;
+      double? prevNonPunctLift;
       int animIndex = 0;
+      var syllableCount = 0;
+      for (final c in convertedChars) {
+        if (!_isPunctuation(c)) syllableCount++;
+      }
+      if (syllableCount < 1) syllableCount = 1;
+      final softLift = !isObscene && lyricUsesSoftLift(word.content);
+      var syllableIndex = 0;
 
       layoutTimedWordChars(
         chars: convertedChars,
@@ -1020,19 +1126,26 @@ class LyricsLinePainter extends CustomPainter {
             }
           }
 
-          final liftProgress = _calcLiftProgress(charProgress, wordProgress);
           final double yLift;
-          if (isMainVocalActive && config.liftStyle == LyricLiftStyle.cosine) {
+          if (!isMainVocalActive ||
+              config.liftStyle == LyricLiftStyle.cosine) {
             yLift = 0.0;
-          } else if (isMainVocalActive && liftProgress > 0.0) {
-            final elapsedMs = currentTimeMs - wordStartMs;
-            final durationProgress = (elapsedMs / config.liftDurationMs)
-                .clamp(0.0, 1.0)
-                .toDouble();
-            final blended = _calcLiftProgress(charProgress, durationProgress);
-            yLift = Curves.easeOutCubic.transform(blended) * -config.liftPeak;
+          } else if (isPunctuation && prevNonPunctLift != null) {
+            yLift = prevNonPunctLift!;
           } else {
-            yLift = 0.0;
+            yLift = lyricVerticalCharLiftPx(
+              nowMs: currentTimeMs,
+              wordStartMs: wordStartMs,
+              wordDurationSec: wordDurationSec,
+              syllableIndex: isPunctuation ? 0 : syllableIndex,
+              syllableCount: syllableCount,
+              softLift: softLift,
+              liftPeak: config.liftPeak,
+            );
+            if (!isPunctuation) {
+              prevNonPunctLift = yLift;
+              syllableIndex++;
+            }
           }
 
           charInfos.add(
@@ -1443,15 +1556,18 @@ class LyricsLinePainter extends CustomPainter {
         gradientPaint,
       );
 
-      // ── Cosine lift recomputation (needs final X + highlightR) ──
       if (config.liftStyle == LyricLiftStyle.cosine && isMainVocalActive) {
+        final lineEndX = identical(group, lineGroups.last)
+            ? right
+            : right + 3.0 * fontSize;
         for (final wc in words) {
           for (final info in wc.chars) {
-            info.yLift = _calcCosineLift(
-              info.x + info.width / 2,
-              highlightR,
-              right,
-              fontSize,
+            info.yLift = lyricCosineLiftPx(
+              charCenter: info.x + info.width / 2,
+              cursorX: clippedHighlightR,
+              lineEndX: lineEndX,
+              fontSize: fontSize,
+              liftPeak: config.liftPeak,
             );
             if (info.yLift != 0.0) wc.hasLift = true;
           }
@@ -1555,6 +1671,7 @@ class LyricsLinePainter extends CustomPainter {
       }
     }
 
+    debugLyricCharYLifts = [for (final info in charInfos) info.yLift];
     if (isMainVocalActive) {
       _captureCharLifts(charInfos);
     }
@@ -2280,37 +2397,6 @@ class LyricsLinePainter extends CustomPainter {
       deadlineMs: deadlineMs,
       usesAuthoredTiming: params.usesAuthoredTiming,
     );
-  }
-
-  double _calcLiftProgress(double charProgress, double baseProgress) {
-    const wordBlend = 0.65;
-    return (charProgress * (1.0 - wordBlend) + baseProgress * wordBlend).clamp(
-      0.0,
-      1.0,
-    );
-  }
-
-  double _calcCosineLift(
-    double charCenter,
-    double cursorX,
-    double lineEndX,
-    double fontSize,
-  ) {
-    const window = 3.0;
-    final windowPx = window * fontSize;
-    final u = (charCenter - cursorX + windowPx / 2) / windowPx;
-    final remaining = lineEndX - cursorX;
-    final q = remaining < windowPx / 2
-        ? (1.0 - remaining / (windowPx / 2)).clamp(0.0, 1.0)
-        : 0.0;
-    final q2 = q * q;
-    final factor = switch (u) {
-      <= 0.0 => 1.0,
-      >= 1.0 => 0.0,
-      _ => cos(pi * u) * (1 - q2) / 2 + (1 + q2) / 2,
-    };
-    final maxLift = (config.liftPeak / 2.0 * 0.10 * fontSize).roundToDouble();
-    return -(factor * maxLift);
   }
 
   TextPainter _buildTextPainter(

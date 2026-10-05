@@ -102,6 +102,23 @@ double lyricTransitionCollapseFactor(
   return 1.0 - Curves.easeInCubic.transform(exitProgress);
 }
 
+bool lyricLineIsTransitionTile(LyricLine line) {
+  if (line is SyncLyricLine) {
+    return line.words.isEmpty && line.length > const Duration(seconds: 3);
+  }
+  if (line is LrcLine) {
+    return line.isBlank &&
+        line.length > const Duration(seconds: 3) &&
+        line.start == Duration.zero;
+  }
+  return false;
+}
+
+double lyricTransitionLayoutHeight(LyricLine line, {required bool isMain}) {
+  if (!isMain) return 0.0;
+  return lyricLineIsTransitionTile(line) ? transitionTileHeight : 0.0;
+}
+
 /// 歌词间奏表示
 /// lrcLine 和 syncLine 必须有且只有一个不为空
 class LyricTransitionTile extends StatefulWidget {
@@ -174,17 +191,17 @@ class _LyricTransitionTileState extends State<LyricTransitionTile> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
 
-    // 由播放进度控制可见性时，结束后立即隐藏
-    if (widget.animateVisibilityWithProgress && controller.progress >= 1) {
-      return const SizedBox.shrink();
-    }
-
     final align = widget.alignment ?? LyricTextAlign.left;
     final alignment = switch (align) {
       LyricTextAlign.left => Alignment.centerLeft,
       LyricTextAlign.center => Alignment.center,
       LyricTextAlign.right => Alignment.centerRight,
     };
+
+    // 由播放进度控制可见性时，结束后立即隐藏
+    if (widget.animateVisibilityWithProgress && controller.progress >= 1) {
+      return const SizedBox.shrink();
+    }
 
     if (widget.compact) {
       return Align(

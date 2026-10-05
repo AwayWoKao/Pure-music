@@ -1,4 +1,10 @@
-import 'package:flutter/painting.dart';
+import 'dart:ui';
+
+import 'package:flutter/material.dart';
+import 'package:pure_music/core/lyric_render_config.dart';
+import 'package:pure_music/lyric/lyric.dart';
+import 'package:pure_music/page/now_playing_page/component/lyric_painter_params.dart';
+import 'package:flutter/physics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pure_music/core/enums.dart';
 import 'package:pure_music/page/now_playing_page/component/lyrics_line_painter.dart';
@@ -47,6 +53,33 @@ void main() {
         endMs: 15143,
         isMainLine: true,
       ),
+      greaterThan(0.0),
+    );
+    expect(
+      lyricBackgroundHeightFactor(
+        currentTimeMs: 15253,
+        startMs: 14457,
+        endMs: 15143,
+        isMainLine: true,
+      ),
+      lessThan(1.0),
+    );
+    expect(
+      lyricBackgroundHeightFactor(
+        currentTimeMs: 15543,
+        startMs: 14457,
+        endMs: 15143,
+        isMainLine: true,
+      ),
+      0.0,
+    );
+    expect(
+      lyricBackgroundHeightFactor(
+        currentTimeMs: 15253,
+        startMs: 14457,
+        endMs: 15143,
+        isMainLine: false,
+      ),
       0.0,
     );
   });
@@ -56,6 +89,12 @@ void main() {
     expect(lyricBackgroundExitVisibility(400), 0.0);
     expect(lyricBackgroundExitVisibility(250), greaterThan(0.0));
     expect(lyricBackgroundExitVisibility(500), 0.0);
+    expect(lyricBackgroundExitElapsedMs(1.0), 0.0);
+    expect(lyricBackgroundExitElapsedMs(0.0), 400.0);
+    expect(
+      lyricBackgroundExitVisibility(lyricBackgroundExitElapsedMs(0.4)),
+      closeTo(0.4, 0.02),
+    );
   });
 
   group('lyricHighlightTimeMs', () {
@@ -424,6 +463,300 @@ void main() {
       expect(lyricExitLift(-2, 0.5), -1);
       expect(lyricExitLift(-2, 0), 0);
     });
+  });
+
+  group('lyricUsesSoftLift', () {
+    test('matches CJK and kana only', () {
+      expect(lyricUsesSoftLift('你'), isTrue);
+      expect(lyricUsesSoftLift('あ'), isTrue);
+      expect(lyricUsesSoftLift('Hello'), isFalse);
+      expect(lyricUsesSoftLift('한글'), isFalse);
+    });
+  });
+
+  group('lyricSoftLiftSpring', () {
+    test('matches the mass 1 stiffness 14 damping 7 spring', () {
+      final sim = SpringSimulation(
+        const SpringDescription(mass: 1, stiffness: 14, damping: 7),
+        0,
+        1,
+        0,
+      );
+      for (final t in [0.0, 0.05, 0.2, 0.5, 1.0, 2.0]) {
+        expect(lyricSoftLiftSpring(t), closeTo(sim.x(t), 0.002));
+      }
+    });
+  });
+
+  group('lyricVerticalCharLiftPx', () {
+    test('does not lift before the syllable rise starts', () {
+      expect(
+        lyricVerticalCharLiftPx(
+          nowMs: 1000,
+          wordStartMs: 1000,
+          wordDurationSec: 1,
+          syllableIndex: 0,
+          syllableCount: 1,
+          softLift: false,
+          liftPeak: 2,
+        ),
+        0,
+      );
+    });
+
+    test('holds near peak after the word ends', () {
+      double liftAt(double nowMs) => lyricVerticalCharLiftPx(
+        nowMs: nowMs,
+        wordStartMs: 0,
+        wordDurationSec: 0.4,
+        syllableIndex: 0,
+        syllableCount: 1,
+        softLift: false,
+        liftPeak: 2,
+      );
+      final atEnd = liftAt(400);
+      final later = liftAt(2400);
+      expect(atEnd, lessThan(0));
+      expect(later, closeTo(-2, 0.05));
+      expect(later.abs(), greaterThan(atEnd.abs() - 0.05));
+    });
+
+    test('CJK syllables start later than latin ones', () {
+      double lift({required bool softLift}) => lyricVerticalCharLiftPx(
+        nowMs: 300,
+        wordStartMs: 0,
+        wordDurationSec: 1,
+        syllableIndex: 0,
+        syllableCount: 2,
+        softLift: softLift,
+        liftPeak: 2,
+      );
+      expect(lift(softLift: true), 0);
+      expect(lift(softLift: false), lessThan(0));
+    });
+  });
+
+  test('line-end catch-up still pulls highlight time forward', () {
+    const raw = 800.0;
+    final highlight = lyricHighlightTimeMs(
+      currentTimeMs: raw,
+      lineStartMs: 0,
+      lastWordEndMs: 1000,
+      deadlineMs: 1000,
+    );
+    expect(highlight, greaterThan(raw));
+  });
+
+  group('lyricCosineLiftPx', () {
+    test('does not treat a wrap as the line end', () {
+      const fontSize = 20.0;
+      const peak = 2.0;
+      final midWrap = lyricCosineLiftPx(
+        charCenter: 90,
+        cursorX: 100,
+        lineEndX: 240,
+        fontSize: fontSize,
+        liftPeak: peak,
+      );
+      final trueEnd = lyricCosineLiftPx(
+        charCenter: 90,
+        cursorX: 100,
+        lineEndX: 110,
+        fontSize: fontSize,
+        liftPeak: peak,
+      );
+      expect(midWrap, isNot(0));
+      expect(trueEnd.abs(), greaterThan(midWrap.abs()));
+    });
+
+    test('follows the highlight cursor instead of lifting the whole line', () {
+      const fontSize = 20.0;
+      const peak = 2.0;
+      const cursor = 40.0;
+      const end = 120.0;
+      final behind = lyricCosineLiftPx(
+        charCenter: 10,
+        cursorX: cursor,
+        lineEndX: end,
+        fontSize: fontSize,
+        liftPeak: peak,
+      );
+      final ahead = lyricCosineLiftPx(
+        charCenter: 110,
+        cursorX: cursor,
+        lineEndX: end,
+        fontSize: fontSize,
+        liftPeak: peak,
+      );
+      expect(behind, lessThan(0));
+      expect(ahead, 0);
+    });
+  });
+
+  test('cosine paint raises sung glyphs and leaves later ones down', () {
+    final line = SyncLyricLine(
+      Duration.zero,
+      const Duration(milliseconds: 800),
+      [
+        SyncLyricWord(Duration.zero, const Duration(milliseconds: 400), '甲乙'),
+        SyncLyricWord(
+          const Duration(milliseconds: 400),
+          const Duration(milliseconds: 400),
+          '丙丁',
+        ),
+      ],
+    );
+    final painter = LyricsLinePainter(
+      params: LyricPainterParams(
+        line: line,
+        currentTimeMs: 200,
+        blurSigma: 0,
+        config: const LyricRenderConfig(
+          textAlign: LyricTextAlign.left,
+          baseFontSize: 32,
+          translationBaseFontSize: 20,
+          showTranslation: false,
+          showRoman: false,
+          fontWeight: 600,
+          enableBlur: false,
+          liftStyle: LyricLiftStyle.cosine,
+          liftPeak: 2,
+        ),
+        isMainLine: true,
+        isHighlightActive: true,
+        isMainVocalActive: true,
+        accelerateTailHighlight: false,
+        useMaterialYouColor: false,
+        opacity: 1,
+        lineMedianWordDuration: Duration.zero,
+      ),
+      scheme: const ColorScheme.dark(),
+    );
+    painter.paint(Canvas(PictureRecorder()), const Size(400, 140));
+    expect(debugLyricCharYLifts, isNotEmpty);
+    expect(debugLyricCharYLifts.first, lessThan(0));
+    expect(debugLyricCharYLifts.last, 0);
+  });
+
+  test('inactive paint eases lifts down instead of dropping every glyph together', () {
+    final line = SyncLyricLine(
+      Duration.zero,
+      const Duration(milliseconds: 800),
+      [
+        SyncLyricWord(Duration.zero, const Duration(milliseconds: 400), '甲乙'),
+        SyncLyricWord(
+          const Duration(milliseconds: 400),
+          const Duration(milliseconds: 400),
+          '丙丁',
+        ),
+      ],
+    );
+    const config = LyricRenderConfig(
+      textAlign: LyricTextAlign.left,
+      baseFontSize: 32,
+      translationBaseFontSize: 20,
+      showTranslation: false,
+      showRoman: false,
+      fontWeight: 600,
+      enableBlur: false,
+      liftPeak: 2,
+    );
+    final cache = LyricCharLiftCache();
+    LyricsLinePainter(
+      params: LyricPainterParams(
+        line: line,
+        currentTimeMs: 700,
+        blurSigma: 0,
+        config: config,
+        isMainLine: true,
+        isHighlightActive: true,
+        isMainVocalActive: true,
+        accelerateTailHighlight: false,
+        useMaterialYouColor: false,
+        opacity: 1,
+        lineMedianWordDuration: Duration.zero,
+      ),
+      scheme: const ColorScheme.dark(),
+      liftCache: cache,
+    ).paint(Canvas(PictureRecorder()), const Size(400, 140));
+    expect(cache.values.where((y) => y < 0), isNotEmpty);
+
+    LyricsLinePainter(
+      params: LyricPainterParams(
+        line: line,
+        currentTimeMs: 900,
+        blurSigma: 0,
+        config: config,
+        isMainLine: false,
+        isHighlightActive: false,
+        isMainVocalActive: false,
+        accelerateTailHighlight: false,
+        useMaterialYouColor: false,
+        opacity: 1,
+        lineMedianWordDuration: Duration.zero,
+        liftDecayListenable: ValueNotifier<double>(0.7),
+      ),
+      scheme: const ColorScheme.dark(),
+      liftCache: cache,
+    ).paint(Canvas(PictureRecorder()), const Size(400, 140));
+    expect(debugLyricCharYLifts, isNotEmpty);
+    final before = cache.values.fold<double>(
+      0,
+      (m, y) => y.abs() > m ? y.abs() : m,
+    );
+    final after = debugLyricCharYLifts.fold<double>(
+      0,
+      (m, y) => y.abs() > m ? y.abs() : m,
+    );
+    expect(before, greaterThan(0));
+    expect(after, lessThan(before));
+  });
+
+  test('catch-up paint still raises earlier glyphs first', () {
+    final line = SyncLyricLine(
+      Duration.zero,
+      const Duration(milliseconds: 800),
+      [
+        SyncLyricWord(Duration.zero, const Duration(milliseconds: 400), '甲乙'),
+        SyncLyricWord(
+          const Duration(milliseconds: 400),
+          const Duration(milliseconds: 400),
+          '丙丁',
+        ),
+      ],
+    );
+    LyricsLinePainter(
+      params: LyricPainterParams(
+        line: line,
+        currentTimeMs: 600,
+        blurSigma: 0,
+        config: const LyricRenderConfig(
+          textAlign: LyricTextAlign.left,
+          baseFontSize: 32,
+          translationBaseFontSize: 20,
+          showTranslation: false,
+          showRoman: false,
+          fontWeight: 600,
+          enableBlur: false,
+          liftPeak: 2,
+        ),
+        isMainLine: true,
+        isHighlightActive: true,
+        isMainVocalActive: true,
+        accelerateTailHighlight: false,
+        useMaterialYouColor: false,
+        opacity: 1,
+        highlightDeadlineMs: 800,
+        lineMedianWordDuration: Duration.zero,
+      ),
+      scheme: const ColorScheme.dark(),
+    ).paint(Canvas(PictureRecorder()), const Size(400, 140));
+    expect(debugLyricCharYLifts.length, greaterThanOrEqualTo(4));
+    expect(debugLyricCharYLifts.first, lessThan(0));
+    expect(
+      debugLyricCharYLifts.first.abs(),
+      greaterThan(debugLyricCharYLifts.last.abs()),
+    );
   });
 
   group('layoutTimedWordChars', () {

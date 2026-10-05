@@ -16,79 +16,73 @@ class _NowPlayingImmersivePage extends StatelessWidget {
   }
 }
 
-/// 竖屏沉浸模式：封面 + 歌名歌手 (顶) + 歌词 (下)
+/// 竖屏沉浸：顶栏紧凑封面信息，歌词铺满剩余高度。
 class _ImmersivePortraitLayout extends StatelessWidget {
   const _ImmersivePortraitLayout();
 
+  // 竖屏紧凑顶栏：封面 72，左右约 10%，封面与文字约 5%；当前行贴 12%。
+  static const _coverSize = 72.0;
+  static const _lyricLineInset = 12.0;
+  static const _currentLineAlignment = 0.12;
+
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12.0, 32.0, 12.0, 16.0),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final sideInset = (width * 0.10).clamp(24.0, 64.0).toDouble();
+        final headerGap = (width * 0.05).clamp(12.0, 24.0).toDouble();
+        final outer = max(0.0, sideInset - _lyricLineInset);
+        return Padding(
+          padding: EdgeInsets.fromLTRB(outer, 20.0, outer, 8.0),
           child: Column(
             children: [
-              _header(),
-              const SizedBox(height: 8),
-              Expanded(child: _lyricMask()),
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: _lyricLineInset,
+                ),
+                child: _header(headerGap),
+              ),
+              const SizedBox(height: 12),
+              const Expanded(
+                child: VerticalLyricView(
+                  showControls: false,
+                  enableSeekOnTap: true,
+                  centerVertically: false,
+                  enableEdgeSpacer: true,
+                  currentLineAlignment: _currentLineAlignment,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _header(double gap) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        const SizedBox(
+          width: _coverSize,
+          height: _coverSize,
+          child: _ImmersiveCoverThumbnail(size: _coverSize),
+        ),
+        SizedBox(width: gap),
+        const Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ConcertActLabel(compact: true, textAlign: TextAlign.start),
+              _ImmersiveTitleText(),
+              SizedBox(height: 4),
+              _ImmersiveArtistText(),
             ],
           ),
         ),
       ],
-    );
-  }
-
-  Widget _header() {
-    return const Padding(
-      padding: EdgeInsets.only(left: 24.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          SizedBox(
-            width: 64.0,
-            height: 64.0,
-            child: _ImmersiveCoverThumbnail(),
-          ),
-          SizedBox(width: 12.0),
-          Expanded(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _ImmersiveTitleText(),
-                SizedBox(height: 2),
-                _ImmersiveArtistText(),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _lyricMask() {
-    return ShaderMask(
-      shaderCallback: (Rect bounds) {
-        return const LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Colors.transparent,
-            Colors.black,
-            Colors.black,
-            Colors.transparent,
-          ],
-          stops: [0.0, 0.05, 0.95, 1.0],
-        ).createShader(bounds);
-      },
-      blendMode: BlendMode.dstIn,
-      child: const VerticalLyricView(
-        showControls: false,
-        enableSeekOnTap: true,
-        centerVertically: false,
-        enableEdgeSpacer: true,
-        currentLineAlignment: 0.10,
-      ),
     );
   }
 }
@@ -179,6 +173,18 @@ class _ImmersiveHelpOverlayState extends State<_ImmersiveHelpOverlay> {
       _ImmersiveShortcutRow(
         keys: HotkeysHelper.inAppLabel(HotkeyAction.volumeDown),
         label: '降低音量',
+      ),
+      _ImmersiveShortcutRow(
+        keys: HotkeysHelper.inAppLabel(HotkeyAction.shuffle),
+        label: '随机播放',
+      ),
+      _ImmersiveShortcutRow(
+        keys: HotkeysHelper.inAppLabel(HotkeyAction.desktopLyric),
+        label: '桌面歌词',
+      ),
+      _ImmersiveShortcutRow(
+        keys: HotkeysHelper.inAppLabel(HotkeyAction.sleepTimer),
+        label: '睡眠定时',
       ),
       _ImmersiveShortcutRow(
         keys: HotkeysHelper.inAppLabel(HotkeyAction.immersive),
@@ -319,7 +325,9 @@ class _ImmersiveShortcutRow extends StatelessWidget {
 
 /// 沉浸模式顶部封面缩略图
 class _ImmersiveCoverThumbnail extends StatefulWidget {
-  const _ImmersiveCoverThumbnail();
+  const _ImmersiveCoverThumbnail({this.size = 72.0});
+
+  final double size;
 
   @override
   State<_ImmersiveCoverThumbnail> createState() =>
@@ -387,7 +395,7 @@ class _ImmersiveCoverThumbnailState extends State<_ImmersiveCoverThumbnail> {
 
     final placeholder = Icon(
       Symbols.music_note,
-      size: 64.0,
+      size: widget.size,
       color: scheme.onSecondaryContainer,
     );
 
@@ -425,7 +433,7 @@ class _ImmersiveTitleText extends StatelessWidget {
           style: TextStyle(
             color: Theme.of(context).colorScheme.onSurface,
             fontWeight: AppType.weightBold,
-            fontSize: AppType.subtitle,
+            fontSize: AppType.pageTitle,
             height: 1.2,
           ),
         );
@@ -450,7 +458,7 @@ class _ImmersiveArtistText extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
             color: Theme.of(context).colorScheme.onSurfaceVariant,
-            fontSize: AppType.caption,
+            fontSize: AppType.body,
             height: 1.2,
           ),
         );
