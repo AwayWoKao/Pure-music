@@ -13,6 +13,7 @@ import 'package:pure_music/core/hotkeys.dart';
 import 'package:pure_music/core/immersive.dart';
 import 'package:pure_music/core/memory_monitor.dart';
 import 'package:pure_music/core/now_playing_perf_auto.dart';
+import 'package:pure_music/core/sidebar_perf_auto.dart';
 import 'package:pure_music/native/rust/api/logger.dart';
 import 'package:pure_music/native/rust/frb_generated.dart';
 import 'package:pure_music/core/app_fonts.dart';
@@ -159,6 +160,7 @@ Future<void> _runApplication() async {
   MemoryMonitorService.instance.start();
   runApp(Entry(welcome: welcome));
   NowPlayingPerfAuto.schedule();
+  SidebarPerfAuto.schedule();
 }
 
 void _listenRustLogger() {
