@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:archive/archive_io.dart';
@@ -24,6 +25,70 @@ typedef UpdateProgressCallback = void Function(int received, int total);
 
 typedef UpdatePhaseCallback = void Function(String phase);
 
+void ensureUpdateHasChecksum({
+  required UpdateInfo info,
+  required UpdateChannel channel,
+  required bool portableBuild,
+}) {
+  if (!info.hasChecksum(channel: channel, portableBuild: portableBuild)) {
+    throw UpdateInstallException('缺少更新校验信息，已停止安装');
+  }
+}
+
+bool isSafePortableEntryPath(String root, String relative) {
+  final unified = relative.trim().replaceAll('\\', '/');
+  if (unified.isEmpty || p.isAbsolute(unified)) return false;
+  final normalized = p.posix.normalize(unified);
+  if (normalized == '.' ||
+      normalized == '..' ||
+      normalized.startsWith('../')) {
+    return false;
+  }
+  final dest = p.normalize(p.join(root, normalized.split('/').join(p.separator)));
+  return p.isWithin(p.normalize(root), dest);
+}
+
+Future<void> verifyExtractedPortablePackage(String appDir) async {
+  final manifestFile = File(
+    p.join(appDir, '.update', 'package_manifest.json'),
+  );
+  if (!await manifestFile.exists()) {
+    throw UpdateInstallException('便携版更新包缺少校验清单');
+  }
+  final decoded = jsonDecode(await manifestFile.readAsString());
+  if (decoded is! Map || decoded['files'] is! List) {
+    throw UpdateInstallException('便携版更新包校验清单无效');
+  }
+  final files = decoded['files'] as List;
+  var checked = 0;
+  for (final entry in files) {
+    if (entry is! Map) continue;
+    final relative = entry['path'];
+    final digest = entry['sha256'];
+    if (relative is! String || digest is! String) continue;
+    if (!isSafePortableEntryPath(appDir, relative)) {
+      throw UpdateInstallException('便携版更新包校验清单无效');
+    }
+    final file = File(
+      p.join(appDir, relative.replaceAll('/', p.separator)),
+    );
+    if (!await file.exists()) {
+      throw UpdateInstallException('便携版更新包不完整');
+    }
+    if (!RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(digest)) {
+      throw UpdateInstallException('便携版更新包校验清单无效');
+    }
+    final actual = (await sha256.bind(file.openRead()).first).toString();
+    if (actual.toLowerCase() != digest.toLowerCase()) {
+      throw UpdateInstallException('便携版更新包校验失败');
+    }
+    checked += 1;
+  }
+  if (checked == 0) {
+    throw UpdateInstallException('便携版更新包校验清单无效');
+  }
+}
+
 class UpdateInstaller {
   UpdateInstaller._();
 
@@ -43,6 +108,14 @@ class UpdateInstaller {
     if (url == null || url.isEmpty) {
       throw UpdateInstallException('缺少下载地址');
     }
+    if (!isAllowedUpdateDownloadUrl(url, channel)) {
+      throw UpdateInstallException('下载地址不可信');
+    }
+    ensureUpdateHasChecksum(
+      info: info,
+      channel: channel,
+      portableBuild: portableBuild,
+    );
 
     final fileName = _fileNameFromUrl(url);
     final savePath = await _prepareSavePath(fileName);
@@ -76,24 +149,20 @@ class UpdateInstaller {
     }
 
     onPhase('正在校验');
-    final expected = await _resolveExpectedSha256(
-      info: info,
-      channel: channel,
-      portableBuild: portableBuild,
-      cancelToken: cancelToken,
-    );
-    if (expected == null) {
-      log.update.warn('legacy', '[UpdateInstaller] release has no sha256 metadata; skip verification',);
-    } else {
-      try {
-        final ok = await _verifySha256(savePath, expected);
-        if (!ok) {
-          throw UpdateInstallException('校验失败，文件已删除');
-        }
-      } catch (_) {
-        await _deleteQuietly(savePath);
-        rethrow;
+    try {
+      final expected = await _resolveExpectedSha256(
+        info: info,
+        channel: channel,
+        portableBuild: portableBuild,
+        cancelToken: cancelToken,
+      );
+      final ok = await _verifySha256(savePath, expected);
+      if (!ok) {
+        throw UpdateInstallException('校验失败，文件已删除');
       }
+    } catch (_) {
+      await _deleteQuietly(savePath);
+      rethrow;
     }
 
     if (portableBuild) {
@@ -131,6 +200,8 @@ class UpdateInstaller {
     try {
       onPhase('正在解压更新');
       await extractFileToDisk(archivePath, newAppDir.path);
+      onPhase('正在校验');
+      await verifyExtractedPortablePackage(newAppDir.path);
 
       final newExecutable = File(p.join(newAppDir.path, 'pure_music.exe'));
       final migrationScript = File(
@@ -215,15 +286,17 @@ class UpdateInstaller {
     throw UpdateInstallException('无法创建便携版更新目录');
   }
 
-  static Future<String?> _resolveExpectedSha256({
+  static Future<String> _resolveExpectedSha256({
     required UpdateInfo info,
     required UpdateChannel channel,
     required bool portableBuild,
     required CancelToken cancelToken,
   }) async {
-    if (!info.hasChecksum(channel: channel, portableBuild: portableBuild)) {
-      return null;
-    }
+    ensureUpdateHasChecksum(
+      info: info,
+      channel: channel,
+      portableBuild: portableBuild,
+    );
 
     final direct = info.sha256(portableBuild: portableBuild)?.trim();
     if (direct != null && direct.isNotEmpty) {
@@ -237,8 +310,11 @@ class UpdateInstaller {
       channel: channel,
       portableBuild: portableBuild,
     );
-    if (checksumUrl == null) {
-      return null;
+    if (checksumUrl == null || checksumUrl.isEmpty) {
+      throw UpdateInstallException('缺少更新校验信息，已停止安装');
+    }
+    if (!isAllowedUpdateDownloadUrl(checksumUrl, channel)) {
+      throw UpdateInstallException('校验地址不可信');
     }
 
     try {
@@ -261,8 +337,7 @@ class UpdateInstaller {
       return hash.toLowerCase();
     } on DioException catch (error) {
       if (error.response?.statusCode == 404) {
-        log.update.warn('legacy', '[UpdateInstaller] checksum asset is missing; skip verification',);
-        return null;
+        throw UpdateInstallException('无法获取更新校验值');
       }
       rethrow;
     } on UpdateInstallException {
@@ -290,7 +365,10 @@ class UpdateInstaller {
       p.join(Directory.systemTemp.path, 'pure_music_update'),
     );
     await dir.create(recursive: true);
-    final path = p.join(dir.path, fileName);
+    final path = p.normalize(p.join(dir.path, p.basename(fileName)));
+    if (!p.isWithin(p.normalize(dir.path), path)) {
+      throw UpdateInstallException('下载路径非法');
+    }
     await _deleteQuietly(path);
     return path;
   }
@@ -300,8 +378,11 @@ class UpdateInstaller {
     final segment = uri?.pathSegments.isNotEmpty == true
         ? uri!.pathSegments.last
         : '';
-    if (segment.isEmpty) return 'pure_music_update.bin';
-    return segment;
+    final name = p.basename(segment);
+    if (name.isEmpty || name == '.' || name == '..') {
+      return 'pure_music_update.bin';
+    }
+    return name;
   }
 
   static Future<void> _deleteQuietly(String path) async {

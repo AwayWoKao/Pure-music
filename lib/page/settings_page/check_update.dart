@@ -314,7 +314,7 @@ class _NewestUpdateViewState extends State<NewestUpdateView> {
       case _UpdatePhase.verifying:
         return '正在校验完整性';
       case _UpdatePhase.installing:
-        return '正在启动安装程序';
+        return portableBuild ? '正在切换到新版本' : '正在启动安装程序';
       case _UpdatePhase.switchingChannel:
         return '正在切换到${_channel.alternate.label}';
       case _UpdatePhase.error:
@@ -334,6 +334,13 @@ class _NewestUpdateViewState extends State<NewestUpdateView> {
           .downloadUrl(channel: _channel, portableBuild: portableBuild)
           ?.isNotEmpty ==
       true;
+
+  bool get _hasChecksum => _info.hasChecksum(
+    channel: _channel,
+    portableBuild: portableBuild,
+  );
+
+  bool get _canInstall => _hasDownload && _hasChecksum;
 
   @override
   void dispose() {
@@ -367,6 +374,11 @@ class _NewestUpdateViewState extends State<NewestUpdateView> {
               if (_busy) ..._progress(scheme),
               if (_phase == _UpdatePhase.error && _errorMessage != null)
                 ..._error(scheme),
+              if (!_busy &&
+                  _hasDownload &&
+                  !_hasChecksum &&
+                  _phase != _UpdatePhase.error)
+                ..._missingChecksumHint(scheme),
               const SizedBox(height: Spacing.lg),
               _actions(context),
             ],
@@ -391,7 +403,7 @@ class _NewestUpdateViewState extends State<NewestUpdateView> {
         ),
         const SizedBox(height: Spacing.xs),
         Text(
-          '更新渠道：${_channel.label}',
+          '当前 ${AppSettings.version} · ${_info.tagName} · ${_channel.label}',
           style: TextStyle(
             color: scheme.onSurfaceVariant,
             fontSize: AppType.body,
@@ -456,6 +468,19 @@ class _NewestUpdateViewState extends State<NewestUpdateView> {
     ];
   }
 
+  List<Widget> _missingChecksumHint(ColorScheme scheme) {
+    return [
+      const SizedBox(height: Spacing.sm),
+      Text(
+        '此版本还不能应用内安装，请从网页下载。',
+        style: TextStyle(
+          color: scheme.onSurfaceVariant,
+          fontSize: AppType.body,
+        ),
+      ),
+    ];
+  }
+
   Widget _actions(BuildContext context) {
     final updateUrl = _updateUrl;
     final hasUpdateUrl = updateUrl?.isNotEmpty == true;
@@ -481,7 +506,7 @@ class _NewestUpdateViewState extends State<NewestUpdateView> {
             label: Text('切换到${_channel.alternate.label}'),
           ),
         _primaryAction(context, hasUpdateUrl),
-        if (hasUpdateUrl && _hasDownload && !_busy)
+        if (hasUpdateUrl && _canInstall && !_busy)
           TextButton.icon(
             onPressed: () async {
               await _openReleasePage();
@@ -513,15 +538,27 @@ class _NewestUpdateViewState extends State<NewestUpdateView> {
         label: const Text('处理中'),
       );
     }
+    if (_canInstall) {
+      final bytes = _info.downloadSize(portableBuild: portableBuild);
+      const action = portableBuild ? '下载更新' : '下载并安装';
+      final label = bytes != null && bytes > 0
+          ? '$action · ${_formatMb(bytes)}'
+          : action;
+      return FilledButton.icon(
+        onPressed: _startUpdate,
+        icon: const Icon(Symbols.download),
+        label: Text(label),
+      );
+    }
     return FilledButton.icon(
-      onPressed: _hasDownload
-          ? _startUpdate
-          : () async {
+      onPressed: hasUpdateUrl
+          ? () async {
               await _openReleasePage();
               if (context.mounted) Navigator.pop(context);
-            },
-      icon: Icon(_hasDownload ? Symbols.download : Symbols.arrow_outward),
-      label: Text(_hasDownload ? (portableBuild ? '下载更新' : '下载并安装') : '打开网页'),
+            }
+          : null,
+      icon: const Icon(Symbols.arrow_outward),
+      label: const Text('打开网页'),
     );
   }
 }

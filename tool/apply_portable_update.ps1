@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
     [string]$PreviousPath,
@@ -22,7 +22,7 @@ function Resolve-AppDirectory([string]$path) {
         return $nested
     }
 
-    throw "pure_music.exe was not found under: $resolved"
+    throw "在此目录找不到 pure_music.exe：$resolved"
 }
 
 function Test-ProcessFromDirectory([string]$directory) {
@@ -43,7 +43,7 @@ function Wait-UntilStopped([string]$directory, [int]$timeoutSeconds) {
     $deadline = [DateTime]::UtcNow.AddSeconds($timeoutSeconds)
     while (Test-ProcessFromDirectory $directory) {
         if ([DateTime]::UtcNow -ge $deadline) {
-            throw "The previous application process did not exit in time."
+            throw "旧版程序没有在限定时间内退出。"
         }
         Start-Sleep -Milliseconds 250
     }
@@ -52,7 +52,7 @@ function Wait-UntilStopped([string]$directory, [int]$timeoutSeconds) {
 function Hide-PortableSupport([string]$directory) {
     $supportDir = Join-Path $directory ".update"
     if (-not (Test-Path -LiteralPath $supportDir -PathType Container)) {
-        throw "Portable update directory is missing."
+        throw "新版缺少 .update 目录。"
     }
 
     Get-ChildItem -LiteralPath $supportDir -Force -Recurse | ForEach-Object {
@@ -65,13 +65,13 @@ function Hide-PortableSupport([string]$directory) {
 $previousAppDir = Resolve-AppDirectory $PreviousPath
 $newAppDir = Resolve-AppDirectory $NewPath
 if ($previousAppDir.Equals($newAppDir, [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "The previous and new package directories are the same."
+    throw "新旧便携目录不能是同一个。"
 }
 
 $processDeadline = [DateTime]::UtcNow.AddSeconds(120)
 while (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
     if ([DateTime]::UtcNow -ge $processDeadline) {
-        throw "The application process did not exit in time."
+        throw "当前程序没有在限定时间内退出。"
     }
     Start-Sleep -Milliseconds 250
 }
@@ -79,7 +79,7 @@ Wait-UntilStopped $previousAppDir 30
 
 $migrationScript = Join-Path $newAppDir ".update\upgrade_from_previous.ps1"
 if (-not (Test-Path -LiteralPath $migrationScript -PathType Leaf)) {
-    throw "Portable migration script is missing."
+    throw "新版缺少数据迁移脚本。"
 }
 & $migrationScript -PreviousPath $previousAppDir -NonInteractive
 Hide-PortableSupport $newAppDir
@@ -114,7 +114,7 @@ try {
     }
 
     if (-not $movedNew) {
-        throw "The new package could not replace the previous package."
+        throw "无法用新版替换旧版目录。"
     }
 
     $newExecutable = Join-Path $previousAppDir "pure_music.exe"

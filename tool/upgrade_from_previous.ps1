@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$PreviousPath = "",
     [switch]$NonInteractive
@@ -16,7 +16,7 @@ function Resolve-AppDirectory([string]$path) {
     if (Test-Path -LiteralPath (Join-Path $nested "pure_music.exe") -PathType Leaf) {
         return $nested
     }
-    throw "pure_music.exe was not found under: $resolved"
+    throw "在此目录找不到 pure_music.exe：$resolved"
 }
 
 function Test-ProcessFromDirectory([string]$directory) {
@@ -35,7 +35,7 @@ function Test-ProcessFromDirectory([string]$directory) {
 
 if ([string]::IsNullOrWhiteSpace($PreviousPath)) {
     if ($NonInteractive) {
-        throw "PreviousPath is required in non-interactive mode."
+        throw "非交互模式必须提供旧版目录。"
     }
     $PreviousPath = Read-Host "Previous portable package directory"
 }
@@ -43,10 +43,10 @@ if ([string]::IsNullOrWhiteSpace($PreviousPath)) {
 $currentAppDir = Resolve-AppDirectory (Split-Path -Parent $PSScriptRoot)
 $previousAppDir = Resolve-AppDirectory $PreviousPath
 if ($currentAppDir.Equals($previousAppDir, [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "The previous and current package directories are the same."
+    throw "新旧便携目录不能是同一个。"
 }
 if ((Test-ProcessFromDirectory $currentAppDir) -or (Test-ProcessFromDirectory $previousAppDir)) {
-    throw "Close Pure Music in both package directories before migrating data."
+    throw "请先关闭新旧两个目录中的 Pure Music，再迁移数据。"
 }
 
 $previousDataDir = Join-Path $previousAppDir "data"
@@ -57,7 +57,7 @@ foreach ($requiredPath in @(
     (Join-Path $currentDataDir "flutter_assets")
 )) {
     if (-not (Test-Path -LiteralPath $requiredPath)) {
-        throw "Portable runtime data is incomplete: $requiredPath"
+        throw "便携版运行数据不完整：$requiredPath"
     }
 }
 
@@ -69,7 +69,7 @@ $existingUserEntries = @(Get-ChildItem -LiteralPath $currentDataDir -Force | Whe
     $runtimeEntries -notcontains $_.Name
 })
 if ($existingUserEntries.Count -gt 0) {
-    throw "The new package already contains user data: $($existingUserEntries.Name -join ', ')"
+    throw "新版目录里已经有用户数据，已停止迁移，以免覆盖：$($existingUserEntries.Name -join ', ')"
 }
 
 $copiedPaths = [System.Collections.Generic.List[string]]::new()
