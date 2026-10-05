@@ -45,12 +45,12 @@ double audioReactiveFlowCurve(double value) {
 /// 低音主导的整体放大，混一点点中频。
 double audioReactiveFlowSpectrumScale(double low, double mid) {
   final specMix = _unit(low) * 0.9 + _unit(mid) * 0.1;
-  return specMix * specMix * 0.55 + 1.0;
+  return specMix * specMix * 0.38 + 1.0;
 }
 
 /// 低音把封面对比略微拉开。
 double audioReactiveFlowContrast(double low) {
-  return _unit(low) * 0.14 + 1.0;
+  return _unit(low) * 0.08 + 1.0;
 }
 
 /// 高频把颜色拉鲜一点。
@@ -72,7 +72,7 @@ double audioReactiveFlowOnsetPulse({
   final current = _unit(currentEnergy);
   final previous = _unit(previousEnergy);
   final decayed = _unit(previousPulse) * 0.82;
-  final rise = ((current - previous) * 5.8).clamp(0.0, 1.0).toDouble();
+  final rise = ((current - previous) * 4.4).clamp(0.0, 1.0).toDouble();
   return math.max(decayed, rise);
 }
 
@@ -80,8 +80,8 @@ double audioReactiveFlowMotionSpeedTarget({
   required double energy,
   required double onset,
 }) {
-  return (1.0 + _unit(energy) * 0.45 + _unit(onset) * 0.90)
-      .clamp(1.0, 2.15)
+  return (1.0 + _unit(energy) * 0.32 + _unit(onset) * 0.55)
+      .clamp(1.0, 1.70)
       .toDouble();
 }
 

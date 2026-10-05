@@ -4,7 +4,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:pure_music/native/bass/bass_player.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:pure_music/page/now_playing_page/component/audio_reactive_flow.dart';
 import 'package:pure_music/page/now_playing_page/component/now_playing_background_inputs.dart';
 
@@ -23,9 +23,9 @@ const _kFrameInterval = Duration(milliseconds: 42);
 const _kArtworkTransitionDuration = Duration(milliseconds: 300);
 const _kPlaybackSpeedTransitionDuration = Duration(milliseconds: 650);
 
-const _kCoverPeriod1 = 62.0;
-const _kCoverPeriod2 = 44.0;
-const _kCoverPeriod3 = 50.0;
+const _kCoverPeriod1 = 75.0;
+const _kCoverPeriod2 = 55.0;
+const _kCoverPeriod3 = 62.0;
 const _kCoverPrefilterSigma = 6.0;
 
 const _kPrimaryLayerScale = 1.42;
@@ -38,7 +38,7 @@ const _kLightOffset = Offset(-0.25, 0.15);
 const _kPrimaryScaleMul = 1.0;
 const _kSecondaryScaleMul = 0.50;
 const _kLightScaleMul = 0.50;
-const _kSecondaryOrbit = 0.58;
+const _kSecondaryOrbit = 0.48;
 
 Size _flowingLightCropSize(Size viewport, double devicePixelRatio) {
   if (viewport.isEmpty) return Size.zero;
@@ -160,7 +160,8 @@ class FlowingLightBackground extends StatefulWidget {
   State<FlowingLightBackground> createState() => _FlowingLightBackgroundState();
 }
 
-class _FlowingLightBackgroundState extends State<FlowingLightBackground> {
+class _FlowingLightBackgroundState extends State<FlowingLightBackground>
+    with SingleTickerProviderStateMixin {
   ui.Image? _coverImage;
   ui.Image? _previousCoverImage;
   Color _coverBaseColor = _kDarkNeutralBackground;
@@ -169,10 +170,10 @@ class _FlowingLightBackgroundState extends State<FlowingLightBackground> {
   _DecodedCover? _pendingCover;
 
   late final Stopwatch _transitionClock;
-  late final Stopwatch _motionClock;
-  Timer? _frameTimer;
+  late final Ticker _ticker;
   final _FlowMotionState _motion = _FlowMotionState();
   Duration? _lastTickElapsed;
+  Duration? _lastPaintElapsed;
 
   final ValueNotifier<int> _frameNotifier = ValueNotifier(0);
   final AudioReactiveFlowEnvelope _envelope = AudioReactiveFlowEnvelope();
@@ -223,7 +224,7 @@ class _FlowingLightBackgroundState extends State<FlowingLightBackground> {
   void initState() {
     super.initState();
     _transitionClock = Stopwatch();
-    _motionClock = Stopwatch();
+    _ticker = createTicker(_onTick);
     _blurHandle.filter = _fallbackBlurFilter(_kBlurSigma);
     _scheduleCoverDecode();
     final cachedProgram = _cachedGaussianProgram;
@@ -279,14 +280,16 @@ class _FlowingLightBackgroundState extends State<FlowingLightBackground> {
         widget.inputs.enableAnimation &&
         widget.inputs.audioReactiveFlow &&
         widget.inputs.isVisible &&
-        widget.inputs.playerState == PlayerState.playing;
+        widget.inputs.isPlaybackActive;
     if (shouldListen) {
-      _spectrumSubscription ??= stream.listen(_handleSpectrum);
+      if (_spectrumSubscription == null) {
+        _audio.markListenStarted();
+        _spectrumSubscription = stream.listen(_handleSpectrum);
+      }
       return;
     }
     _spectrumSubscription?.cancel();
     _spectrumSubscription = null;
-    _resetAudioVisual();
   }
 
   void _handleSpectrum(Float32List bands) {
@@ -315,8 +318,7 @@ class _FlowingLightBackgroundState extends State<FlowingLightBackground> {
         _tickerModeEnabled &&
         widget.inputs.enableAnimation &&
         widget.inputs.isVisible;
-    final isPlaying =
-        canMove && widget.inputs.playerState == PlayerState.playing;
+    final isPlaying = canMove && widget.inputs.isPlaybackActive;
     _setPlaybackSpeedTarget(isPlaying ? _kActiveSpeed : _kIdleSpeed);
 
     final shouldMove =
@@ -336,18 +338,14 @@ class _FlowingLightBackgroundState extends State<FlowingLightBackground> {
     }
 
     final shouldTick = shouldMove || shouldTransition;
-    if (shouldTick && _frameTimer == null) {
+    if (shouldTick && !_ticker.isActive) {
       _lastTickElapsed = null;
-      _motionClock
-        ..stop()
-        ..reset()
-        ..start();
-      _frameTimer = Timer.periodic(_kFrameInterval, _onFrameTimer);
-    } else if (!shouldTick && _frameTimer != null) {
-      _frameTimer?.cancel();
-      _frameTimer = null;
-      _motionClock.stop();
+      _lastPaintElapsed = null;
+      _ticker.start();
+    } else if (!shouldTick && _ticker.isActive) {
+      _ticker.stop();
       _lastTickElapsed = null;
+      _lastPaintElapsed = null;
     }
   }
 
@@ -358,7 +356,6 @@ class _FlowingLightBackgroundState extends State<FlowingLightBackground> {
       _smoothedPlaybackSpeed = _kIdleSpeed;
       _playbackSpeedTransitionFrom = _kIdleSpeed;
       _playbackSpeedTransitionProgress = 1.0;
-      _resetAudioVisual();
       return;
     }
     _playbackSpeedTransitionFrom = _smoothedPlaybackSpeed;
@@ -383,10 +380,9 @@ class _FlowingLightBackgroundState extends State<FlowingLightBackground> {
     return (previousSpeed + _smoothedPlaybackSpeed) / 2;
   }
 
-  void _onFrameTimer(Timer _) {
+  void _onTick(Duration elapsed) {
     if (_disposed || !mounted) return;
 
-    final elapsed = _motionClock.elapsed;
     final previousTick = _lastTickElapsed;
     _lastTickElapsed = elapsed;
     final deltaSeconds = previousTick == null
@@ -401,6 +397,18 @@ class _FlowingLightBackgroundState extends State<FlowingLightBackground> {
     _motion.time +=
         deltaSeconds * widget.inputs.flowSpeed * averageSpeed * audioSpeed;
 
+    final lastPaintElapsed = _lastPaintElapsed;
+    if (lastPaintElapsed == null) {
+      _lastPaintElapsed = elapsed;
+    } else {
+      final sinceLastPaint = elapsed - lastPaintElapsed;
+      if (sinceLastPaint < _kFrameInterval) return;
+      final completedIntervals =
+          sinceLastPaint.inMicroseconds ~/ _kFrameInterval.inMicroseconds;
+      _lastPaintElapsed =
+          lastPaintElapsed + _kFrameInterval * completedIntervals;
+    }
+
     if (_previousCoverImage != null &&
         _transitionClock.elapsed >= _kArtworkTransitionDuration) {
       _finishArtworkTransition();
@@ -409,9 +417,6 @@ class _FlowingLightBackgroundState extends State<FlowingLightBackground> {
     final isSettled =
         _smoothedPlaybackSpeed == _kIdleSpeed &&
         _playbackSpeedTransitionProgress >= 1.0;
-    if (isSettled) {
-      _audio.reset();
-    }
     _frameNotifier.value++;
     if (isSettled) {
       _syncAnimationState();
@@ -669,9 +674,7 @@ class _FlowingLightBackgroundState extends State<FlowingLightBackground> {
   void dispose() {
     _disposed = true;
     _decodeGeneration++;
-    _frameTimer?.cancel();
-    _frameTimer = null;
-    _motionClock.stop();
+    _ticker.dispose();
     _transitionClock.stop();
     _gaussianHorizontal?.dispose();
     _gaussianHorizontal = null;
@@ -778,19 +781,30 @@ class _FlowAudioState {
   double motionSpeed = 1.0;
   double _onset = 0.0;
   double _previousEnergy = 0.0;
+  bool _skipOnset = false;
 
   double get onset => _onset;
+
+  void markListenStarted() {
+    _skipOnset = true;
+  }
 
   void followSpeed(double deltaSeconds) {
     final energy = audioReactiveFlowBeatEnergy(
       AudioReactiveFlowResponse(low, mid, high),
     );
-    _onset = audioReactiveFlowOnsetPulse(
-      currentEnergy: energy,
-      previousEnergy: _previousEnergy,
-      previousPulse: _onset,
-    );
-    _previousEnergy = energy;
+    if (_skipOnset) {
+      _skipOnset = false;
+      _onset = 0;
+      _previousEnergy = energy;
+    } else {
+      _onset = audioReactiveFlowOnsetPulse(
+        currentEnergy: energy,
+        previousEnergy: _previousEnergy,
+        previousPulse: _onset,
+      );
+      _previousEnergy = energy;
+    }
     final target = audioReactiveFlowMotionSpeedTarget(
       energy: energy,
       onset: _onset,
@@ -808,6 +822,7 @@ class _FlowAudioState {
     motionSpeed = 1.0;
     _onset = 0.0;
     _previousEnergy = 0.0;
+    _skipOnset = false;
   }
 }
 
@@ -947,8 +962,8 @@ class _FlowingLightPainter extends CustomPainter {
     final mid = audioReactiveFlow ? audio.mid : 0.0;
     final high = audioReactiveFlow ? audio.high : 0.0;
     final zoom = audioReactiveFlow
-        ? (audioReactiveFlowSpectrumScale(low, mid) + audio.onset * 0.18)
-              .clamp(1.0, 1.72)
+        ? (audioReactiveFlowSpectrumScale(low, mid) + audio.onset * 0.08)
+              .clamp(1.0, 1.48)
               .toDouble()
         : 1.0;
     _coverPaint.colorFilter = _flowingLightColorFilter(
@@ -959,8 +974,10 @@ class _FlowingLightPainter extends CustomPainter {
     );
     final cycle2 = time / _kCoverPeriod2 * 2 * pi;
     final secondaryOffset = Offset(
-      _kSecondaryOffset.dx + cos(-cycle2 * 0.5) * _kSecondaryOrbit - mid * 0.04,
-      _kSecondaryOffset.dy + sin(-cycle2 * 0.5) * _kSecondaryOrbit + low * 0.03,
+      _kSecondaryOffset.dx + cos(-cycle2 * 0.5) * _kSecondaryOrbit - mid * 0.02,
+      _kSecondaryOffset.dy +
+          sin(-cycle2 * 0.5) * _kSecondaryOrbit +
+          low * 0.015,
     );
     _compositePaint.color = const Color(
       0xFFFFFFFF,
@@ -981,8 +998,8 @@ class _FlowingLightPainter extends CustomPainter {
       time: time,
       period: _kCoverPeriod1,
       offset: Offset(
-        _kPrimaryOffset.dx + low * 0.02,
-        _kPrimaryOffset.dy - low * 0.015,
+        _kPrimaryOffset.dx + low * 0.01,
+        _kPrimaryOffset.dy - low * 0.008,
       ),
       alpha: _kPrimaryLayerAlpha,
       scaleMul: _kPrimaryScaleMul,
@@ -1004,8 +1021,8 @@ class _FlowingLightPainter extends CustomPainter {
       time: time,
       period: _kCoverPeriod3,
       offset: Offset(
-        _kLightOffset.dx + high * 0.03,
-        _kLightOffset.dy - low * 0.04,
+        _kLightOffset.dx + high * 0.015,
+        _kLightOffset.dy - low * 0.02,
       ),
       alpha: _kLightLayerAlpha,
       scaleMul: _kLightScaleMul,

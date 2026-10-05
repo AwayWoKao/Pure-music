@@ -33,8 +33,10 @@ class NowPlayingBackgroundInputs {
     this.preExtractedColors,
   });
 
-  bool get shouldAnimate =>
-      enableAnimation && isVisible && playerState == PlayerState.playing;
+  bool get shouldAnimate => enableAnimation && isVisible && isPlaybackActive;
+
+  bool get isPlaybackActive =>
+      playerState == PlayerState.playing || playerState == PlayerState.stalled;
 
   NowPlayingBackgroundInputs copyWith({
     Uint8List? albumCoverBytes,

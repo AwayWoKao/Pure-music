@@ -131,12 +131,12 @@ void main() {
       audioReactiveFlowSpectrumScale(1, 0),
       greaterThan(audioReactiveFlowSpectrumScale(0, 1)),
     );
-    expect(audioReactiveFlowSpectrumScale(1, 1), closeTo(1.55, 0.001));
+    expect(audioReactiveFlowSpectrumScale(1, 1), closeTo(1.38, 0.001));
   });
 
   test('contrast and saturation stay as small color-field pushes', () {
     expect(audioReactiveFlowContrast(0), 1);
-    expect(audioReactiveFlowContrast(1), closeTo(1.14, 0.001));
+    expect(audioReactiveFlowContrast(1), closeTo(1.08, 0.001));
     expect(audioReactiveFlowSaturationBoost(0), 0);
     expect(audioReactiveFlowSaturationBoost(1), closeTo(0.08, 0.001));
   });
@@ -154,7 +154,7 @@ void main() {
     );
     expect(
       audioReactiveFlowMotionSpeedTarget(energy: 1, onset: 1),
-      closeTo(2.15, 0.001),
+      closeTo(1.70, 0.001),
     );
   });
 
@@ -362,6 +362,55 @@ void main() {
     await tester.pump();
 
     expect(spectrum.hasListener, isFalse);
+  });
+
+  testWidgets('pause then play keeps artwork visible and resubscribes', (
+    tester,
+  ) async {
+    final spectrum = StreamController<Float32List>.broadcast();
+    addTearDown(spectrum.close);
+    final cover = await _createCoverPng();
+
+    Widget buildSubject(PlayerState state) {
+      return MaterialApp(
+        home: FlowingLightBackground(
+          inputs: NowPlayingBackgroundInputs(
+            albumCoverBytes: cover,
+            spectrumStream: spectrum.stream,
+            enableAnimation: true,
+            isVisible: true,
+            playerState: state,
+            audioReactiveFlow: true,
+          ),
+        ),
+      );
+    }
+
+    final flowingOpacity = find.descendant(
+      of: find.byType(FlowingLightBackground),
+      matching: find.byType(AnimatedOpacity),
+    );
+
+    try {
+      await tester.pumpWidget(buildSubject(PlayerState.playing));
+      await _pumpAsyncWork(tester);
+      expect(spectrum.hasListener, isTrue);
+      expect(tester.widget<AnimatedOpacity>(flowingOpacity).opacity, 1);
+
+      await tester.pumpWidget(buildSubject(PlayerState.paused));
+      await tester.pump();
+      expect(spectrum.hasListener, isFalse);
+      expect(tester.widget<AnimatedOpacity>(flowingOpacity).opacity, 1);
+
+      await tester.pumpWidget(buildSubject(PlayerState.playing));
+      await tester.pump();
+      expect(spectrum.hasListener, isTrue);
+      expect(tester.widget<AnimatedOpacity>(flowingOpacity).opacity, 1);
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    }
   });
 
   testWidgets('ticker mode controls the spectrum subscription', (tester) async {
