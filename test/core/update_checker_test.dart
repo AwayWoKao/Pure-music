@@ -245,4 +245,101 @@ void main() {
       startsWith('https://gitee.com/'),
     );
   });
+
+
+  test('update metadata urls require https and exact hosts', () {
+    expect(
+      isAllowedUpdateMetadataUrl(
+        'https://raw.githubusercontent.com/qingyueyin/Pure-music/main/update/version.json',
+        UpdateChannel.github,
+      ),
+      isTrue,
+    );
+    expect(
+      isAllowedUpdateMetadataUrl(
+        'https://githubusercontent.com.evil.com/version.json',
+        UpdateChannel.github,
+      ),
+      isFalse,
+    );
+    expect(
+      isAllowedUpdateMetadataUrl(
+        'http://raw.githubusercontent.com/qingyueyin/Pure-music/main/update/version.json',
+        UpdateChannel.github,
+      ),
+      isFalse,
+    );
+    expect(
+      isAllowedUpdateMetadataUrl(
+        'https://gitee.com/qingyueyin/Pure-music/raw/main/update/version.json',
+        UpdateChannel.gitee,
+      ),
+      isTrue,
+    );
+  });
+
+  test('update download urls reject lookalike and http hosts', () {
+    expect(
+      isAllowedUpdateDownloadUrl(
+        'https://github.com/qingyueyin/Pure-music/releases/download/v2.3.0/app.exe',
+        UpdateChannel.github,
+      ),
+      isTrue,
+    );
+    expect(
+      isAllowedUpdateDownloadUrl(
+        'https://example.com/app.exe',
+        UpdateChannel.github,
+      ),
+      isFalse,
+    );
+    expect(
+      isAllowedUpdateDownloadUrl(
+        'https://gitee.com/qingyueyin/Pure-music/releases/download/v2.3.0/app.exe',
+        UpdateChannel.gitee,
+      ),
+      isTrue,
+    );
+    expect(
+      isAllowedUpdateDownloadUrl(
+        'https://gitee.com/qingyueyin/Pure-music/releases/download/v2.3.0/app.exe',
+        UpdateChannel.github,
+      ),
+      isFalse,
+    );
+  });
+
+  test('fills missing checksums from the same tag', () {
+    final api = UpdateInfo.fromReleaseJson({
+      'tag_name': 'v2.3.0',
+      'assets': [
+        {
+          'name': 'pure_music_2.3.0_release_installer.exe',
+          'browser_download_url':
+              'https://github.com/qingyueyin/Pure-music/releases/download/v2.3.0/pure_music_2.3.0_release_installer.exe',
+        },
+      ],
+    }, channel: UpdateChannel.github);
+    final packed = UpdateInfo.fromJson({
+      'tag_name': 'v2.3.0',
+      'installer_sha256': 'a' * 64,
+      'installer_checksum_url':
+          'https://github.com/qingyueyin/Pure-music/releases/download/v2.3.0/pure_music_2.3.0_release_installer.exe.sha256',
+    });
+    final merged = api.withFallbackChecksums(packed);
+    expect(merged.sha256(portableBuild: false), 'a' * 64);
+    expect(
+      merged.hasChecksum(channel: UpdateChannel.github, portableBuild: false),
+      isTrue,
+    );
+  });
+
+  test('does not mix checksums from a different tag', () {
+    final api = UpdateInfo.fromJson({'tag_name': 'v2.4.0'});
+    final packed = UpdateInfo.fromJson({
+      'tag_name': 'v2.3.0',
+      'installer_sha256': 'a' * 64,
+    });
+    expect(api.withFallbackChecksums(packed).installerSha256, isNull);
+  });
 }

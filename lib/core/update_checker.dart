@@ -356,6 +356,37 @@ class UpdateInfo {
   }) =>
       sha256(portableBuild: portableBuild) != null ||
       checksumUrl(channel: channel, portableBuild: portableBuild) != null;
+
+  UpdateInfo withFallbackChecksums(UpdateInfo? fallback) {
+    if (fallback == null) return this;
+    final thisTag = _SemVer.tryParse(tagName);
+    final fallbackTag = _SemVer.tryParse(fallback.tagName);
+    if (thisTag == null || fallbackTag == null || thisTag.compareTo(fallbackTag) != 0) {
+      return this;
+    }
+    return UpdateInfo(
+      tagName: tagName,
+      name: name,
+      body: body,
+      htmlUrl: htmlUrl ?? fallback.htmlUrl,
+      giteeHtmlUrl: giteeHtmlUrl ?? fallback.giteeHtmlUrl,
+      installerUrl: installerUrl ?? fallback.installerUrl,
+      giteeInstallerUrl: giteeInstallerUrl ?? fallback.giteeInstallerUrl,
+      installerSha256: installerSha256 ?? fallback.installerSha256,
+      installerChecksumUrl: installerChecksumUrl ?? fallback.installerChecksumUrl,
+      giteeInstallerChecksumUrl:
+          giteeInstallerChecksumUrl ?? fallback.giteeInstallerChecksumUrl,
+      installerSize: installerSize ?? fallback.installerSize,
+      portableUrl: portableUrl ?? fallback.portableUrl,
+      giteePortableUrl: giteePortableUrl ?? fallback.giteePortableUrl,
+      portableSha256: portableSha256 ?? fallback.portableSha256,
+      portableChecksumUrl: portableChecksumUrl ?? fallback.portableChecksumUrl,
+      giteePortableChecksumUrl:
+          giteePortableChecksumUrl ?? fallback.giteePortableChecksumUrl,
+      portableSize: portableSize ?? fallback.portableSize,
+      size: size ?? fallback.size,
+    );
+  }
 }
 
 typedef _ChannelAssetUrls = ({String? github, String? gitee});
@@ -514,14 +545,23 @@ class UpdateChecker {
       UpdateChannel.gitee => '$_giteeApiBase/$slug/releases/latest',
     };
     final fromApi = await _checkReleaseApi(apiUrl, channel, slug);
-    if (fromApi != null) return fromApi;
+    if (fromApi != null &&
+        fromApi.hasChecksum(channel: channel, portableBuild: portableBuild)) {
+      return fromApi;
+    }
 
-    final fallbackUrls = _fallbackUrls(channel);
-    for (final url in fallbackUrls) {
+    final fallback = await _firstFallbackInfo(channel);
+    if (fromApi != null) return fromApi.withFallbackChecksums(fallback);
+    if (fallback != null) return fallback;
+    throw UpdateCheckException(channel);
+  }
+
+  static Future<UpdateInfo?> _firstFallbackInfo(UpdateChannel channel) async {
+    for (final url in _fallbackUrls(channel)) {
       final info = await _checkHttpJson(url, channel);
       if (info != null) return info;
     }
-    throw UpdateCheckException(channel);
+    return null;
   }
 
   static Future<UpdateInfo?> _checkReleaseApi(
@@ -569,12 +609,9 @@ class UpdateChecker {
       UpdateChannel.github => _githubFallbackUrl,
       UpdateChannel.gitee => _giteeFallbackUrl,
     };
-    final stored = AppPreference.instance.updateCheckUrls.where((url) {
-      final host = Uri.tryParse(url)?.host.toLowerCase() ?? '';
-      return channel == UpdateChannel.github
-          ? host.contains('githubusercontent.com')
-          : host == 'gitee.com';
-    });
+    final stored = AppPreference.instance.updateCheckUrls.where(
+      (url) => isAllowedUpdateMetadataUrl(url, channel),
+    );
     return <String>{preferred, ...stored}.toList(growable: false);
   }
 
@@ -685,4 +722,34 @@ class _SemVer implements Comparable<_SemVer> {
     }
     return preRelease.length.compareTo(other.preRelease.length);
   }
+}
+
+
+const _githubDownloadHosts = {
+  'github.com',
+  'www.github.com',
+  'objects.githubusercontent.com',
+  'release-assets.githubusercontent.com',
+  'github-releases.githubusercontent.com',
+};
+
+bool isAllowedUpdateMetadataUrl(String url, UpdateChannel channel) {
+  final uri = Uri.tryParse(url.trim());
+  if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) return false;
+  final host = uri.host.toLowerCase();
+  return switch (channel) {
+    UpdateChannel.github =>
+      host == 'raw.githubusercontent.com' || host == 'github.com',
+    UpdateChannel.gitee => host == 'gitee.com',
+  };
+}
+
+bool isAllowedUpdateDownloadUrl(String url, UpdateChannel channel) {
+  final uri = Uri.tryParse(url.trim());
+  if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) return false;
+  final host = uri.host.toLowerCase();
+  return switch (channel) {
+    UpdateChannel.github => _githubDownloadHosts.contains(host),
+    UpdateChannel.gitee => host == 'gitee.com' || host == 'www.gitee.com',
+  };
 }
