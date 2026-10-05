@@ -103,33 +103,25 @@ export default defineConfig({
     },
     nav: [
       { text: '首页', link: '/' },
-      {
-        text: '指南',
-        items: [
-          { text: '简介', link: '/guide/' },
-          { text: '安装', link: '/guide/install' },
-          { text: '快速上手', link: '/guide/quickstart' },
-          { text: '常见问题', link: '/guide/faq' },
-        ],
-      },
+      { text: '下载', link: '/download' },
+      { text: '快速上手', link: '/guide/quickstart' },
       {
         text: '功能',
         items: [
           { text: '音乐库', link: '/guide/library' },
-          { text: '演出模式', link: '/guide/concert' },
           { text: '播放与音频', link: '/guide/playback' },
           { text: '歌词', link: '/guide/lyrics' },
           { text: '桌面歌词', link: '/guide/desktop-lyric' },
-          { text: '交互与手势', link: '/guide/interactions' },
-          { text: '外观与设置', link: '/guide/settings' },
+          { text: '演出模式', link: '/guide/concert' },
+          { text: '设置', link: '/guide/settings' },
         ],
       },
       {
-        text: '社区',
+        text: '帮助',
         items: [
+          { text: '常见问题', link: '/guide/faq' },
+          { text: '操作指南', link: '/guide/interactions' },
           { text: '贡献指南', link: '/guide/contribute' },
-          { text: '致谢', link: '/guide/credits' },
-          { text: '待办规划', link: '/guide/todo' },
           { text: '更新日志', link: '/guide/changelog' },
         ],
       },
@@ -140,28 +132,26 @@ export default defineConfig({
           { text: '构建', link: '/dev/build' },
         ],
       },
-      { text: '下载', link: '/download' },
     ],
     sidebar: {
       '/guide/': [
         {
           text: '开始',
           items: [
-            { text: '简介', link: '/guide/' },
-            { text: '安装', link: '/guide/install' },
             { text: '快速上手', link: '/guide/quickstart' },
+            { text: '常见问题', link: '/guide/faq' },
           ],
         },
         {
           text: '功能',
           items: [
             { text: '音乐库', link: '/guide/library' },
-            { text: '演出模式', link: '/guide/concert' },
             { text: '播放与音频', link: '/guide/playback' },
             { text: '歌词', link: '/guide/lyrics' },
             { text: '桌面歌词', link: '/guide/desktop-lyric' },
-            { text: '交互与手势', link: '/guide/interactions' },
-            { text: '外观与设置', link: '/guide/settings' },
+            { text: '演出模式', link: '/guide/concert' },
+            { text: '设置', link: '/guide/settings' },
+            { text: '操作指南', link: '/guide/interactions' },
           ],
         },
         {
@@ -171,13 +161,6 @@ export default defineConfig({
             { text: '致谢', link: '/guide/credits' },
             { text: '待办规划', link: '/guide/todo' },
             { text: '更新日志', link: '/guide/changelog' },
-          ],
-        },
-        {
-          text: '帮助',
-          items: [
-            { text: '常见问题', link: '/guide/faq' },
-            { text: '快捷键', link: '/guide/hotkeys' },
           ],
         },
       ],

@@ -23,6 +23,7 @@ description: 下载 Pure Music 安装版或便携版。Windows 10 / 11，无需�
 - **Windows 10 / 11**（官方支持；Windows 7 / 8 不可用）
 - 建议 4GB 及以上内存
 - 约 100MB 可用磁盘空间
+- 建议安装最新 Visual C++ 可再发行组件
 
 ## 安装版
 
@@ -37,6 +38,8 @@ description: 下载 Pure Music 安装版或便携版。Windows 10 / 11，无需�
 | 程序 | `%LOCALAPPDATA%\Programs\Pure Music` |
 | 数据 | `%LOCALAPPDATA%\pure_music` |
 
+**注意**：程序目录与数据目录分开，备份用户数据时拷贝数据目录即可。
+
 ## 便携版
 
 1. 下载发布包并完整解压，不要直接在压缩包内运行
@@ -45,8 +48,26 @@ description: 下载 Pure Music 安装版或便携版。Windows 10 / 11，无需�
 
 配置、曲库与缓存默认写在程序旁的 `data/`。备份或迁移时，请保留整个程序目录。
 
-::: info SmartScreen
-首次运行时 Windows 可能弹出 SmartScreen 提示，点击「更多信息」→「仍要运行」即可。
+::: warning 不要只复制 exe
+运行时还需要同目录下的 DLL、`dll/` 和 `desktop_lyric/`，移动或备份时请保留整个程序目录。
 :::
 
-更多见 [安装指南](/guide/install)、[更新日志](/guide/changelog)、[常见问题](/guide/faq)。
+## 更新版本
+
+**安装版**：完全退出旧版，运行新安装程序覆盖安装。数据在 `%LOCALAPPDATA%\pure_music`，一般会保留。
+
+**便携版**：退出 → 备份旧目录 `data/` → 新版解压到新目录 → 复制 `data/` 过去 → 确认后再删旧目录。不要用旧版运行文件覆盖新版本。
+
+## 卸载
+
+**安装版**：Windows「已安装的应用」中卸载。结束时可选择是否同时删除用户数据（默认保留，便于重装恢复）。
+
+**便携版**：退出后删除整个程序目录即可，需要保留配置时先备份 `data/`。
+
+## SmartScreen 与杀软
+
+首次运行时 Windows 可能弹出 SmartScreen 提示，点击「更多信息」→「仍要运行」即可。
+
+部分杀软会误报，可将程序目录加入白名单。
+
+更多见 [更新日志](/guide/changelog)、[常见问题](/guide/faq)。
