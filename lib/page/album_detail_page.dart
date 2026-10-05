@@ -45,6 +45,19 @@ void _sortWithinDisc(
   }
 }
 
+void _sortAlbumAudios(
+  List<Audio> list,
+  SortOrder order,
+  int Function(Audio a, Audio b) compare,
+) {
+  switch (order) {
+    case SortOrder.ascending:
+      list.sort(compare);
+    case SortOrder.decending:
+      list.sort((a, b) => compare(b, a));
+  }
+}
+
 List<SortMethodDesc<Audio>> _albumSortMethods() {
   return [
     _albumTextSort(Symbols.title, '标题', (audio) => audio.title),
@@ -74,6 +87,24 @@ List<SortMethodDesc<Audio>> _albumSortMethods() {
         list,
         order,
         (first, second) => first.modified.compareTo(second.modified),
+      ),
+    ),
+    SortMethodDesc(
+      icon: Symbols.timer,
+      name: '时长',
+      method: (list, order) => _sortAlbumAudios(
+        list,
+        order,
+        (a, b) => a.duration.compareTo(b.duration),
+      ),
+    ),
+    SortMethodDesc(
+      icon: Symbols.bar_chart,
+      name: '播放次数',
+      method: (list, order) => _sortAlbumAudios(
+        list,
+        order,
+        (a, b) => a.playCount.compareTo(b.playCount),
       ),
     ),
   ];

@@ -38,17 +38,20 @@ class PageScaffold extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.all(16.0),
-            child: SidebarMotionScope.maybeOf(context) != null
-                ? _header(
-                    context,
-                    scheme,
-                    BoxConstraints(
-                      maxWidth: MediaQuery.sizeOf(context).width,
+            child: SidebarMotionScope.hasScope(context)
+                ? _SidebarMovingHeader(
+                    builder: (context, moving) => _header(
+                      context,
+                      scheme,
+                      BoxConstraints(
+                        maxWidth: MediaQuery.sizeOf(context).width,
+                      ),
+                      moving,
                     ),
                   )
                 : LayoutBuilder(
                     builder: (context, constraints) =>
-                        _header(context, scheme, constraints),
+                        _header(context, scheme, constraints, false),
                   ),
           ),
           Container(
@@ -75,10 +78,9 @@ class PageScaffold extends StatelessWidget {
     BuildContext context,
     ColorScheme scheme,
     BoxConstraints constraints,
+    bool sidebarMoving,
   ) {
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
-    final sidebarMoving =
-        SidebarMotionScope.maybeOf(context)?.isAnimating ?? false;
     if (actions.isEmpty) return _titleWidget(scheme);
     if (actionPlacement == PageActionPlacement.belowSubtitle) {
       return _buildBelowSubtitleLayout(scheme);
@@ -226,5 +228,17 @@ class _AnimatedHeaderLayout extends StatelessWidget {
         child: KeyedSubtree(key: ValueKey(layoutKey), child: child),
       ),
     );
+  }
+}
+
+class _SidebarMovingHeader extends StatelessWidget {
+  const _SidebarMovingHeader({required this.builder});
+
+  final Widget Function(BuildContext context, bool moving) builder;
+
+  @override
+  Widget build(BuildContext context) {
+    final moving = SidebarMotionScope.maybeOf(context)?.isAnimating ?? false;
+    return builder(context, moving);
   }
 }

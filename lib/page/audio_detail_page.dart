@@ -924,12 +924,14 @@ class _AudioDetailPageState extends State<AudioDetailPage> {
           normalizedKey == 'encoder_settings') {
         continue;
       }
+      if (normalizedKey == 'bpm') continue;
       tagFields.add(_DetailField(label: key, value: item.value));
     }
     return tagFields;
   }
 
   List<Widget> _viewTechnicalFields(rust_tag_reader.AudioExtraMetadata? data) {
+    final bpm = _extraItemValue(data, 'bpm');
     return [
       _DetailField(
         label: '时长',
@@ -937,6 +939,8 @@ class _AudioDetailPageState extends State<AudioDetailPage> {
           milliseconds: (audio.duration * 1000).toInt(),
         ).toStringHMMSS(),
       ),
+      _DetailField(label: '播放次数', value: audio.playCount.toString()),
+      if (bpm != null) _DetailField(label: 'BPM', value: bpm),
       _DetailField(
         label: '码率',
         value: audio.bitrate == null ? '-' : '${audio.bitrate} kbps',
@@ -949,7 +953,36 @@ class _AudioDetailPageState extends State<AudioDetailPage> {
         _DetailField(label: '位深', value: '${data!.bitDepth} bit'),
       if (data?.channels != null)
         _DetailField(label: '声道', value: data!.channels.toString()),
+      ..._replayGainFields(data),
     ];
+  }
+
+  String? _extraItemValue(
+    rust_tag_reader.AudioExtraMetadata? data,
+    String key,
+  ) {
+    for (final item in data?.items ?? const []) {
+      if (item.key.trim().toLowerCase() != key) continue;
+      final value = item.value.trim();
+      if (value.isNotEmpty) return value;
+    }
+    return null;
+  }
+
+  List<Widget> _replayGainFields(rust_tag_reader.AudioExtraMetadata? data) {
+    if (data == null) return const [];
+    final fields = <Widget>[];
+    void add(String label, String? value) {
+      final text = value?.trim() ?? '';
+      if (text.isEmpty) return;
+      fields.add(_DetailField(label: label, value: text));
+    }
+
+    add('曲目音量', data.replaygainTrackGain);
+    add('曲目峰值', data.replaygainTrackPeak);
+    add('专辑音量', data.replaygainAlbumGain);
+    add('专辑峰值', data.replaygainAlbumPeak);
+    return fields;
   }
 
   List<Widget> _viewFileFields(rust_tag_reader.AudioExtraMetadata? data) {
@@ -2019,9 +2052,11 @@ class _CoverSearchDialogState extends State<_CoverSearchDialog> {
   Future<List<int>?> _downloadImage(String url) async {
     io.HttpClient? client;
     try {
+      final uri = Uri.tryParse(url);
+      if (uri == null || uri.scheme != 'https') return null;
       client = io.HttpClient();
       client.connectionTimeout = const Duration(seconds: 10);
-      final request = await client.getUrl(Uri.parse(url));
+      final request = await client.getUrl(uri);
       final response = await request.close();
       if (response.statusCode != 200) return null;
       final builder = BytesBuilder(copy: false);
@@ -2280,9 +2315,11 @@ class _CoverSearchDialogState extends State<_CoverSearchDialog> {
     io.HttpClient? client;
     ui.Codec? codec;
     try {
+      final uri = Uri.tryParse(url);
+      if (uri == null || uri.scheme != 'https') return;
       client = io.HttpClient();
       client.connectionTimeout = const Duration(seconds: 8);
-      final request = await client.getUrl(Uri.parse(url));
+      final request = await client.getUrl(uri);
       final response = await request.close();
       if (response.statusCode != 200) return;
       final chunks = <List<int>>[];

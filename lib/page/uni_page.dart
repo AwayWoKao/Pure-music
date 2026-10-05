@@ -361,7 +361,6 @@ class _UniPageState<T> extends State<UniPage<T>> {
   bool _backgroundSortWorkerActive = false;
   String _pendingSortReason = 'sort';
   Map<String, int> _alphabetSectionIndexes = const {};
-  double _contentCrossAxisExtent = 0;
 
   ScrollController get scrollController => currContentView == ContentView.list
       ? listScrollController
@@ -587,14 +586,12 @@ class _UniPageState<T> extends State<UniPage<T>> {
 
   ({int crossAxisCount, double mainAxisStep})? _gridMetrics() {
     final delegate = widget.gridDelegate ?? gridDelegate;
-    if (delegate is! SliverGridDelegateWithMaxCrossAxisExtent ||
-        _contentCrossAxisExtent <= 0) {
+    if (delegate is! SliverGridDelegateWithMaxCrossAxisExtent) {
       return null;
     }
-    final crossAxisExtent = (_contentCrossAxisExtent - 20).clamp(
-      0.0,
-      double.infinity,
-    );
+    final crossAxisExtent = (
+      SidebarMotionScope.columnLayoutWidthOf(context) - 20
+    ).clamp(0.0, double.infinity);
     final crossAxisCount = maxExtentGridCrossAxisCount(
       crossAxisExtent: crossAxisExtent,
       maxCrossAxisExtent: delegate.maxCrossAxisExtent,
@@ -929,31 +926,25 @@ class _UniPageState<T> extends State<UniPage<T>> {
     Widget listView,
     Widget tableMotionView,
   ) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final showAlphabetIndex = _alphabetSectionIndexes.length >= 3;
-        _contentCrossAxisExtent =
-            constraints.maxWidth - (showAlphabetIndex ? 32 : 0);
-        return Row(
-          children: [
-            Expanded(
-              child: MultiSelectPointerRegion<T>(
-                controller: multiSelectController,
-                child: _contentSwitcher(listView, tableMotionView),
-              ),
-            ),
-            if (showAlphabetIndex)
-              AlphabetIndexBar(
-                controller: scrollController,
-                sectionIndexes: _alphabetSectionIndexes,
-                indexForOffset: _indexForOffset,
-                onSelectIndex: _jumpToIndex,
-                onWheel: _forwardWheelToList,
-                descending: currSortOrder == SortOrder.decending,
-              ),
-          ],
-        );
-      },
+    final showAlphabetIndex = _alphabetSectionIndexes.length >= 3;
+    return Row(
+      children: [
+        Expanded(
+          child: MultiSelectPointerRegion<T>(
+            controller: multiSelectController,
+            child: _contentSwitcher(listView, tableMotionView),
+          ),
+        ),
+        if (showAlphabetIndex)
+          AlphabetIndexBar(
+            controller: scrollController,
+            sectionIndexes: _alphabetSectionIndexes,
+            indexForOffset: _indexForOffset,
+            onSelectIndex: _jumpToIndex,
+            onWheel: _forwardWheelToList,
+            descending: currSortOrder == SortOrder.decending,
+          ),
+      ],
     );
   }
 

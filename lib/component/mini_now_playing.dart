@@ -6,6 +6,7 @@ import 'package:pure_music/component/responsive_builder.dart';
 import 'package:pure_music/component/motion.dart';
 import 'package:pure_music/library/audio_library.dart';
 import 'package:pure_music/play_service/play_service.dart';
+import 'package:pure_music/services/concert_session.dart';
 import 'package:pure_music/native/bass/bass_player.dart';
 import 'package:pure_music/core/design_tokens.dart';
 import 'package:pure_music/core/utils.dart';
@@ -232,7 +233,6 @@ class _NowPlayingForegroundState extends State<_NowPlayingForeground> {
     );
   }
 
-
   Widget _playingListen(BuildContext context, ColorScheme scheme) {
     return ListenableBuilder(
       listenable: PlayService.instance.playbackService.nowPlayingNotifier,
@@ -270,36 +270,25 @@ class _NowPlayingForegroundState extends State<_NowPlayingForeground> {
     final playbackService = PlayService.instance.playbackService;
     final nowPlaying = playbackService.nowPlaying;
     final heroEnabled = !playbackService.nowPlayingChangedRecently;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final dense =
-            SidebarMotionScope.layoutWidthOf(context, constraints.maxWidth) <=
-            520;
-        final hideControls = !_controlsVisible;
-        final reduceMotion = MediaQuery.disableAnimationsOf(context);
-        return Row(
-          children: [
-            Expanded(
-              child: _MiniTrackSwitcher(
-                direction: _slideDirection,
-                enabled: widget.animateTrackChanges && !reduceMotion,
-                child: _trackContent(scheme, nowPlaying, heroEnabled),
-              ),
-            ),
-            const SizedBox(width: 8.0),
-            _secondaryMotion(
-              hideControls: hideControls,
-              reduceMotion: reduceMotion,
-              child: _controls(
-                scheme,
-                playbackService,
-                nowPlaying != null,
-                dense,
-              ),
-            ),
-          ],
-        );
-      },
+    final dense = MediaQuery.sizeOf(context).width <= 520;
+    final hideControls = !_controlsVisible;
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    return Row(
+      children: [
+        Expanded(
+          child: _MiniTrackSwitcher(
+            direction: _slideDirection,
+            enabled: widget.animateTrackChanges && !reduceMotion,
+            child: _trackContent(scheme, nowPlaying, heroEnabled),
+          ),
+        ),
+        const SizedBox(width: 8.0),
+        _secondaryMotion(
+          hideControls: hideControls,
+          reduceMotion: reduceMotion,
+          child: _controls(scheme, playbackService, nowPlaying != null, dense),
+        ),
+      ],
     );
   }
 
@@ -405,25 +394,36 @@ class _NowPlayingForegroundState extends State<_NowPlayingForeground> {
   }
 
   Widget _titles(ColorScheme scheme, Audio? nowPlaying) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Text(
-          nowPlaying != null ? nowPlaying.title : 'Pure Music',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(color: scheme.onSecondaryContainer),
-        ),
-        Text(
-          nowPlaying != null
-              ? '${nowPlaying.artist} - ${nowPlaying.album}'
-              : '享受音乐',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(color: scheme.onSecondaryContainer),
-        ),
-      ],
+    return ListenableBuilder(
+      listenable: ConcertSession.instance,
+      builder: (context, _) {
+        final session = ConcertSession.instance;
+        final index = PlayService.instance.playbackService.playlistIndex;
+        final act = session.actAt(index);
+        final subtitle = nowPlaying == null
+            ? '享受音乐'
+            : act == null
+            ? '${nowPlaying.artist} - ${nowPlaying.album}'
+            : '$act · ${index + 1}/${session.length} · ${nowPlaying.artist}';
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              nowPlaying != null ? nowPlaying.title : 'Pure Music',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: scheme.onSecondaryContainer),
+            ),
+            Text(
+              subtitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: scheme.onSecondaryContainer),
+            ),
+          ],
+        );
+      },
     );
   }
 

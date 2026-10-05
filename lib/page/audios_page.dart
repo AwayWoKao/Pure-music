@@ -103,6 +103,16 @@ List<SortMethodDesc<Audio>> _audiosSortMethods() {
       name: '修改时间',
       valueOf: (audio) => audio.modified,
     ),
+    _timeAudioSort(
+      icon: Symbols.timer,
+      name: '时长',
+      valueOf: (audio) => audio.duration,
+    ),
+    _timeAudioSort(
+      icon: Symbols.bar_chart,
+      name: '播放次数',
+      valueOf: (audio) => audio.playCount,
+    ),
   ];
 }
 

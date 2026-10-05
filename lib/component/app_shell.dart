@@ -3,10 +3,8 @@
 import 'dart:io';
 import 'dart:ui';
 
-import 'package:pure_music/core/cache.dart';
 import 'package:pure_music/core/preference.dart';
 import 'package:pure_music/core/settings.dart';
-import 'package:pure_music/library/audio_library.dart';
 import 'package:pure_music/component/mini_now_playing.dart';
 import 'package:pure_music/component/motion.dart';
 import 'package:pure_music/component/responsive_builder.dart';
@@ -38,19 +36,8 @@ class AppShell extends StatelessWidget {
 }
 
 Color _resolveDynamicColor(ColorScheme scheme) {
-  final playbackService = PlayService.instance.playbackService;
-  final nowPlaying = playbackService.nowPlaying;
-  final album = nowPlaying == null
-      ? null
-      : AudioLibrary.instance.albumCollection[nowPlaying.album];
-  if (album == null) return scheme.surfaceContainerLow;
-  final cached = AlbumColorCache.instance.getAlbumColorSync(album);
-  if (cached == null) {
-    AlbumColorCache.instance.getAlbumColor(album).ignore();
-    return scheme.surfaceContainerLow;
-  }
   return Color.alphaBlend(
-    cached.primary.withAlpha(20),
+    scheme.primary.withAlpha(20),
     scheme.surfaceContainerLow,
   );
 }
@@ -326,12 +313,12 @@ class _AppShell_Large extends StatefulWidget {
 class _AppShell_LargeState extends State<_AppShell_Large> {
   late Color _backgroundColor;
   late final VoidCallback _onNowPlayingChanged;
-  late bool _sidebarExpanded;
+  late final ValueNotifier<bool> _sidebarExpanded;
 
   @override
   void initState() {
     super.initState();
-    _sidebarExpanded = AppPreference.instance.sidebarExpanded;
+    _sidebarExpanded = ValueNotifier(AppPreference.instance.sidebarExpanded);
     _onNowPlayingChanged = () {
       final newColor = _resolveDynamicColor(Theme.of(context).colorScheme);
       if (newColor != _backgroundColor) {
@@ -354,28 +341,23 @@ class _AppShell_LargeState extends State<_AppShell_Large> {
     PlayService.instance.playbackService.nowPlayingNotifier.removeListener(
       _onNowPlayingChanged,
     );
+    _sidebarExpanded.dispose();
     super.dispose();
   }
 
   void _handleSidebarExpandedChanged(bool expanded) {
-    if (_sidebarExpanded == expanded) return;
-    setState(() => _sidebarExpanded = expanded);
+    if (_sidebarExpanded.value == expanded) return;
+    _sidebarExpanded.value = expanded;
   }
 
-  Widget _railScaffold(double t, Widget? child) {
+  Widget _railScaffold(double t, Widget rail, Widget body, bool expanded) {
     return SpringRailScaffold(
       progress: t,
-      targetProgress: _sidebarExpanded ? 1.0 : 0.0,
+      targetProgress: expanded ? 1.0 : 0.0,
       collapsedWidth: SideNav.collapsedWidth,
       expandedWidth: SideNav.expandedWidth,
-      rail: ClipRect(
-        child: SideNav(
-          navigationShell: widget.navigationShell,
-          expansion: t.clamp(0.0, 1.0),
-          onExpandedChanged: _handleSidebarExpandedChanged,
-        ),
-      ),
-      body: child!,
+      rail: rail,
+      body: body,
     );
   }
 
@@ -392,13 +374,25 @@ class _AppShell_LargeState extends State<_AppShell_Large> {
             preferredSize: Size.fromHeight(48.0),
             child: TitleBar(),
           ),
-          body: TweenAnimationBuilder<double>(
-            duration: MediaQuery.disableAnimationsOf(context)
-                ? Duration.zero
-                : MotionDuration.sidebar,
-            curve: MotionCurve.sidebar,
-            tween: Tween<double>(end: _sidebarExpanded ? 1.0 : 0.0),
-            builder: (context, t, child) => _railScaffold(t, child),
+          body: ValueListenableBuilder<bool>(
+            valueListenable: _sidebarExpanded,
+            builder: (context, expanded, pages) {
+              return TweenAnimationBuilder<double>(
+                duration: MediaQuery.disableAnimationsOf(context)
+                    ? Duration.zero
+                    : MotionDuration.sidebar,
+                curve: MotionCurve.sidebar,
+                tween: Tween<double>(end: expanded ? 1.0 : 0.0),
+                builder: (context, t, rail) =>
+                    _railScaffold(t, rail!, pages!, expanded),
+                child: ClipRect(
+                  child: SideNav(
+                    navigationShell: widget.navigationShell,
+                    onExpandedChanged: _handleSidebarExpandedChanged,
+                  ),
+                ),
+              );
+            },
             child: RepaintBoundary(
               child: Stack(
                 children: [widget.navigationShell, const MiniNowPlaying()],
@@ -410,3 +404,4 @@ class _AppShell_LargeState extends State<_AppShell_Large> {
     );
   }
 }
+

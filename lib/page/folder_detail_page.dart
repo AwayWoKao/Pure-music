@@ -26,7 +26,28 @@ void _sortFolderAudios(
 }
 
 List<SortMethodDesc<Audio>> _folderSortMethods() {
-  return [..._folderTextSorts(), ..._folderTimeSorts()];
+  return [
+    ..._folderTextSorts(),
+    ..._folderTimeSorts(),
+    SortMethodDesc(
+      icon: Symbols.timer,
+      name: '时长',
+      method: (list, order) => _sortFolderAudios(
+        list,
+        order,
+        (a, b) => a.duration.compareTo(b.duration),
+      ),
+    ),
+    SortMethodDesc(
+      icon: Symbols.bar_chart,
+      name: '播放次数',
+      method: (list, order) => _sortFolderAudios(
+        list,
+        order,
+        (a, b) => a.playCount.compareTo(b.playCount),
+      ),
+    ),
+  ];
 }
 
 List<SortMethodDesc<Audio>> _folderTextSorts() {
@@ -156,6 +177,7 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
         playlist: contentList,
         multiSelectController: msc,
       ),
+      enablePlayAll: canPlaySongs,
       enableShufflePlay: canPlaySongs,
       enableSortMethod: canSortSongs,
       enableSortOrder: canSortSongs,

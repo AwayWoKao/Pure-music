@@ -133,7 +133,6 @@ class _UniDetailPageState<P, S, T> extends State<UniDetailPage<P, S, T>> {
   final _tertiaryScrollController = SmoothScrollController();
   final _combinedScrollController = SmoothScrollController();
   Map<String, int> _alphabetSectionIndexes = const {};
-  double _contentCrossAxisExtent = 0;
 
   bool get _hasTertiaryContent =>
       canShowRelatedContentTab(widget.tertiaryContent?.length ?? 0);
@@ -274,7 +273,7 @@ class _UniDetailPageState<P, S, T> extends State<UniDetailPage<P, S, T>> {
 
   int _gridCrossAxisCount() {
     final crossAxisCount = maxExtentGridCrossAxisCount(
-      crossAxisExtent: _contentCrossAxisExtent,
+      crossAxisExtent: SidebarMotionScope.columnLayoutWidthOf(context),
       maxCrossAxisExtent: gridDelegate.maxCrossAxisExtent,
       crossAxisSpacing: gridDelegate.crossAxisSpacing,
     );
@@ -539,14 +538,11 @@ class _UniDetailPageState<P, S, T> extends State<UniDetailPage<P, S, T>> {
     return Stack(
       children: [
         Positioned.fill(
-          child: LayoutBuilder(
-            builder: (context, constraints) => _buildResultContentRow(
-              constraints: constraints,
-              multiSelectController: multiSelectController,
-              scheme: scheme,
-              hasTertiaryContent: hasTertiaryContent,
-              currentTabIndex: currentTabIndex,
-            ),
+          child: _buildResultContentRow(
+            multiSelectController: multiSelectController,
+            scheme: scheme,
+            hasTertiaryContent: hasTertiaryContent,
+            currentTabIndex: currentTabIndex,
           ),
         ),
         ListLocateButtons(
@@ -560,7 +556,6 @@ class _UniDetailPageState<P, S, T> extends State<UniDetailPage<P, S, T>> {
   }
 
   Widget _buildResultContentRow({
-    required BoxConstraints constraints,
     required MultiSelectController<S>? multiSelectController,
     required ColorScheme scheme,
     required bool hasTertiaryContent,
@@ -570,8 +565,6 @@ class _UniDetailPageState<P, S, T> extends State<UniDetailPage<P, S, T>> {
         widget.bodyOverride == null &&
         currentTabIndex == 0 &&
         _alphabetSectionIndexes.length >= 3;
-    _contentCrossAxisExtent =
-        constraints.maxWidth - (showAlphabetIndex ? 32 : 0);
     return Row(
       children: [
         Expanded(
@@ -693,30 +686,24 @@ class _UniDetailPageState<P, S, T> extends State<UniDetailPage<P, S, T>> {
     return Material(
       borderRadius: AppRadius.smCircular,
       type: MaterialType.transparency,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final crossAxisCount = maxExtentGridCrossAxisCount(
-            crossAxisExtent: constraints.maxWidth,
-            maxCrossAxisExtent: gridDelegate.maxCrossAxisExtent,
-            crossAxisSpacing: gridDelegate.crossAxisSpacing,
-          );
-          final content = CustomScrollView(
-            controller: _secondaryScrollController,
-            physics: enableSmoothScrolling ? const SmoothScrollPhysics() : null,
-            slivers: [
-              _secondarySliver(
-                multiSelectController,
-                enableStackedEffect,
-                crossAxisCount,
+      child: SidebarFrozenViewport(
+        enabled: currContentView == ContentView.table,
+        child: CustomScrollView(
+          controller: _secondaryScrollController,
+          physics: enableSmoothScrolling ? const SmoothScrollPhysics() : null,
+          slivers: [
+            _secondarySliver(
+              multiSelectController,
+              enableStackedEffect,
+              maxExtentGridCrossAxisCount(
+                crossAxisExtent: SidebarMotionScope.columnLayoutWidthOf(context),
+                maxCrossAxisExtent: gridDelegate.maxCrossAxisExtent,
+                crossAxisSpacing: gridDelegate.crossAxisSpacing,
               ),
-              const SliverPadding(padding: EdgeInsets.only(bottom: 96.0)),
-            ],
-          );
-          return SidebarFrozenViewport(
-            enabled: currContentView == ContentView.table,
-            child: content,
-          );
-        },
+            ),
+            const SliverPadding(padding: EdgeInsets.only(bottom: 96.0)),
+          ],
+        ),
       ),
     );
   }
@@ -832,23 +819,19 @@ class _UniDetailPageState<P, S, T> extends State<UniDetailPage<P, S, T>> {
     return Material(
       borderRadius: AppRadius.smCircular,
       type: MaterialType.transparency,
-      child: LayoutBuilder(
-        builder: (context, constraints) => _tertiaryScrollView(
-          constraints,
-          enableStackedEffect,
-          enableSmoothScrolling,
-        ),
+      child: _tertiaryScrollView(
+        enableStackedEffect,
+        enableSmoothScrolling,
       ),
     );
   }
 
   Widget _tertiaryScrollView(
-    BoxConstraints constraints,
     bool enableStackedEffect,
     bool enableSmoothScrolling,
   ) {
     final crossAxisCount = maxExtentGridCrossAxisCount(
-      crossAxisExtent: constraints.maxWidth,
+      crossAxisExtent: SidebarMotionScope.columnLayoutWidthOf(context),
       maxCrossAxisExtent: 300,
       crossAxisSpacing: 8,
     );
@@ -895,38 +878,33 @@ class _UniDetailPageState<P, S, T> extends State<UniDetailPage<P, S, T>> {
     final enableStackedEffect = AppSettings.instance.enableStackedScrollEffect;
     final enableSmoothScrolling =
         enableStackedEffect && !MediaQuery.disableAnimationsOf(context);
+    final crossAxisCount = maxExtentGridCrossAxisCount(
+      crossAxisExtent: SidebarMotionScope.columnLayoutWidthOf(context),
+      maxCrossAxisExtent: 300,
+      crossAxisSpacing: 8,
+    );
     return Material(
       borderRadius: AppRadius.smCircular,
       type: MaterialType.transparency,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final crossAxisCount = maxExtentGridCrossAxisCount(
-            crossAxisExtent: constraints.maxWidth,
-            maxCrossAxisExtent: 300,
-            crossAxisSpacing: 8,
-          );
-          final content = CustomScrollView(
-            controller: _combinedScrollController,
-            physics: enableSmoothScrolling ? const SmoothScrollPhysics() : null,
-            slivers: [
-              _combinedPrimarySliver(
-                multiSelectController,
-                enableStackedEffect,
-                crossAxisCount,
-              ),
-              ..._combinedTertiarySlivers(
-                scheme,
-                enableStackedEffect,
-                crossAxisCount,
-              ),
-              const SliverPadding(padding: EdgeInsets.only(bottom: 96.0)),
-            ],
-          );
-          return SidebarFrozenViewport(
-            enabled: currContentView == ContentView.table,
-            child: content,
-          );
-        },
+      child: SidebarFrozenViewport(
+        enabled: currContentView == ContentView.table,
+        child: CustomScrollView(
+          controller: _combinedScrollController,
+          physics: enableSmoothScrolling ? const SmoothScrollPhysics() : null,
+          slivers: [
+            _combinedPrimarySliver(
+              multiSelectController,
+              enableStackedEffect,
+              crossAxisCount,
+            ),
+            ..._combinedTertiarySlivers(
+              scheme,
+              enableStackedEffect,
+              crossAxisCount,
+            ),
+            const SliverPadding(padding: EdgeInsets.only(bottom: 96.0)),
+          ],
+        ),
       ),
     );
   }
@@ -1109,7 +1087,7 @@ class _ActionsRow extends StatelessWidget {
           )
         : null;
 
-    if (SidebarMotionScope.maybeOf(context) != null) {
+    if (SidebarMotionScope.hasScope(context)) {
       return AdaptiveActionLayout(
         compact: MediaQuery.sizeOf(context).width < 600,
         actions: actions,
@@ -1118,7 +1096,7 @@ class _ActionsRow extends StatelessWidget {
     }
     return LayoutBuilder(
       builder: (context, constraints) => AdaptiveActionLayout(
-        compact: constraints.maxWidth < 600,
+        compact: SidebarMotionScope.layoutWidthOf(context, constraints.maxWidth) < 600,
         actions: actions,
         trailing: searchField,
       ),
@@ -1286,7 +1264,7 @@ class _UniDetailPageHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    if (SidebarMotionScope.maybeOf(context) != null) {
+    if (SidebarMotionScope.hasScope(context)) {
       return _buildHeaderBody(
         context,
         theme,

@@ -162,6 +162,24 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
         ),
       ),
       SortMethodDesc<Audio>(
+        icon: Symbols.timer,
+        name: '时长',
+        method: (list, order) => _sortByOrder(
+          list,
+          order,
+          (a, b) => a.duration.compareTo(b.duration),
+        ),
+      ),
+      SortMethodDesc<Audio>(
+        icon: Symbols.bar_chart,
+        name: '播放次数',
+        method: (list, order) => _sortByOrder(
+          list,
+          order,
+          (a, b) => a.playCount.compareTo(b.playCount),
+        ),
+      ),
+      SortMethodDesc<Audio>(
         icon: Symbols.drag_indicator,
         name: '自定义',
         method: (list, order) {},
@@ -338,6 +356,7 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
         multiSelectController: msc,
         onRemoveFromPlaylist: _removeAudioFromPlaylist,
       ),
+      enablePlayAll: contentList.isNotEmpty,
       enableShufflePlay: contentList.isNotEmpty,
       enableSortMethod: canSortSongs,
       enableSortOrder: canSortSongs,

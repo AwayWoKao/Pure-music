@@ -43,6 +43,7 @@ class ArtistDetailPage extends StatelessWidget {
       tertiaryContentBuilder:
           (context, album, i, multiSelectController, view) =>
               AlbumTile(album: album, view: view),
+      enablePlayAll: secondaryContent.isNotEmpty,
       enableShufflePlay: secondaryContent.isNotEmpty,
       enableSortMethod: canSortSongs,
       enableSortOrder: canSortSongs,
@@ -123,6 +124,16 @@ List<SortMethodDesc<Audio>> _artistSortMethods() {
       icon: Symbols.edit,
       name: '修改时间',
       valueOf: (audio) => audio.modified,
+    ),
+    _artistIntSort(
+      icon: Symbols.timer,
+      name: '时长',
+      valueOf: (audio) => audio.duration,
+    ),
+    _artistIntSort(
+      icon: Symbols.bar_chart,
+      name: '播放次数',
+      valueOf: (audio) => audio.playCount,
     ),
   ];
 }

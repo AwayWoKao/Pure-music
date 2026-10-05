@@ -3,7 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/physics.dart' show FrictionSimulation, Tolerance;
 import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/widgets.dart';
-import 'package:pure_music/component/motion.dart' show StackedEffectScope;
+import 'package:pure_music/component/motion.dart' show SidebarMotionScope, StackedEffectScope;
 import 'package:pure_music/core/settings.dart' show AppSettings;
 
 bool _usesSmoothScrollPhysics(ScrollPhysics physics) {
@@ -330,41 +330,38 @@ class StackedGridView extends StatelessWidget {
   Widget build(BuildContext context) {
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
     final physics = reduceMotion ? null : const SmoothScrollPhysics();
+    final metrics = _gridMetrics(context);
     return StackedEffectScope(
       child: ScrollConfiguration(
         behavior: ScrollConfiguration.of(context).copyWith(physics: physics),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final metrics = _gridMetrics(constraints);
-            return GridView.builder(
-              controller: controller,
-              padding: padding,
-              gridDelegate: gridDelegate,
-              itemCount: itemCount,
-              itemBuilder: (context, index) =>
-                  _itemAt(context, index, metrics, reduceMotion),
-            );
-          },
+        child: GridView.builder(
+          controller: controller,
+          padding: padding,
+          gridDelegate: gridDelegate,
+          itemCount: itemCount,
+          itemBuilder: (context, index) =>
+              _itemAt(context, index, metrics, reduceMotion),
         ),
       ),
     );
   }
 
   ({int crossAxisCount, double mainAxisStep}) _gridMetrics(
-    BoxConstraints constraints,
+    BuildContext context,
   ) {
-    final crossAxisExtent = math.max(
+    final pad = padding?.horizontal ?? 0;
+    final columnExtent = math.max(
       0.0,
-      constraints.maxWidth - (padding?.horizontal ?? 0),
+      SidebarMotionScope.columnLayoutWidthOf(context) - pad,
     );
     final crossAxisCount = maxExtentGridCrossAxisCount(
-      crossAxisExtent: crossAxisExtent,
+      crossAxisExtent: columnExtent,
       maxCrossAxisExtent: gridDelegate.maxCrossAxisExtent,
       crossAxisSpacing: gridDelegate.crossAxisSpacing,
     );
     final usableCrossAxisExtent = math.max(
       0.0,
-      crossAxisExtent - gridDelegate.crossAxisSpacing * (crossAxisCount - 1),
+      columnExtent - gridDelegate.crossAxisSpacing * (crossAxisCount - 1),
     );
     final tileWidth = usableCrossAxisExtent / crossAxisCount;
     final tileHeight =
