@@ -4,6 +4,7 @@ import 'package:pure_music/component/danger_confirm_dialog.dart';
 import 'package:pure_music/component/motion.dart';
 import 'package:pure_music/play_service/play_service.dart';
 import 'package:pure_music/library/audio_library.dart';
+import 'package:pure_music/services/concert_session.dart';
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
@@ -19,9 +20,15 @@ class _CurrentPlaylistViewState extends State<CurrentPlaylistView> {
   late final ScrollController scrollController;
   bool _isReordering = false;
 
+  double _songScrollOffset(int songIndex) {
+    final session = ConcertSession.instance;
+    if (!session.isActive) return songIndex * kConcertSongExtent;
+    return concertSongScrollOffset(songIndex, session.sections);
+  }
+
   void _toNowPlaying({required bool animate}) {
     if (!scrollController.hasClients) return;
-    final target = playbackService.playlistIndex * 64.0;
+    final target = _songScrollOffset(playbackService.playlistIndex);
     final maxScroll = scrollController.position.maxScrollExtent;
     final offset = target.clamp(0.0, maxScroll);
     if ((scrollController.offset - offset).abs() < 1.0) return;
@@ -56,10 +63,11 @@ class _CurrentPlaylistViewState extends State<CurrentPlaylistView> {
   void initState() {
     super.initState();
     scrollController = ScrollController(
-      initialScrollOffset: playbackService.playlistIndex * 64.0,
+      initialScrollOffset: _songScrollOffset(playbackService.playlistIndex),
     );
     playbackService.nowPlayingNotifier.addListener(_onNowPlayingChanged);
     playbackService.playlistNotifier.addListener(_onPlaylistChanged);
+    ConcertSession.instance.addListener(_onNowPlayingChanged);
     _scheduleToNowPlaying(animate: false);
   }
 
@@ -85,18 +93,35 @@ class _CurrentPlaylistViewState extends State<CurrentPlaylistView> {
   }
 
   Widget _header(ColorScheme scheme) {
+    final session = ConcertSession.instance;
+    final act = session.actAt(playbackService.playlistIndex);
     return Padding(
       padding: const EdgeInsets.fromLTRB(8.0, 8.0, 4.0, 8.0),
       child: Row(
         children: [
           Text(
-            '播放列表',
+            session.isActive ? '今晚节目单' : '播放列表',
             style: TextStyle(
               color: scheme.onSecondaryContainer,
               fontSize: AppType.hero,
               fontWeight: AppType.weightBold,
             ),
           ),
+          if (session.isActive && act != null) ...[
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                '$act · ${playbackService.playlistIndex + 1}/${session.length}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: scheme.primary,
+                  fontSize: AppType.caption,
+                  fontWeight: AppType.weightSemibold,
+                ),
+              ),
+            ),
+          ],
           const Spacer(),
           _reorderButton(scheme),
           _clearButton(scheme),
@@ -160,22 +185,40 @@ class _CurrentPlaylistViewState extends State<CurrentPlaylistView> {
           builder: (context, playlist, _) {
             if (playlist.isEmpty) return _emptyQueue(scheme);
             if (_isReordering) return _buildReorderList(playlist, scheme);
-            return ListView.builder(
-              controller: scrollController,
-              itemCount: playlist.length,
-              itemExtent: 64.0,
-              itemBuilder: (context, index) {
-                final audio = playlist[index];
-                return _PlaylistViewItem(
-                  index: index,
-                  audio: audio,
-                  isNowPlaying: playbackService.nowPlaying?.path == audio.path,
-                  hasNowPlaying: playbackService.nowPlaying != null,
-                  currentIndex: playbackService.playlistIndex,
-                );
-              },
-            );
+            return _playlistList(playlist, scheme);
           },
+        );
+      },
+    );
+  }
+
+  Widget _playlistList(List<Audio> playlist, ColorScheme scheme) {
+    final session = ConcertSession.instance;
+    final showActs = session.isActive && session.sections.isNotEmpty;
+    final layout = showActs
+        ? concertQueueLayout(playlist.length, session.sections)
+        : [for (var index = 0; index < playlist.length; index++) index];
+    return ListView.builder(
+      controller: scrollController,
+      itemCount: layout.length,
+      itemExtent: showActs ? null : kConcertSongExtent,
+      itemExtentBuilder: showActs
+          ? (index, _) =>
+                layout[index] < 0 ? kConcertActHeaderExtent : kConcertSongExtent
+          : null,
+      itemBuilder: (context, index) {
+        final value = layout[index];
+        if (value < 0) {
+          final section = session.sections[-value - 1];
+          return _QueueActHeader(name: section.name, count: section.count);
+        }
+        final audio = playlist[value];
+        return _PlaylistViewItem(
+          index: value,
+          audio: audio,
+          isNowPlaying: playbackService.nowPlaying?.path == audio.path,
+          hasNowPlaying: playbackService.nowPlaying != null,
+          currentIndex: playbackService.playlistIndex,
         );
       },
     );
@@ -280,8 +323,52 @@ class _CurrentPlaylistViewState extends State<CurrentPlaylistView> {
   void dispose() {
     playbackService.nowPlayingNotifier.removeListener(_onNowPlayingChanged);
     playbackService.playlistNotifier.removeListener(_onPlaylistChanged);
+    ConcertSession.instance.removeListener(_onNowPlayingChanged);
     scrollController.dispose();
     super.dispose();
+  }
+}
+
+class _QueueActHeader extends StatelessWidget {
+  const _QueueActHeader({required this.name, required this.count});
+
+  final String name;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 12, 8, 4),
+      child: Row(
+        children: [
+          Text(
+            name,
+            style: TextStyle(
+              fontSize: AppType.caption,
+              fontWeight: AppType.weightSemibold,
+              letterSpacing: 1.2,
+              color: scheme.primary,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Container(
+              height: 1,
+              color: scheme.outlineVariant.withValues(alpha: 0.6),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '$count 首',
+            style: TextStyle(
+              fontSize: AppType.microlabel,
+              color: scheme.onSecondaryContainer.withValues(alpha: 0.7),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -389,7 +476,6 @@ class _ReorderItem extends StatelessWidget {
   final int index;
   final bool isNowPlaying;
   final ColorScheme colorScheme;
-
 
   Widget _dragHandle(ColorScheme scheme) {
     return ReorderableDragStartListener(
