@@ -227,4 +227,40 @@ void main() {
       isTrue,
     );
   });
+
+  group('monotonic playback clock', () {
+    test('does not jump backward when native lags', () {
+      expect(
+        lyricMonotonicPlaybackMs(
+          previousMs: 1200,
+          predictedMs: 1216,
+          nativeMs: 1180,
+          allowNativeResync: true,
+        ),
+        1216,
+      );
+    });
+
+    test('snaps on a seek-sized jump', () {
+      expect(
+        lyricMonotonicPlaybackMs(
+          previousMs: 1200,
+          predictedMs: 1216,
+          nativeMs: 4000,
+        ),
+        4000,
+      );
+    });
+
+    test('predicted time never walks backward', () {
+      expect(
+        lyricMonotonicPlaybackMs(
+          previousMs: 1200,
+          predictedMs: 1180,
+          nativeMs: 1190,
+        ),
+        1200,
+      );
+    });
+  });
 }

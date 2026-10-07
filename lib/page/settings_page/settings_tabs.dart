@@ -697,6 +697,7 @@ class _MonetProgressBarSwitchState extends State<_MonetProgressBarSwitch> {
 
   Future<void> _setEnabled(bool value) async {
     setState(() => settings.useMaterialYouForProgressBar = value);
+    AppSettings.rebuildNotifier.rebuild();
     await settings.saveSettings();
   }
 

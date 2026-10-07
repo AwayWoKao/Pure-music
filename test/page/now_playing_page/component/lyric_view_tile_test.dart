@@ -100,4 +100,73 @@ void main() {
     await tester.pumpWidget(tile(8000));
     expect(tester.getSize(find.byType(LyricTransitionTile)).height, 0);
   });
+
+  test('song-start intro skips enter while later interludes keep it', () {
+    expect(
+      lyricTransitionSkipEnter(startMs: 0, lengthMs: 8000, positionMs: 0),
+      isTrue,
+    );
+    expect(
+      lyricTransitionSkipEnter(startMs: 0, lengthMs: 8000, positionMs: 1200),
+      isTrue,
+    );
+    expect(
+      lyricTransitionSkipEnter(
+        startMs: 60000,
+        lengthMs: 8000,
+        positionMs: 60100,
+      ),
+      isFalse,
+    );
+  });
+
+  test('skipped enter keeps full height until collapse', () {
+    expect(
+      lyricTransitionHeightFactor(
+        progress: 0,
+        enterFraction: 0.12,
+        exitFraction: 0.12,
+        exitEnd: 0.9,
+        skipEnter: true,
+      ),
+      1,
+    );
+    expect(
+      lyricTransitionHeightFactor(
+        progress: 0,
+        enterFraction: 0.12,
+        exitFraction: 0.12,
+        exitEnd: 0.9,
+      ),
+      0,
+    );
+  });
+
+  testWidgets('leading intro appears at full height on first frame', (
+    tester,
+  ) async {
+    final line = SyncLyricLine(
+      Duration.zero,
+      const Duration(seconds: 8),
+      const [],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 280,
+              child: LyricTransitionTile(syncLine: line, positionMs: 0),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(
+      tester.getSize(find.byType(LyricTransitionTile)).height,
+      transitionTileHeight,
+    );
+    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    expect(debugLyricTransitionControllerCount(), 0);
+  });
 }

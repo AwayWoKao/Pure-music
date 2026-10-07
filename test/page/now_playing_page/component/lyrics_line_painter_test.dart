@@ -293,8 +293,9 @@ void main() {
 
       final peak = scaleAt(0.5);
       expect(scaleAt(0.25), lessThan(peak));
-      expect(scaleAt(0.75), closeTo(peak, 0.0001));
-      expect(scaleAt(0.9), lessThan(peak));
+      expect(scaleAt(0.55), closeTo(peak, 0.0001));
+      expect(scaleAt(0.75), lessThan(peak));
+      expect(scaleAt(0.9), lessThan(scaleAt(0.75)));
       expect(scaleAt(0.9), greaterThan(1.0));
     });
 
@@ -442,20 +443,17 @@ void main() {
   });
 
   group('lyricLineScaleAlignment', () {
-    test(
-      'scales a wrapped line from the top so the second visual line stays put',
-      () {
-        expect(lyricLineScaleAlignment(LyricTextAlign.left), Alignment.topLeft);
-        expect(
-          lyricLineScaleAlignment(LyricTextAlign.center),
-          Alignment.topCenter,
-        );
-        expect(
-          lyricLineScaleAlignment(LyricTextAlign.right),
-          Alignment.topRight,
-        );
-      },
-    );
+    test('scales a wrapped line from the vertical center', () {
+      expect(
+        lyricLineScaleAlignment(LyricTextAlign.left),
+        Alignment.centerLeft,
+      );
+      expect(lyricLineScaleAlignment(LyricTextAlign.center), Alignment.center);
+      expect(
+        lyricLineScaleAlignment(LyricTextAlign.right),
+        Alignment.centerRight,
+      );
+    });
   });
 
   group('lyricExitLift', () {
@@ -595,18 +593,15 @@ void main() {
   });
 
   test('cosine paint raises sung glyphs and leaves later ones down', () {
-    final line = SyncLyricLine(
-      Duration.zero,
-      const Duration(milliseconds: 800),
-      [
-        SyncLyricWord(Duration.zero, const Duration(milliseconds: 400), '甲乙'),
-        SyncLyricWord(
-          const Duration(milliseconds: 400),
-          const Duration(milliseconds: 400),
-          '丙丁',
-        ),
-      ],
-    );
+    final line =
+        SyncLyricLine(Duration.zero, const Duration(milliseconds: 800), [
+          SyncLyricWord(Duration.zero, const Duration(milliseconds: 400), '甲乙'),
+          SyncLyricWord(
+            const Duration(milliseconds: 400),
+            const Duration(milliseconds: 400),
+            '丙丁',
+          ),
+        ]);
     final painter = LyricsLinePainter(
       params: LyricPainterParams(
         line: line,
@@ -639,36 +634,88 @@ void main() {
     expect(debugLyricCharYLifts.last, 0);
   });
 
-  test('inactive paint eases lifts down instead of dropping every glyph together', () {
-    final line = SyncLyricLine(
-      Duration.zero,
-      const Duration(milliseconds: 800),
-      [
-        SyncLyricWord(Duration.zero, const Duration(milliseconds: 400), '甲乙'),
-        SyncLyricWord(
-          const Duration(milliseconds: 400),
-          const Duration(milliseconds: 400),
-          '丙丁',
-        ),
-      ],
-    );
+  test('translation paint Y stays put while original glyphs lift', () {
+    final line =
+        SyncLyricLine(Duration.zero, const Duration(milliseconds: 800), [
+          SyncLyricWord(
+            Duration.zero,
+            const Duration(milliseconds: 400),
+            'Hello',
+          ),
+          SyncLyricWord(
+            const Duration(milliseconds: 400),
+            const Duration(milliseconds: 400),
+            'world',
+          ),
+        ], '翻译');
     const config = LyricRenderConfig(
       textAlign: LyricTextAlign.left,
       baseFontSize: 32,
       translationBaseFontSize: 20,
-      showTranslation: false,
+      showTranslation: true,
       showRoman: false,
       fontWeight: 600,
       enableBlur: false,
+      liftStyle: LyricLiftStyle.vertical,
       liftPeak: 2,
     );
-    final cache = LyricCharLiftCache();
+    LyricsLinePainter painterAt(double timeMs) {
+      return LyricsLinePainter(
+        params: LyricPainterParams(
+          line: line,
+          currentTimeMs: timeMs,
+          blurSigma: 0,
+          config: config,
+          isMainLine: true,
+          isHighlightActive: true,
+          isMainVocalActive: true,
+          accelerateTailHighlight: false,
+          useMaterialYouColor: false,
+          opacity: 1,
+          lineMedianWordDuration: Duration.zero,
+        ),
+        scheme: const ColorScheme.dark(),
+      );
+    }
+
+    painterAt(20).paint(Canvas(PictureRecorder()), const Size(400, 180));
+    final earlyY = debugLyricTranslationY;
+    expect(earlyY, isNotNull);
+    painterAt(600).paint(Canvas(PictureRecorder()), const Size(400, 180));
+    expect(debugLyricCharYLifts.any((y) => y < 0), isTrue);
+    expect(debugLyricTranslationY, earlyY);
+  });
+
+  test('vertical lift keeps sub-pixel fractions', () {
+    final line =
+        SyncLyricLine(Duration.zero, const Duration(milliseconds: 800), [
+          SyncLyricWord(
+            Duration.zero,
+            const Duration(milliseconds: 400),
+            'Hello',
+          ),
+          SyncLyricWord(
+            const Duration(milliseconds: 400),
+            const Duration(milliseconds: 400),
+            'world',
+          ),
+        ]);
     LyricsLinePainter(
       params: LyricPainterParams(
         line: line,
-        currentTimeMs: 700,
+        currentTimeMs: 200,
         blurSigma: 0,
-        config: config,
+        config: const LyricRenderConfig(
+          textAlign: LyricTextAlign.left,
+          baseFontSize: 32,
+          translationBaseFontSize: 20,
+          showTranslation: false,
+          showRoman: false,
+          fontWeight: 600,
+          enableBlur: false,
+          liftStyle: LyricLiftStyle.vertical,
+          liftPeak: 2,
+        ),
         isMainLine: true,
         isHighlightActive: true,
         isMainVocalActive: true,
@@ -678,54 +725,227 @@ void main() {
         lineMedianWordDuration: Duration.zero,
       ),
       scheme: const ColorScheme.dark(),
-      liftCache: cache,
     ).paint(Canvas(PictureRecorder()), const Size(400, 140));
-    expect(cache.values.where((y) => y < 0), isNotEmpty);
+    expect(debugLyricCharYLifts, isNotEmpty);
+    expect(debugLyricCharYLifts.any((y) => y != y.roundToDouble()), isTrue);
+  });
 
+  test('wrapped cosine visual lines lift only sung glyphs', () {
+    final line =
+        SyncLyricLine(Duration.zero, const Duration(milliseconds: 800), [
+          SyncLyricWord(Duration.zero, const Duration(milliseconds: 400), '甲'),
+          SyncLyricWord(
+            const Duration(milliseconds: 400),
+            const Duration(milliseconds: 400),
+            '乙丙丁戊己庚',
+          ),
+        ]);
     LyricsLinePainter(
       params: LyricPainterParams(
         line: line,
-        currentTimeMs: 900,
+        currentTimeMs: 200,
         blurSigma: 0,
-        config: config,
-        isMainLine: false,
-        isHighlightActive: false,
-        isMainVocalActive: false,
+        config: const LyricRenderConfig(
+          textAlign: LyricTextAlign.left,
+          baseFontSize: 32,
+          translationBaseFontSize: 20,
+          showTranslation: false,
+          showRoman: false,
+          fontWeight: 600,
+          enableBlur: false,
+          liftStyle: LyricLiftStyle.cosine,
+          liftPeak: 2,
+        ),
+        isMainLine: true,
+        isHighlightActive: true,
+        isMainVocalActive: true,
         accelerateTailHighlight: false,
         useMaterialYouColor: false,
         opacity: 1,
         lineMedianWordDuration: Duration.zero,
-        liftDecayListenable: ValueNotifier<double>(0.7),
       ),
       scheme: const ColorScheme.dark(),
-      liftCache: cache,
-    ).paint(Canvas(PictureRecorder()), const Size(400, 140));
-    expect(debugLyricCharYLifts, isNotEmpty);
-    final before = cache.values.fold<double>(
-      0,
-      (m, y) => y.abs() > m ? y.abs() : m,
-    );
-    final after = debugLyricCharYLifts.fold<double>(
-      0,
-      (m, y) => y.abs() > m ? y.abs() : m,
-    );
-    expect(before, greaterThan(0));
-    expect(after, lessThan(before));
+    ).paint(Canvas(PictureRecorder()), const Size(80, 220));
+    expect(debugLyricCharYLifts.length, greaterThan(1));
+    expect(debugLyricCharYLifts.first, lessThan(0));
+    expect(debugLyricCharYLifts[1], 0);
+    expect(debugLyricCharYLifts.last, 0);
   });
 
-  test('catch-up paint still raises earlier glyphs first', () {
-    final line = SyncLyricLine(
-      Duration.zero,
-      const Duration(milliseconds: 800),
-      [
-        SyncLyricWord(Duration.zero, const Duration(milliseconds: 400), '甲乙'),
-        SyncLyricWord(
-          const Duration(milliseconds: 400),
-          const Duration(milliseconds: 400),
-          '丙丁',
+  test('wrapped vertical visual lines lift only sung glyphs', () {
+    final line =
+        SyncLyricLine(Duration.zero, const Duration(milliseconds: 800), [
+          SyncLyricWord(Duration.zero, const Duration(milliseconds: 400), '甲'),
+          SyncLyricWord(
+            const Duration(milliseconds: 400),
+            const Duration(milliseconds: 400),
+            '乙丙丁戊己庚',
+          ),
+        ]);
+    LyricsLinePainter(
+      params: LyricPainterParams(
+        line: line,
+        currentTimeMs: 380,
+        blurSigma: 0,
+        config: const LyricRenderConfig(
+          textAlign: LyricTextAlign.left,
+          baseFontSize: 32,
+          translationBaseFontSize: 20,
+          showTranslation: false,
+          showRoman: false,
+          fontWeight: 600,
+          enableBlur: false,
+          liftStyle: LyricLiftStyle.vertical,
+          liftPeak: 2,
         ),
-      ],
-    );
+        isMainLine: true,
+        isHighlightActive: true,
+        isMainVocalActive: true,
+        accelerateTailHighlight: false,
+        useMaterialYouColor: false,
+        opacity: 1,
+        lineMedianWordDuration: Duration.zero,
+      ),
+      scheme: const ColorScheme.dark(),
+    ).paint(Canvas(PictureRecorder()), const Size(80, 220));
+    expect(debugLyricCharYLifts.length, greaterThan(1));
+    expect(debugLyricCharYLifts.first, lessThan(0));
+    expect(debugLyricCharYLifts[1], 0);
+    expect(debugLyricCharYLifts.last, 0);
+  });
+
+  test('wrapped English visual lines lift only sung glyphs', () {
+    final line =
+        SyncLyricLine(Duration.zero, const Duration(milliseconds: 2000), [
+          SyncLyricWord(
+            Duration.zero,
+            const Duration(milliseconds: 1600),
+            'sick of sick of sick of sick of ',
+          ),
+          SyncLyricWord(
+            const Duration(milliseconds: 1600),
+            const Duration(milliseconds: 400),
+            'chasing',
+          ),
+        ]);
+    LyricsLinePainter(
+      params: LyricPainterParams(
+        line: line,
+        currentTimeMs: 800,
+        blurSigma: 0,
+        config: const LyricRenderConfig(
+          textAlign: LyricTextAlign.left,
+          baseFontSize: 32,
+          translationBaseFontSize: 20,
+          showTranslation: false,
+          showRoman: false,
+          fontWeight: 600,
+          enableBlur: false,
+          liftStyle: LyricLiftStyle.vertical,
+          liftPeak: 2,
+        ),
+        isMainLine: true,
+        isHighlightActive: true,
+        isMainVocalActive: true,
+        accelerateTailHighlight: false,
+        useMaterialYouColor: false,
+        opacity: 1,
+        lineMedianWordDuration: Duration.zero,
+      ),
+      scheme: const ColorScheme.dark(),
+    ).paint(Canvas(PictureRecorder()), const Size(220, 220));
+    expect(debugLyricCharYLifts.length, greaterThan(8));
+    expect(debugLyricCharYLifts.first, lessThan(0));
+    expect(debugLyricCharYLifts.last, 0);
+  });
+
+  test(
+    'inactive paint eases lifts down instead of dropping every glyph together',
+    () {
+      final line = SyncLyricLine(
+        Duration.zero,
+        const Duration(milliseconds: 800),
+        [
+          SyncLyricWord(Duration.zero, const Duration(milliseconds: 400), '甲乙'),
+          SyncLyricWord(
+            const Duration(milliseconds: 400),
+            const Duration(milliseconds: 400),
+            '丙丁',
+          ),
+        ],
+      );
+      const config = LyricRenderConfig(
+        textAlign: LyricTextAlign.left,
+        baseFontSize: 32,
+        translationBaseFontSize: 20,
+        showTranslation: false,
+        showRoman: false,
+        fontWeight: 600,
+        enableBlur: false,
+        liftPeak: 2,
+      );
+      final cache = LyricCharLiftCache();
+      LyricsLinePainter(
+        params: LyricPainterParams(
+          line: line,
+          currentTimeMs: 700,
+          blurSigma: 0,
+          config: config,
+          isMainLine: true,
+          isHighlightActive: true,
+          isMainVocalActive: true,
+          accelerateTailHighlight: false,
+          useMaterialYouColor: false,
+          opacity: 1,
+          lineMedianWordDuration: Duration.zero,
+        ),
+        scheme: const ColorScheme.dark(),
+        liftCache: cache,
+      ).paint(Canvas(PictureRecorder()), const Size(400, 140));
+      expect(cache.values.where((y) => y < 0), isNotEmpty);
+
+      LyricsLinePainter(
+        params: LyricPainterParams(
+          line: line,
+          currentTimeMs: 900,
+          blurSigma: 0,
+          config: config,
+          isMainLine: false,
+          isHighlightActive: false,
+          isMainVocalActive: false,
+          accelerateTailHighlight: false,
+          useMaterialYouColor: false,
+          opacity: 1,
+          lineMedianWordDuration: Duration.zero,
+          liftDecayListenable: ValueNotifier<double>(0.7),
+        ),
+        scheme: const ColorScheme.dark(),
+        liftCache: cache,
+      ).paint(Canvas(PictureRecorder()), const Size(400, 140));
+      expect(debugLyricCharYLifts, isNotEmpty);
+      final before = cache.values.fold<double>(
+        0,
+        (m, y) => y.abs() > m ? y.abs() : m,
+      );
+      final after = debugLyricCharYLifts.fold<double>(
+        0,
+        (m, y) => y.abs() > m ? y.abs() : m,
+      );
+      expect(before, greaterThan(0));
+      expect(after, lessThan(before));
+    },
+  );
+
+  test('catch-up paint still raises earlier glyphs first', () {
+    final line =
+        SyncLyricLine(Duration.zero, const Duration(milliseconds: 800), [
+          SyncLyricWord(Duration.zero, const Duration(milliseconds: 400), '甲乙'),
+          SyncLyricWord(
+            const Duration(milliseconds: 400),
+            const Duration(milliseconds: 400),
+            '丙丁',
+          ),
+        ]);
     LyricsLinePainter(
       params: LyricPainterParams(
         line: line,
@@ -851,6 +1071,83 @@ void main() {
       );
       expect(c.visualLineCount, 2);
       expect(c.y, 20);
+    });
+  });
+
+  group('word effect envelope follows char wave with a warp cap', () {
+    test('char wave keeps later glyphs behind the first', () {
+      expect(
+        lyricCharWaveProgress(wordProgress: 0.2, charIndex: 0, charCount: 4),
+        greaterThan(
+          lyricCharWaveProgress(wordProgress: 0.2, charIndex: 3, charCount: 4),
+        ),
+      );
+    });
+
+    test('capped progress stays on the warped curve until the lead limit', () {
+      expect(
+        lyricCappedEffectProgress(warpedProgress: 0.4, realProgress: 0.4),
+        0.4,
+      );
+      expect(
+        lyricCappedEffectProgress(warpedProgress: 0.5, realProgress: 0.45),
+        0.5,
+      );
+      expect(
+        lyricCappedEffectProgress(warpedProgress: 0.99, realProgress: 0.84),
+        closeTo(0.84 + lyricEffectWarpLead, 0.0001),
+      );
+    });
+
+    test('tail warp cannot skip the whole release in one step', () {
+      const start = 8000.0;
+      const end = 10000.0;
+      const times = [9800.0, 9850.0, 9900.0, 9950.0, 10000.0];
+      var last = 0.0;
+      for (final now in times) {
+        final highlight = lyricHighlightTimeMs(
+          currentTimeMs: now,
+          lineStartMs: start,
+          lastWordEndMs: end,
+          deadlineMs: 10032,
+        );
+        final warped = lyricCharWaveProgress(
+          wordProgress: lyricWordProgress(
+            nowMs: highlight,
+            wordStartMs: start,
+            wordEndMs: end,
+          ),
+          charIndex: 0,
+          charCount: 1,
+        );
+        final real = lyricCharWaveProgress(
+          wordProgress: lyricWordProgress(
+            nowMs: now,
+            wordStartMs: start,
+            wordEndMs: end,
+          ),
+          charIndex: 0,
+          charCount: 1,
+        );
+        final effect = lyricCappedEffectProgress(
+          warpedProgress: warped,
+          realProgress: real,
+        );
+        if (now > times.first) {
+          expect(effect - last, lessThan(0.12));
+        }
+        expect(effect, greaterThanOrEqualTo(last));
+        last = effect;
+      }
+    });
+
+    test('exit mix eases scale and glow to rest', () {
+      expect(lyricExitScale(1.2, 1), closeTo(1.2, 0.0001));
+      expect(lyricExitScale(1.2, 0.5), closeTo(1.1, 0.0001));
+      expect(lyricExitScale(1.2, 0), 1.0);
+      expect(lyricExitGlowAlpha(0.4, 1), closeTo(0.4, 0.0001));
+      expect(lyricExitGlowAlpha(0.4, 0.5), closeTo(0.2, 0.0001));
+      expect(lyricExitGlowAlpha(0.4, 0), 0);
     });
   });
 }

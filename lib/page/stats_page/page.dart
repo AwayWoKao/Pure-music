@@ -881,15 +881,13 @@ class _StatsPageState extends State<StatsPage> {
   void _openArtist(String name) {
     final artist = AudioLibrary.instance.artistCollection[name];
     if (artist == null) return;
-    DirectionalTabView.suppressNextIndexMotion();
-    context.push(app_paths.ARTIST_DETAIL_PAGE, extra: artist);
+    context.push(app_paths.STATS_ARTIST_DETAIL_PAGE, extra: artist);
   }
 
   void _openAlbum(String name) {
     final album = AudioLibrary.instance.albumCollection[name];
     if (album == null) return;
-    DirectionalTabView.suppressNextIndexMotion();
-    context.push(app_paths.ALBUM_DETAIL_PAGE, extra: album);
+    context.push(app_paths.STATS_ALBUM_DETAIL_PAGE, extra: album);
   }
 
   int _estimatedListenSeconds(

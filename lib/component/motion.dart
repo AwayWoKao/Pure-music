@@ -416,13 +416,6 @@ class DirectionalTabView extends StatefulWidget {
   final int index;
   final List<Widget> children;
 
-  static bool _suppressNextIndexMotion = false;
-
-  /// 由页面 `push` 引起的分栏切换不再走侧栏短位移，把推入推出交给统一的页面过渡。
-  static void suppressNextIndexMotion() {
-    _suppressNextIndexMotion = true;
-  }
-
   @override
   State<DirectionalTabView> createState() => _DirectionalTabViewState();
 }
@@ -468,12 +461,6 @@ class _DirectionalTabViewState extends State<DirectionalTabView>
   void didUpdateWidget(covariant DirectionalTabView oldWidget) {
     super.didUpdateWidget(oldWidget);
     _syncChannelCount();
-    if (DirectionalTabView._suppressNextIndexMotion) {
-      DirectionalTabView._suppressNextIndexMotion = false;
-      if (oldWidget.index == widget.index) return;
-      _snapToIndex(widget.index);
-      return;
-    }
     if (oldWidget.index == widget.index) return;
     final direction = widget.index > oldWidget.index ? 1.0 : -1.0;
     final requestId = ++_transitionRequestId;
@@ -498,17 +485,6 @@ class _DirectionalTabViewState extends State<DirectionalTabView>
     if (oldWidget.index < _channels.length) {
       final outgoing = _channels[oldWidget.index];
       outgoing.animateTo(offset: -_tabExitDistance * direction, opacity: 0);
-    }
-  }
-
-  void _snapToIndex(int index) {
-    _transitionRequestId++;
-    for (var i = 0; i < _channels.length; i++) {
-      _channels[i].snap(
-        opacity: i == index ? 1 : 0,
-        offset: 0,
-        listMotionReady: i == index,
-      );
     }
   }
 
@@ -634,20 +610,6 @@ class _TabMotionChannel {
       ),
     );
     return [opacityAnimation, offsetAnimation];
-  }
-
-  void snap({
-    required double opacity,
-    required double offset,
-    required bool listMotionReady,
-  }) {
-    this.opacity
-      ..stop()
-      ..value = opacity;
-    this.offset
-      ..stop()
-      ..value = offset;
-    this.listMotionReady.value = listMotionReady;
   }
 
   void dispose() {

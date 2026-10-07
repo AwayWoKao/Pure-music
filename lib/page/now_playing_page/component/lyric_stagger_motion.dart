@@ -6,6 +6,20 @@ import 'package:flutter/widgets.dart';
 const lyricSmoothTransitionDuration = Duration(milliseconds: 700);
 const lyricSmoothTransitionCurve = Cubic(0.25, 0.0, 0.2, 1.0);
 
+/// 切行缩放/浮起/模糊共用弹簧。
+const lyricLineSwitchSpring = SpringDescription(
+  mass: 1,
+  stiffness: 100,
+  damping: 18,
+);
+
+/// 行位移用略过阻尼：zeta 1.1 不回弹，k=100 比 200 慢一档，切行距离改成真实行距后不会甩出去。
+const lyricLinePositionSpring = SpringDescription(
+  mass: 1,
+  stiffness: 100,
+  damping: 22,
+);
+
 double lyricSmoothTransitionInterpolator(double t, double start, double end) {
   final progress = lyricSmoothTransitionCurve.transform(t);
   return start + (end - start) * progress;
@@ -23,6 +37,26 @@ int lyricStaggerDelayMs({
     step /= 1.05;
   }
   return total.toInt();
+}
+
+Duration lyricSpringItemDelay({
+  required int itemIndex,
+  required int visibleStartIndex,
+}) {
+  return Duration(
+    milliseconds: lyricStaggerDelayMs(
+      itemIndex: itemIndex,
+      visibleStartIndex: visibleStartIndex,
+    ),
+  );
+}
+
+/// 从补偿位移回到 0 时不允许越过终点，避免整列下沉。
+double lyricStaggerClampedOffset(double value, double origin) {
+  if (origin >= 0) {
+    return value < 0 ? 0.0 : value;
+  }
+  return value > 0 ? 0.0 : value;
 }
 
 bool canStartLyricStagger({
@@ -94,6 +128,7 @@ class _LyricStaggerTransitionState extends State<LyricStaggerTransition>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
   Timer? _delayTimer;
+  double _originY = 0;
 
   @override
   void initState() {
@@ -146,6 +181,7 @@ class _LyricStaggerTransitionState extends State<LyricStaggerTransition>
     _controller.stop();
     _controller.value = start;
     final generation = widget.generation;
+    _originY = start;
     if (springRunning || widget.delay <= Duration.zero) {
       _startSpring(generation, velocity: velocity);
       return;
@@ -155,20 +191,27 @@ class _LyricStaggerTransitionState extends State<LyricStaggerTransition>
 
   void _startSpring(int generation, {double velocity = 0}) {
     if (!mounted || !widget.enabled || generation != widget.generation) return;
-    final spring = SpringDescription.withDampingRatio(
-      mass: 1,
-      stiffness: 200,
-      ratio: 0.9,
-    );
-    _controller.animateWith(
+    final future = _controller.animateWith(
       SpringSimulation(
-        spring,
+        lyricLinePositionSpring,
         _controller.value,
         0,
         velocity,
         tolerance: const Tolerance(distance: 0.05, velocity: 0.1),
       ),
     );
+    future.whenComplete(() {
+      if (!mounted || generation != widget.generation) return;
+      if (!_controller.isAnimating && _controller.value.abs() < 0.05) {
+        _controller.value = 0;
+      }
+    });
+  }
+
+  double _visualOffsetY() {
+    final raw = lyricStaggerClampedOffset(_controller.value, _originY);
+    if (!_controller.isAnimating && raw.abs() < 0.05) return 0.0;
+    return raw;
   }
 
   @override
@@ -182,7 +225,7 @@ class _LyricStaggerTransitionState extends State<LyricStaggerTransition>
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: _controller,
     builder: (context, child) =>
-        Transform.translate(offset: Offset(0, _controller.value), child: child),
+        Transform.translate(offset: Offset(0, _visualOffsetY()), child: child),
     child: widget.child,
   );
 }

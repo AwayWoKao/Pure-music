@@ -71,7 +71,7 @@ class LyricRenderConfig {
     this.mainTranslationScale = 0.78,
     this.subTranslationScale = 0.70,
     this.activeLineScaleMultiplier = 1.0,
-    this.inactiveLineScaleMultiplier = 0.90,
+    this.inactiveLineScaleMultiplier = 0.95,
     this.implicitAnimationDuration = const Duration(milliseconds: 300),
     this.viewportLeadingLines = 2,
     this.viewportTrailingLines = 3,

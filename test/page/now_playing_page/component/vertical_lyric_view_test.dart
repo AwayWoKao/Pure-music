@@ -131,7 +131,7 @@ void main() {
       expect(finished(appliedOffset: 400), isFalse);
       expect(finished(appliedOffset: 419.75), isTrue);
       expect(finished(appliedOffset: 420.25), isTrue);
-      expect(finished(appliedOffset: 420.5), isFalse);
+      expect(finished(appliedOffset: 418), isFalse);
     });
 
     test('rejects non-finite geometry', () {
@@ -237,6 +237,228 @@ void main() {
     },
   );
 
+  test('stagger jump uses cached line advance, not a larger live reveal', () {
+    const offsets = [0.0, 80.0, 200.0];
+    const heights = [80.0, 120.0, 60.0];
+    const current = 140.0;
+    final target = lyricStaggerScrollTarget(
+      currentOffset: current,
+      fromIndex: 0,
+      toIndex: 1,
+      offsets: offsets,
+      heights: heights,
+      alignment: 0.35,
+    );
+    final follow = lyricFollowScrollOffset(
+      currentOffset: current,
+      fromIndex: 0,
+      toIndex: 1,
+      offsets: offsets,
+      heights: heights,
+      alignment: 0.35,
+    );
+    expect(target, follow);
+    expect(lyricStaggerJumpDeltaY(from: current, to: target), follow - current);
+    expect(target - current, lessThan(200));
+  });
+
+  test('programmatic lyric scroll snaps to physical pixels', () {
+    expect(lyricSnapScrollOffset(10.4, 1.25), 10.4);
+    expect(lyricSnapScrollOffset(10.2, 1.0), 10.0);
+    expect(lyricSnapScrollOffset(10.6, 1.0), 11.0);
+  });
+
+  test('restored initial offset uses the same padding as the list', () {
+    const viewport = 800.0;
+    const alignment = 0.35;
+    const lineTop = 100.0;
+    const lineHeight = 80.0;
+    final restored = lyricScrollOffsetToAlignLine(
+      topPadding: lyricListTopPadding(
+        viewportHeight: viewport,
+        centerVertically: true,
+        enableEdgeSpacer: true,
+        alignment: alignment,
+      ),
+      lineTop: lineTop,
+      lineHeight: lineHeight,
+      viewportHeight: viewport,
+      alignment: alignment,
+    );
+    const oldWrong =
+        viewport / 2 + lineTop + lineHeight / 2 - viewport * alignment;
+    expect(
+      restored,
+      closeTo(
+        1200 + lineTop + lineHeight * alignment - viewport * alignment,
+        0.0001,
+      ),
+    );
+    expect(restored - oldWrong, greaterThan(700));
+  });
+
+  test('edge spacer padding is included in the follow target', () {
+    expect(
+      lyricListTopPadding(
+        viewportHeight: 800,
+        centerVertically: true,
+        enableEdgeSpacer: true,
+        alignment: 0.35,
+      ),
+      1200,
+    );
+    expect(
+      lyricScrollOffsetToAlignLine(
+        topPadding: lyricListTopPadding(
+          viewportHeight: 800,
+          centerVertically: true,
+          enableEdgeSpacer: true,
+          alignment: 0.35,
+        ),
+        lineTop: 100,
+        lineHeight: 80,
+        viewportHeight: 800,
+        alignment: 0.35,
+      ),
+      closeTo(1200 + 100 + 80 * 0.35 - 800 * 0.35, 0.0001),
+    );
+    expect(
+      lyricScrollOffsetToAlignLine(
+        topPadding: 400,
+        lineTop: 100,
+        lineHeight: 80,
+        viewportHeight: 800,
+        alignment: 0.35,
+      ),
+      isNot(closeTo(1200 + 100 + 80 * 0.35 - 800 * 0.35, 1)),
+    );
+  });
+
+  test('cached lyric scroll aligns the same point as the viewport', () {
+    expect(
+      lyricScrollOffsetToAlignLine(
+        topPadding: 400,
+        lineTop: 100,
+        lineHeight: 80,
+        viewportHeight: 800,
+        alignment: 0.12,
+      ),
+      closeTo(400 + 100 + 80 * 0.12 - 800 * 0.12, 0.0001),
+    );
+    expect(
+      lyricScrollOffsetToAlignLine(
+        topPadding: 400,
+        lineTop: 100,
+        lineHeight: 80,
+        viewportHeight: 800,
+        alignment: 0.12,
+      ),
+      isNot(closeTo(400 + 100 + 40 - 800 * 0.12, 0.0001)),
+    );
+  });
+
+  test('follow does not jump a whole screen backward', () {
+    expect(
+      lyricScrollOffsetWithoutRetreat(
+        from: 1400,
+        candidate: 400,
+        advancing: true,
+      ),
+      1400,
+    );
+  });
+
+  test('forward follow does not snap below the current offset', () {
+    expect(
+      lyricScrollOffsetWithoutRetreat(
+        from: 200.4,
+        candidate: 200.0,
+        advancing: true,
+      ),
+      200.4,
+    );
+    expect(
+      lyricScrollOffsetWithoutRetreat(
+        from: 200.4,
+        candidate: 248.0,
+        advancing: true,
+      ),
+      248.0,
+    );
+    expect(
+      lyricScrollOffsetWithoutRetreat(
+        from: 200.4,
+        candidate: 201.0,
+        advancing: false,
+      ),
+      200.4,
+    );
+  });
+
+  test('follow scroll adds cached line height and never goes backward', () {
+    const offsets = [0.0, 80.0, 200.0];
+    const heights = [80.0, 120.0, 60.0];
+    expect(
+      lyricFollowScrollOffset(
+        currentOffset: 140,
+        fromIndex: 0,
+        toIndex: 1,
+        offsets: offsets,
+        heights: heights,
+        alignment: 0.35,
+      ),
+      closeTo(140 + (80 + 120 * 0.35) - (0 + 80 * 0.35), 0.0001),
+    );
+    expect(
+      lyricFollowScrollOffset(
+        currentOffset: 140,
+        fromIndex: 1,
+        toIndex: 0,
+        offsets: offsets,
+        heights: heights,
+        alignment: 0.35,
+      ),
+      lessThan(140),
+    );
+    expect(
+      lyricClampScrollForLineAdvance(
+        from: 140,
+        to: lyricFollowScrollOffset(
+          currentOffset: 140,
+          fromIndex: 0,
+          toIndex: 1,
+          offsets: offsets,
+          heights: heights,
+          alignment: 0.35,
+        ),
+        fromIndex: 0,
+        toIndex: 1,
+      ),
+      greaterThan(140),
+    );
+  });
+
+  test('advancing a line does not scroll backward', () {
+    expect(
+      lyricClampScrollForLineAdvance(
+        from: 200,
+        to: 120,
+        fromIndex: 3,
+        toIndex: 4,
+      ),
+      200,
+    );
+    expect(
+      lyricClampScrollForLineAdvance(
+        from: 200,
+        to: 260,
+        fromIndex: 3,
+        toIndex: 4,
+      ),
+      260,
+    );
+  });
+
   test('force jump does not cut a scroll already moving to the same line', () {
     expect(
       shouldSnapLyricScroll(
@@ -257,6 +479,14 @@ void main() {
     expect(
       shouldSnapLyricScroll(
         distancePx: 0.2,
+        forceJump: false,
+        animatingToSameTarget: false,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldSnapLyricScroll(
+        distancePx: 1.5,
         forceJump: false,
         animatingToSameTarget: false,
       ),

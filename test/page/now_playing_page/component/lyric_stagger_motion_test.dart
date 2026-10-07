@@ -1,8 +1,51 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pure_music/page/now_playing_page/component/lyric_stagger_motion.dart';
 
 void main() {
+  test('line switch spring is mass 1 stiffness 100 damping 18', () {
+    expect(lyricLineSwitchSpring.mass, 1);
+    expect(lyricLineSwitchSpring.stiffness, 100);
+    expect(lyricLineSwitchSpring.damping, 18);
+  });
+
+  test('position spring is overdamped at zeta 1.1 stiffness 100', () {
+    expect(lyricLinePositionSpring.mass, 1);
+    expect(lyricLinePositionSpring.stiffness, 100);
+    expect(lyricLinePositionSpring.damping, 22);
+    final zeta =
+        lyricLinePositionSpring.damping /
+        (2 *
+            sqrt(
+              lyricLinePositionSpring.stiffness * lyricLinePositionSpring.mass,
+            ));
+    expect(zeta, closeTo(1.1, 0.0001));
+  });
+
+  test('stagger offset never crosses the resting position', () {
+    expect(lyricStaggerClampedOffset(-4, 80), 0);
+    expect(lyricStaggerClampedOffset(12, 80), 12);
+    expect(lyricStaggerClampedOffset(4, -80), 0);
+    expect(lyricStaggerClampedOffset(-12, -80), -12);
+  });
+
+  test('current line uses the same visible-start delay as neighbours', () {
+    expect(
+      lyricSpringItemDelay(itemIndex: 6, visibleStartIndex: 3),
+      Duration(
+        milliseconds: lyricStaggerDelayMs(itemIndex: 6, visibleStartIndex: 3),
+      ),
+    );
+    expect(
+      lyricSpringItemDelay(itemIndex: 7, visibleStartIndex: 3),
+      Duration(
+        milliseconds: lyricStaggerDelayMs(itemIndex: 7, visibleStartIndex: 3),
+      ),
+    );
+  });
+
   group('lyricStaggerDelayMs', () {
     test('uses cumulative delay from the visible start line', () {
       expect(lyricStaggerDelayMs(itemIndex: 4, visibleStartIndex: 4), 0);
@@ -314,6 +357,67 @@ void main() {
     expect(_translationY(tester), 0);
     await tester.pump(const Duration(milliseconds: 600));
     expect(_translationY(tester), 0);
+  });
+
+  testWidgets('spring return never sinks below the resting position', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const Directionality(
+        textDirection: TextDirection.ltr,
+        child: LyricStaggerTransition(
+          enabled: true,
+          generation: 1,
+          shiftY: 120,
+          delay: Duration.zero,
+          child: SizedBox(key: ValueKey('line'), width: 20, height: 20),
+        ),
+      ),
+    );
+    var previous = _translationY(tester);
+    expect(previous, 120);
+    for (var i = 0; i < 24; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+      final current = _translationY(tester);
+      expect(current, greaterThanOrEqualTo(-0.05));
+      expect(current, lessThanOrEqualTo(previous + 0.05));
+      previous = current;
+    }
+    await tester.pumpAndSettle();
+    expect(_translationY(tester), closeTo(0, 0.05));
+  });
+
+  testWidgets('a single switch travels the captured shift once and settles', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const Directionality(
+        textDirection: TextDirection.ltr,
+        child: LyricStaggerTransition(
+          enabled: true,
+          generation: 1,
+          shiftY: 80,
+          delay: Duration.zero,
+          child: SizedBox(key: ValueKey('line'), width: 20, height: 20),
+        ),
+      ),
+    );
+    final samples = <double>[_translationY(tester)];
+    expect(samples.first, 80);
+    for (var i = 0; i < 75; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+      samples.add(_translationY(tester));
+    }
+    final maxTravel = samples.reduce(max);
+    final minY = samples.reduce(min);
+    expect(maxTravel, closeTo(80, 0.5));
+    expect(minY, greaterThanOrEqualTo(-0.05));
+    expect(samples.last, lessThan(8));
+    for (var i = 1; i < samples.length; i++) {
+      expect(samples[i], lessThanOrEqualTo(samples[i - 1] + 0.05));
+    }
+    await tester.pumpAndSettle();
+    expect(_translationY(tester).abs(), lessThan(0.05));
   });
 }
 

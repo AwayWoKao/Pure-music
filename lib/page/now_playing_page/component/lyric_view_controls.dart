@@ -5,6 +5,7 @@ import 'package:pure_music/core/preference.dart';
 import 'package:pure_music/core/lyric_render_config.dart';
 import 'package:pure_music/core/enums.dart';
 import 'package:pure_music/core/settings.dart';
+import 'package:pure_music/core/theme.dart';
 import 'package:pure_music/core/zh_converter.dart';
 import 'package:pure_music/lyric/lyric.dart';
 import 'package:pure_music/play_service/play_service.dart';
@@ -274,6 +275,21 @@ List<Widget> _withVerticalSpacing(List<Widget> children, double spacing) {
   ];
 }
 
+Color _lyricControlForeground(ColorScheme scheme) {
+  return playerThemeForeground(
+    scheme,
+    enabled: AppSettings.instance.useMaterialYouForControls,
+  );
+}
+
+Color? _lyricControlSelectedBackground(ColorScheme scheme, bool selected) {
+  if (!selected) return null;
+  if (AppSettings.instance.useMaterialYouForControls) {
+    return scheme.secondaryContainer;
+  }
+  return _lyricControlForeground(scheme).withValues(alpha: 0.18);
+}
+
 class _LyricAlignSwitchBtn extends StatelessWidget {
   const _LyricAlignSwitchBtn();
 
@@ -285,7 +301,7 @@ class _LyricAlignSwitchBtn extends StatelessWidget {
     return IconButton(
       onPressed: lyricViewController.switchLyricTextAlign,
       tooltip: '切换歌词对齐方向',
-      color: scheme.onSecondaryContainer,
+      color: _lyricControlForeground(scheme),
       icon: Icon(switch (lyricViewController.lyricTextAlign) {
         LyricTextAlign.left => Symbols.format_align_left,
         LyricTextAlign.center => Symbols.format_align_center,
@@ -309,12 +325,12 @@ class _FontSizeBtn extends StatelessWidget {
         onPressed: lyricViewController.increaseFontSize,
         tooltip:
             '字号：左键放大 / 右键缩小 (${lyricViewController.lyricFontSize.toStringAsFixed(0)})',
-        color: scheme.onSecondaryContainer,
+        color: _lyricControlForeground(scheme),
         icon: Text(
           'A',
           style: TextStyle(
             fontWeight: FontWeight.bold,
-            color: scheme.onSecondaryContainer,
+            color: _lyricControlForeground(scheme),
             fontSize: 16,
           ),
         ),
@@ -341,9 +357,9 @@ class _LyricTranslationSwitchBtn extends StatelessWidget {
                 : '歌词翻译：隐藏'
           : '当前歌词没有翻译',
       style: IconButton.styleFrom(
-        backgroundColor: enabled ? scheme.secondaryContainer : null,
+        backgroundColor: _lyricControlSelectedBackground(scheme, enabled),
       ),
-      color: scheme.onSecondaryContainer,
+      color: _lyricControlForeground(scheme),
       icon: Icon(Symbols.translate, fill: enabled ? 1 : 0),
     );
   }
@@ -362,9 +378,9 @@ class _LyricRomanSwitchBtn extends StatelessWidget {
       onPressed: lyricViewController.toggleLyricRoman,
       tooltip: enabled ? '歌词注音：显示' : '歌词注音：隐藏',
       style: IconButton.styleFrom(
-        backgroundColor: enabled ? scheme.secondaryContainer : null,
+        backgroundColor: _lyricControlSelectedBackground(scheme, enabled),
       ),
-      color: scheme.onSecondaryContainer,
+      color: _lyricControlForeground(scheme),
       icon: Icon(Symbols.language, fill: enabled ? 1 : 0),
     );
   }
@@ -383,9 +399,9 @@ class _LyricBlurSwitchBtn extends StatelessWidget {
       onPressed: lyricViewController.toggleLyricBlur,
       tooltip: enabled ? '歌词模糊：开启' : '歌词模糊：关闭',
       style: IconButton.styleFrom(
-        backgroundColor: enabled ? scheme.secondaryContainer : null,
+        backgroundColor: _lyricControlSelectedBackground(scheme, enabled),
       ),
-      color: scheme.onSecondaryContainer,
+      color: _lyricControlForeground(scheme),
       icon: Icon(Symbols.blur_on, fill: enabled ? 1 : 0),
     );
   }
@@ -413,7 +429,7 @@ class _FontWeightBtn extends StatelessWidget {
           'B',
           style: TextStyle(
             fontWeight: FontWeight.bold,
-            color: scheme.onSecondaryContainer,
+            color: _lyricControlForeground(scheme),
             fontSize: 16,
           ),
         ),

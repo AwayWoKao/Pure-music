@@ -24,8 +24,7 @@ import 'package:pure_music/page/now_playing_page/component/lyric_painter_params.
 import 'package:pure_music/page/now_playing_page/component/lyrics_line_painter.dart';
 import 'package:pure_music/play_service/play_service.dart';
 
-/// 整行上抬状态：演唱中抬起；唱完后只要仍在当前组就保持，
-/// 直到下一行接替（组移走）才落下。
+/// 退场逐字上抬衰减：当前行或当前组为 1，组离开后落到 0。
 @visibleForTesting
 bool lyricLineFloatTarget({
   required bool mainHighlight,
@@ -33,10 +32,31 @@ bool lyricLineFloatTarget({
   required bool wasLatched,
 }) => mainHighlight || (wasLatched && isHighlightActive);
 
-/// 组内按住时整行再抬一点，落下跟 float 一起走。
+/// 缩放走过目标行程九成后再开上抬。
 @visibleForTesting
-double lyricLineFloatOffsetY(double floatProgress) =>
-    floatProgress.clamp(0.0, 1.0) * -4.0;
+bool lyricScaleReachedLiftGate({
+  required double start,
+  required double target,
+  required double value,
+}) {
+  final travel = target - start;
+  if (travel.abs() < 1e-6) return true;
+  return (value - start) / travel >= 0.9;
+}
+
+/// 预测时钟只向前走；原生回跳或小幅超前不拿来抽帧。
+double lyricMonotonicPlaybackMs({
+  required double previousMs,
+  required double predictedMs,
+  required double nativeMs,
+  bool allowNativeResync = false,
+  double seekThresholdMs = 100,
+}) {
+  if ((nativeMs - previousMs).abs() >= seekThresholdMs) return nativeMs;
+  final predicted = predictedMs < previousMs ? previousMs : predictedMs;
+  if (allowNativeResync && nativeMs >= predicted) return nativeMs;
+  return predicted;
+}
 
 class LyricsLineWidget extends StatefulWidget {
   const LyricsLineWidget({
@@ -105,19 +125,16 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
   late final VoidCallback _playerStateListener;
   Duration _lastTickElapsed = Duration.zero;
   Duration _lastNativeSyncElapsed = Duration.zero;
-  Duration _lastProgressPaintElapsed = Duration.zero;
 
   /// seek 后用于过滤旧进度回调的临时目标
   double? _pendingSeekMs;
   DateTime? _pendingSeekAt;
   static const _seekGuardWindowMs = 200;
   static const _nativePositionSyncInterval = Duration(seconds: 1);
-  static const _progressPaintInterval = Duration(milliseconds: 33);
 
   late final AnimationController _scaleController;
   late final AnimationController _floatController;
   late final AnimationController _blurController;
-  late final Listenable _visualTransformListenable;
   bool _blurSyncScheduled = false;
   double _pendingBlurTarget = 0.0;
   double _activeBlurTarget = 0.0;
@@ -136,6 +153,13 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
   double _lastBackgroundHeightUpdateMs = -1e9;
   double _lastBackgroundVocalHeightFactor = -1.0;
   bool _floatLatched = false;
+  late final AnimationController _liftGateController;
+  Timer? _scaleDelayTimer;
+  Timer? _floatDelayTimer;
+  Timer? _blurDelayTimer;
+  Completer<void>? _scaleCompleter;
+  int _liftGateGen = 0;
+  VoidCallback? _scaleLiftListener;
 
   void _clearHeightCache() {
     _cachedLineHeight = null;
@@ -265,10 +289,8 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
         )
         ? 1.0
         : 0.0;
-    _visualTransformListenable = Listenable.merge([
-      _scaleController,
-      _floatController,
-    ]);
+    _liftGateController = AnimationController.unbounded(vsync: this);
+    _liftGateController.value = 1.0;
     _bindBackgroundVocalListeners();
     _playerStateListener = _syncProgressTicker;
     if (widget.positionListenable == null) {
@@ -279,26 +301,163 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
     _syncProgressTicker();
   }
 
-  void _animateScale() {
-    final target = widget.distance == 0
-        ? _config.mainLineScale * _config.activeLineScaleMultiplier
-        : _config.subLineScale * _config.inactiveLineScaleMultiplier;
-    final style = context.read<LyricViewController>().renderConfig.staggerStyle;
-    if (style == LyricStaggerStyle.smooth) {
-      _scaleController.animateTo(
-        target,
-        duration: lyricSmoothTransitionDuration,
-        curve: lyricSmoothTransitionCurve,
-      );
+  SpringSimulation _lineSpring(double from, double to) {
+    return SpringSimulation(
+      lyricLineSwitchSpring,
+      from,
+      to,
+      0,
+      // 缩放行程只有 0.05，停稳门槛要远小于行程才有过渡
+      tolerance: const Tolerance(distance: 0.0005, velocity: 0.005),
+    );
+  }
+
+  void _detachScaleLiftListener() {
+    final listener = _scaleLiftListener;
+    if (listener == null) return;
+    _scaleController.removeListener(listener);
+    _scaleLiftListener = null;
+  }
+
+  void _cancelLiftGateWait() {
+    _liftGateGen++;
+    _detachScaleLiftListener();
+  }
+
+  void _runAfterStagger(
+    Timer? timer,
+    void Function(Timer?) save,
+    VoidCallback action, {
+    bool ignoreDelay = false,
+  }) {
+    timer?.cancel();
+    final delay =
+        !ignoreDelay &&
+            context.read<LyricViewController>().renderConfig.staggerStyle ==
+                LyricStaggerStyle.spring
+        ? widget.staggerDelay
+        : Duration.zero;
+    if (delay <= Duration.zero) {
+      save(null);
+      action();
       return;
     }
-    final simulation = SpringSimulation(
-      const SpringDescription(mass: 1, stiffness: 100, damping: 17),
-      _scaleController.value,
-      target,
-      0,
+    save(
+      Timer(delay, () {
+        save(null);
+        if (mounted) action();
+      }),
     );
-    _scaleController.animateWith(simulation);
+  }
+
+  bool _skipLiftSwitchWait(LyricsLineWidget oldWidget) {
+    if (widget.jumpTriggerId != oldWidget.jumpTriggerId &&
+        widget.jumpDeltaY.abs() < 0.2) {
+      return true;
+    }
+    final now =
+        widget.positionListenable?.value ?? widget.positionMs ?? _currentTimeMs;
+    return now - widget.line.start.inMilliseconds > 100;
+  }
+
+  Future<void> _animateScale() {
+    final previous = _scaleCompleter;
+    final completer = Completer<void>();
+    _scaleCompleter = completer;
+    if (previous != null && !previous.isCompleted) {
+      previous.complete();
+    }
+    _runAfterStagger(_scaleDelayTimer, (timer) => _scaleDelayTimer = timer, () {
+      if (!mounted) {
+        if (!completer.isCompleted) completer.complete();
+        return;
+      }
+      final target = widget.distance == 0
+          ? _config.mainLineScale * _config.activeLineScaleMultiplier
+          : _config.subLineScale * _config.inactiveLineScaleMultiplier;
+      final style = context
+          .read<LyricViewController>()
+          .renderConfig
+          .staggerStyle;
+      final TickerFuture future;
+      if (style == LyricStaggerStyle.smooth) {
+        future = _scaleController.animateTo(
+          target,
+          duration: lyricSmoothTransitionDuration,
+          curve: lyricSmoothTransitionCurve,
+        );
+      } else {
+        future = _scaleController.animateWith(
+          _lineSpring(_scaleController.value, target),
+        );
+      }
+      future.whenComplete(() {
+        if (mounted && (_scaleController.value - target).abs() < 0.01) {
+          _scaleController.value = target;
+        }
+        if (!completer.isCompleted) completer.complete();
+      });
+    });
+    return completer.future;
+  }
+
+  void _armLiftGateAfterScale(
+    Future<void> scaleFuture, {
+    required bool alsoFloat,
+  }) {
+    final gen = ++_liftGateGen;
+    _liftGateController.stop();
+    _liftGateController.value = 0;
+    _detachScaleLiftListener();
+    final start = _scaleController.value;
+    final target = _config.mainLineScale * _config.activeLineScaleMultiplier;
+    var opened = false;
+
+    void open() {
+      if (opened) return;
+      opened = true;
+      _detachScaleLiftListener();
+      if (!mounted || gen != _liftGateGen || widget.distance != 0) return;
+      _liftGateController.animateTo(
+        1,
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.easeOut,
+      );
+      if (alsoFloat) _animateFloat(ignoreStaggerDelay: true);
+    }
+
+    void check() {
+      if (!mounted || gen != _liftGateGen) {
+        _detachScaleLiftListener();
+        return;
+      }
+      if (widget.distance != 0) {
+        _detachScaleLiftListener();
+        return;
+      }
+      if (lyricScaleReachedLiftGate(
+        start: start,
+        target: target,
+        value: _scaleController.value,
+      )) {
+        open();
+      }
+    }
+
+    if (lyricScaleReachedLiftGate(
+      start: start,
+      target: target,
+      value: _scaleController.value,
+    )) {
+      open();
+      return;
+    }
+    _scaleLiftListener = check;
+    _scaleController.addListener(check);
+    scaleFuture.then((_) {
+      if (gen != _liftGateGen) return;
+      open();
+    });
   }
 
   double _blurSigmaTarget(LyricRenderConfig config) {
@@ -329,26 +488,47 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
       final jump = _pendingBlurImmediate;
       _pendingBlurImmediate = false;
       _activeBlurTarget = next;
+      _blurDelayTimer?.cancel();
+      _blurDelayTimer = null;
       if (jump) {
         _blurController.stop();
         _blurController.value = next;
         return;
       }
       if ((_blurController.value - next).abs() < 0.01) return;
-      final smooth =
-          context.read<LyricViewController>().renderConfig.staggerStyle ==
-          LyricStaggerStyle.smooth;
-      _blurController.animateTo(
-        next,
-        duration: smooth
-            ? lyricSmoothTransitionDuration
-            : const Duration(milliseconds: 600),
-        curve: smooth ? lyricSmoothTransitionCurve : Curves.easeOutCubic,
+      final style = context
+          .read<LyricViewController>()
+          .renderConfig
+          .staggerStyle;
+      void start() {
+        if (!mounted) return;
+        if (style == LyricStaggerStyle.smooth) {
+          _blurController.animateTo(
+            next,
+            duration: lyricSmoothTransitionDuration,
+            curve: lyricSmoothTransitionCurve,
+          );
+          return;
+        }
+        _blurController
+            .animateWith(_lineSpring(_blurController.value, next))
+            .whenComplete(() {
+              if (!mounted) return;
+              if ((_blurController.value - next).abs() < 0.01) {
+                _blurController.value = next;
+              }
+            });
+      }
+
+      _runAfterStagger(
+        _blurDelayTimer,
+        (timer) => _blurDelayTimer = timer,
+        start,
       );
     });
   }
 
-  void _animateFloat() {
+  void _animateFloat({bool ignoreStaggerDelay = false}) {
     final target =
         lyricLineFloatTarget(
           mainHighlight: _mainHighlightFor(widget),
@@ -357,24 +537,32 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
         )
         ? 1.0
         : 0.0;
-    // 不在这里提前返回，让动画有机会完成
-    final style = context.read<LyricViewController>().renderConfig.staggerStyle;
-    if (style == LyricStaggerStyle.smooth) {
-      _floatController.animateTo(
-        target,
-        duration: lyricSmoothTransitionDuration,
-        curve: lyricSmoothTransitionCurve,
-      );
-      return;
-    }
-
-    _floatController.animateWith(
-      SpringSimulation(
-        const SpringDescription(mass: 1, stiffness: 100, damping: 17),
-        _floatController.value,
-        target,
-        0,
-      ),
+    _runAfterStagger(
+      _floatDelayTimer,
+      (timer) => _floatDelayTimer = timer,
+      () {
+        final style = context
+            .read<LyricViewController>()
+            .renderConfig
+            .staggerStyle;
+        if (style == LyricStaggerStyle.smooth) {
+          _floatController.animateTo(
+            target,
+            duration: lyricSmoothTransitionDuration,
+            curve: lyricSmoothTransitionCurve,
+          );
+          return;
+        }
+        _floatController
+            .animateWith(_lineSpring(_floatController.value, target))
+            .whenComplete(() {
+              if (!mounted) return;
+              if ((_floatController.value - target).abs() < 0.01) {
+                _floatController.value = target;
+              }
+            });
+      },
+      ignoreDelay: ignoreStaggerDelay,
     );
   }
 
@@ -405,8 +593,20 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
     }
     final now = target.positionListenable?.value ?? _currentTimeMs;
     final end = lyricBackgroundEndMs(line);
-    return now >= end &&
-        now < end + lyricBackgroundVocalExitDuration.inMilliseconds;
+    if (now >= end &&
+        now < end + lyricBackgroundVocalExitDuration.inMilliseconds) {
+      return true;
+    }
+    return lyricLineEffectsNeedFrame(
+      words: [...line.words, ...line.bgWords],
+      nowMs: now,
+      lineMedianDuration: _lineMedianWordDuration(line),
+      enableGlow: _config.enableGlow,
+      liftActive:
+          _mainHighlightFor(target) &&
+          _config.liftStyle == LyricLiftStyle.vertical,
+      liftPeak: _config.liftPeak,
+    );
   }
 
   bool get _needsProgressTicker {
@@ -448,7 +648,6 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
       _syncToNativePosition();
       _lastTickElapsed = Duration.zero;
       _lastNativeSyncElapsed = Duration.zero;
-      _lastProgressPaintElapsed = Duration.zero;
       _pendingSeekMs = null;
       _pendingSeekAt = null;
       final isPlaying =
@@ -499,6 +698,18 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
     if (overlapsProgress(line.words) || overlapsProgress(line.bgWords)) {
       return true;
     }
+    if (lyricLineEffectsNeedFrame(
+      words: [...line.words, ...line.bgWords],
+      nowMs: toMs,
+      lineMedianDuration: _lineMedianWordDuration(line),
+      enableGlow: _config.enableGlow,
+      liftActive:
+          _mainHighlightFor(widget) &&
+          _config.liftStyle == LyricLiftStyle.vertical,
+      liftPeak: _config.liftPeak,
+    )) {
+      return true;
+    }
     if (!lyricLineHasBackgroundVocal(line)) return false;
     final bgStart = lyricBackgroundStartMs(line);
     final bgVisualEnd =
@@ -523,14 +734,18 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
     final shouldSyncNative =
         _lastNativeSyncElapsed == Duration.zero ||
         elapsed - _lastNativeSyncElapsed >= _nativePositionSyncInterval;
-    final rawMs = shouldSyncNative
-        ? _readNativePositionMs()
-        : _currentTimeMs +
-              elapsedDelta.inMicroseconds /
-                  1000.0 *
-                  (widget.usesAuthoredTiming
-                      ? PlayService.instance.playbackService.rate.value
-                      : 1.0);
+    final rate = widget.usesAuthoredTiming
+        ? PlayService.instance.playbackService.rate.value
+        : 1.0;
+    final predictedMs =
+        _currentTimeMs + elapsedDelta.inMicroseconds / 1000.0 * rate;
+    final nativeMs = _readNativePositionMs();
+    final rawMs = lyricMonotonicPlaybackMs(
+      previousMs: _currentTimeMs,
+      predictedMs: predictedMs,
+      nativeMs: nativeMs,
+      allowNativeResync: shouldSyncNative,
+    );
     if (shouldSyncNative) {
       _lastNativeSyncElapsed = elapsed;
     }
@@ -572,14 +787,6 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
     }
 
     if (!shouldRepaint || !mounted) return;
-
-    if (!forceRepaint &&
-        _lastProgressPaintElapsed != Duration.zero &&
-        elapsed - _lastProgressPaintElapsed < _progressPaintInterval) {
-      return;
-    }
-    _lastProgressPaintElapsed = elapsed;
-
     if (widget.line is SyncLyricLine) {
       final syncLine = widget.line as SyncLyricLine;
       if (!forceRepaint &&
@@ -661,6 +868,7 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
     final wasActive = oldWidget.distance == 0;
     final isHighlightActive = _mainHighlightFor(widget);
     final wasHighlightActive = _mainHighlightFor(oldWidget);
+    var authoredFloatAfterScale = false;
     if (widget.usesAuthoredTiming) {
       final wasFloatActive = lyricLineFloatTarget(
         mainHighlight: wasHighlightActive,
@@ -673,7 +881,11 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
         wasLatched: _floatLatched,
       );
       if (_floatLatched != wasFloatActive) {
-        _animateFloat();
+        if (isActive && !wasActive && !_skipLiftSwitchWait(oldWidget)) {
+          authoredFloatAfterScale = true;
+        } else {
+          _animateFloat();
+        }
       }
     }
 
@@ -692,8 +904,24 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
     }
 
     if (isActive != wasActive) {
-      _animateScale();
-      if (!widget.usesAuthoredTiming) _animateFloat();
+      _cancelLiftGateWait();
+      final scaleFuture = _animateScale();
+      if (isActive) {
+        if (_skipLiftSwitchWait(oldWidget)) {
+          _liftGateController.stop();
+          _liftGateController.value = 1.0;
+          if (!widget.usesAuthoredTiming || authoredFloatAfterScale) {
+            _animateFloat();
+          }
+        } else {
+          _armLiftGateAfterScale(
+            scaleFuture,
+            alsoFloat: !widget.usesAuthoredTiming || authoredFloatAfterScale,
+          );
+        }
+      } else {
+        if (!widget.usesAuthoredTiming) _animateFloat();
+      }
       _cachedPainter = null;
       _clearHeightCache();
       if (isActive) _frozenHeight = null;
@@ -716,6 +944,7 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
     if (widget.line != oldWidget.line) {
       _cachedPainter = null;
       _liftCache.values = const [];
+      _liftCache.effectProgress = const [];
       _clearHeightCache();
       _frozenHeight = null;
       _pendingSeekMs = null;
@@ -733,10 +962,18 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
     }
     _ticker?.dispose();
     _tickerHoldTimer?.cancel();
+    _scaleDelayTimer?.cancel();
+    _floatDelayTimer?.cancel();
+    _blurDelayTimer?.cancel();
+    _cancelLiftGateWait();
+    if (_scaleCompleter != null && !_scaleCompleter!.isCompleted) {
+      _scaleCompleter!.complete();
+    }
     _unbindBackgroundVocalListeners(widget);
     _scaleController.dispose();
     _floatController.dispose();
     _blurController.dispose();
+    _liftGateController.dispose();
     _currentTimeNotifier.dispose();
     _heightNotifier.dispose();
     _cachedPainter = null;
@@ -886,6 +1123,7 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
               highlightDeadlineMs: widget.highlightDeadlineMs,
               lineMedianWordDuration: lineMedianWordDuration,
               liftDecayListenable: isMainVocalActive ? null : _floatController,
+              liftGateListenable: _liftGateController,
             );
 
             if (_cachedPainter == null || _cachedPainter!.params != newParams) {
@@ -953,15 +1191,9 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
     );
 
     inner = AnimatedBuilder(
-      animation: _visualTransformListenable,
+      animation: _scaleController,
       builder: (context, child) {
         final transform = Matrix4.identity()
-          ..translateByDouble(
-            0.0,
-            lyricLineFloatOffsetY(_floatController.value),
-            0.0,
-            1.0,
-          )
           ..scaleByDouble(
             _scaleController.value,
             _scaleController.value,

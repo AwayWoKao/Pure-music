@@ -199,9 +199,10 @@ Page<T> _slidePage<T>({
 GoRoute _detailRoute<T>({
   required String fallback,
   required Widget Function(T extra) builder,
+  String path = 'detail',
 }) {
   return GoRoute(
-    path: 'detail',
+    path: path,
     redirect: (context, state) => _redirectUnlessExtra<T>(state, fallback),
     pageBuilder: (context, state) =>
         _slidePage(key: state.pageKey, child: builder(state.extra as T)),
@@ -801,7 +802,22 @@ class _EntryState extends State<Entry>
             path: app_paths.CONCERT_PAGE,
             child: const ConcertPage(),
           ),
-          _builderBranch(path: app_paths.STATS_PAGE, child: const StatsPage()),
+          _maintainedBranch(
+            path: app_paths.STATS_PAGE,
+            child: const StatsPage(),
+            routes: [
+              _detailRoute<Artist>(
+                path: 'artist',
+                fallback: app_paths.STATS_PAGE,
+                builder: (artist) => ArtistDetailPage(artist: artist),
+              ),
+              _detailRoute<Album>(
+                path: 'album',
+                fallback: app_paths.STATS_PAGE,
+                builder: (album) => AlbumDetailPage(album: album),
+              ),
+            ],
+          ),
           _maintainedBranch(
             path: app_paths.SETTINGS_PAGE,
             child: const SettingsPage(),

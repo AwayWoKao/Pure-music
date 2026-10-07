@@ -85,6 +85,14 @@ double audioReactiveFlowMotionSpeedTarget({
       .toDouble();
 }
 
+/// 重新接上频谱时，空窗帧先丢掉，避免把上一帧的色场瞬间拉黑。
+bool audioReactiveFlowShouldHoldEnvelope({
+  required bool awaitingPlaybackSpectrum,
+  required AudioReactiveFlowResponse incoming,
+}) {
+  return awaitingPlaybackSpectrum && incoming.isNearlySilent;
+}
+
 double _unit(double value) {
   return value.isFinite ? value.clamp(0.0, 1.0).toDouble() : 0.0;
 }

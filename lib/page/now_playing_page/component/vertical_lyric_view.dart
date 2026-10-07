@@ -78,13 +78,133 @@ double lyricLineLayoutWidth(double viewportWidth) {
   return width < 1.0 ? 1.0 : width;
 }
 
+/// 滚动停在半像素上时，所有行会一起抖。
+double lyricSnapScrollOffset(double offset, double devicePixelRatio) {
+  final scale = devicePixelRatio <= 0 ? 1.0 : devicePixelRatio;
+  return (offset * scale).round() / scale;
+}
+
+/// 往下一句时不允许把列表往上拽（画面上就是所有行先向下推）。
+double lyricClampScrollForLineAdvance({
+  required double from,
+  required double to,
+  required int fromIndex,
+  required int toIndex,
+}) {
+  if (toIndex > fromIndex && to < from) return from;
+  if (toIndex < fromIndex && to > from) return from;
+  return to;
+}
+
+/// 与 ListView padding 同一套，避免跟唱少算一段把整列拽下去。
+double lyricListTopPadding({
+  required double viewportHeight,
+  required bool centerVertically,
+  required bool enableEdgeSpacer,
+  required double alignment,
+}) {
+  final spacer = centerVertically ? viewportHeight / 2.0 : 0.0;
+  final extraTop = enableEdgeSpacer ? viewportHeight : 0.0;
+  final alignTop = (!centerVertically && !enableEdgeSpacer)
+      ? viewportHeight * alignment.clamp(0.0, 1.0)
+      : 0.0;
+  return spacer + extraTop + alignTop;
+}
+
+double lyricListBottomPadding({
+  required double viewportHeight,
+  required bool centerVertically,
+  required bool enableEdgeSpacer,
+  required double alignment,
+}) {
+  final spacer = centerVertically ? viewportHeight / 2.0 : 0.0;
+  final extraBottom = enableEdgeSpacer ? viewportHeight : 0.0;
+  final alignBottom = (!centerVertically && !enableEdgeSpacer)
+      ? viewportHeight * (1.0 - alignment.clamp(0.0, 1.0))
+      : 0.0;
+  return spacer + extraBottom + alignBottom;
+}
+
+/// 与 getOffsetToReveal(alignment) 一致：用行上 alignment 那一点，不用行中心。
+double lyricScrollOffsetToAlignLine({
+  required double topPadding,
+  required double lineTop,
+  required double lineHeight,
+  required double viewportHeight,
+  required double alignment,
+}) {
+  final a = alignment.clamp(0.0, 1.0);
+  return topPadding + lineTop + lineHeight * a - viewportHeight * a;
+}
+
+/// 跟唱只按缓存行高往前加。切句时去问当前布局，行高还在变，整列就会先被拽下去。
+double lyricFollowScrollOffset({
+  required double currentOffset,
+  required int fromIndex,
+  required int toIndex,
+  required List<double> offsets,
+  required List<double> heights,
+  required double alignment,
+}) {
+  if (fromIndex == toIndex) return currentOffset;
+  if (fromIndex < 0 ||
+      toIndex < 0 ||
+      fromIndex >= offsets.length ||
+      toIndex >= offsets.length ||
+      fromIndex >= heights.length ||
+      toIndex >= heights.length) {
+    return currentOffset;
+  }
+  final a = alignment.clamp(0.0, 1.0);
+  final fromPoint = offsets[fromIndex] + heights[fromIndex] * a;
+  final toPoint = offsets[toIndex] + heights[toIndex] * a;
+  return currentOffset + (toPoint - fromPoint);
+}
+
+/// 往下一句时，滚动位置不能比出发时更小，否则整列会先被拽下去。
+double lyricScrollOffsetWithoutRetreat({
+  required double from,
+  required double candidate,
+  required bool advancing,
+}) {
+  if (advancing && candidate < from) return from;
+  if (!advancing && candidate > from) return from;
+  return candidate;
+}
+
+/// 弹簧切行只按缓存行距跳，避开切句时行高还在变把补偿拉大。
+double lyricStaggerScrollTarget({
+  required double currentOffset,
+  required int fromIndex,
+  required int toIndex,
+  required List<double> offsets,
+  required List<double> heights,
+  required double alignment,
+}) {
+  return lyricClampScrollForLineAdvance(
+    from: currentOffset,
+    to: lyricFollowScrollOffset(
+      currentOffset: currentOffset,
+      fromIndex: fromIndex,
+      toIndex: toIndex,
+      offsets: offsets,
+      heights: heights,
+      alignment: alignment,
+    ),
+    fromIndex: fromIndex,
+    toIndex: toIndex,
+  );
+}
+
+const lyricScrollSettlePx = 2.0;
+
 bool shouldSnapLyricScroll({
   required double distancePx,
   required bool forceJump,
   required bool animatingToSameTarget,
   bool isAnimating = false,
 }) {
-  if (distancePx < 0.5) {
+  if (distancePx < lyricScrollSettlePx) {
     if (isAnimating && !animatingToSameTarget) return false;
     return true;
   }
@@ -123,7 +243,7 @@ bool shouldFinishInitialLyricScroll({
       targetHeight > 0 &&
       requestedOffset.isFinite &&
       appliedOffset.isFinite &&
-      (requestedOffset - appliedOffset).abs() < 0.5;
+      (requestedOffset - appliedOffset).abs() < lyricScrollSettlePx;
 }
 
 bool shouldRestartLyricScroll({
@@ -133,7 +253,7 @@ bool shouldRestartLyricScroll({
   double distancePx = 0,
 }) {
   if (animatingToSameTarget) return false;
-  if (isAnimating && distancePx < 0.5) return false;
+  if (isAnimating && distancePx < lyricScrollSettlePx) return false;
   return true;
 }
 
@@ -470,6 +590,7 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
   Ticker? _sharedLyricPositionTicker;
   Duration _sharedLyricLastTick = Duration.zero;
   Duration _sharedLyricLastNativeSync = Duration.zero;
+  bool _resumeSharedLyricFromFrozen = false;
   late StreamSubscription lyricLineStreamSubscription;
   Timer? _positionResyncTimer;
   Timer? _positionResyncStopTimer;
@@ -490,6 +611,7 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
   int _jumpTriggerId = 0;
   double _jumpDeltaY = 0.0;
   int _staggerVisibleStartIndex = 0;
+  int _staggerFromIndex = -1;
   bool _pendingStaggerScroll = false;
   bool _postDragSkipPending = false;
   int _programmaticScrollDepth = 0;
@@ -531,14 +653,10 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
   static const int _maxPositionResyncExtensions = 5;
 
   final Map<int, GlobalKey> _lineKeys = {};
-  static const int _lineKeyRetainRadius = 4;
+  static const int _lineKeyRetainRadius = 80;
 
-  GlobalKey? _keyForLine(int index) {
-    if ((index - _mainLine).abs() > _lineKeyRetainRadius &&
-        !_parallelGroupLines.contains(index) &&
-        !_activeLyricLines.contains(index)) {
-      return null;
-    }
+  GlobalKey _keyForLine(int index) {
+    // 切句时不能把已建行的 key 拿掉，否则上面的行会拆掉重建，整列先往下跳。
     return _lineKeys[index] ??= GlobalKey();
   }
 
@@ -610,6 +728,9 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
     if (_disposed ||
         !_needsSharedLyricPosition ||
         playbackService.playerState != PlayerState.playing) {
+      if (_sharedLyricPositionTicker?.isActive == true) {
+        _resumeSharedLyricFromFrozen = true;
+      }
       _sharedLyricPositionTicker?.stop();
       _sharedLyricLastTick = Duration.zero;
       return;
@@ -624,19 +745,70 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
 
   void _onSharedLyricTick(Duration elapsed) {
     if (_disposed || !mounted) return;
+    if (_resumeSharedLyricFromFrozen) {
+      _resumeSharedLyricFromFrozen = false;
+      _sharedLyricLastTick = elapsed;
+      _sharedLyricLastNativeSync = elapsed;
+      return;
+    }
     final delta = _sharedLyricLastTick == Duration.zero
         ? Duration.zero
         : elapsed - _sharedLyricLastTick;
     _sharedLyricLastTick = elapsed;
-    if (delta > const Duration(milliseconds: 200) ||
+    final previousMs = _sharedLyricPositionMs.value;
+    final predictedMs =
+        previousMs + delta.inMicroseconds / 1000.0 * playbackService.rate.value;
+    final nativeMs = playbackService.position * 1000.0;
+    final allowNativeResync =
+        delta > const Duration(milliseconds: 200) ||
         _sharedLyricLastNativeSync == Duration.zero ||
-        elapsed - _sharedLyricLastNativeSync >= const Duration(seconds: 1)) {
-      _sharedLyricPositionMs.value = playbackService.position * 1000.0;
+        elapsed - _sharedLyricLastNativeSync >= const Duration(seconds: 1);
+    if (allowNativeResync) {
       _sharedLyricLastNativeSync = elapsed;
+    }
+    final nextMs = lyricMonotonicPlaybackMs(
+      previousMs: previousMs,
+      predictedMs: predictedMs,
+      nativeMs: nativeMs,
+      allowNativeResync: allowNativeResync,
+    );
+    if (nextMs == previousMs) return;
+    if (!_sharedLyricVisualNeedsFrame(nextMs) &&
+        (nextMs - previousMs).abs() < 100) {
       return;
     }
-    _sharedLyricPositionMs.value +=
-        delta.inMicroseconds / 1000.0 * playbackService.rate.value;
+    _sharedLyricPositionMs.value = nextMs;
+  }
+
+  bool _sharedLyricVisualNeedsFrame(double nowMs) {
+    final lines = widget.lyric.lines;
+    final indices = <int>{
+      _mainLine,
+      ..._mainActiveLyricLines,
+      ..._backgroundActiveLyricLines,
+    };
+    final config =
+        _lyricViewController?.renderConfig ??
+        LyricViewController.instance.renderConfig;
+    final liftActive = config.liftStyle == LyricLiftStyle.vertical;
+    final liftPeak = config.liftPeak;
+    final enableGlow = config.enableGlow;
+    for (final i in indices) {
+      if (i < 0 || i >= lines.length) continue;
+      final line = lines[i];
+      if (line is! SyncLyricLine) continue;
+      if (lyricLineEffectsNeedFrame(
+        words: [...line.words, ...line.bgWords],
+        nowMs: nowMs,
+        lineMedianDuration: lyricMedianWordDuration(line.words),
+        enableGlow: enableGlow,
+        liftActive: liftActive && i == _mainLine,
+        liftPeak: liftPeak,
+      )) {
+        return true;
+      }
+    }
+    return false;
   }
 
   double _restoreCachedInitialPosition() {
@@ -683,17 +855,20 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
     final lineIndex = _mainLine.clamp(0, cached.offsets.length - 1);
     final viewport = cached.viewportHeight;
     final alignment = widget.currentLineAlignment;
-    final topPadding = widget.centerVertically
-        ? viewport / 2.0
-        : widget.enableEdgeSpacer
-        ? viewport
-        : viewport * alignment;
     return max(
       0.0,
-      topPadding +
-          cached.offsets[lineIndex] +
-          cached.heights[lineIndex] / 2.0 -
-          viewport * alignment,
+      lyricScrollOffsetToAlignLine(
+        topPadding: lyricListTopPadding(
+          viewportHeight: viewport,
+          centerVertically: widget.centerVertically,
+          enableEdgeSpacer: widget.enableEdgeSpacer,
+          alignment: alignment,
+        ),
+        lineTop: cached.offsets[lineIndex],
+        lineHeight: cached.heights[lineIndex],
+        viewportHeight: viewport,
+        alignment: alignment,
+      ),
     );
   }
 
@@ -875,6 +1050,11 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
           .round()
           .clamp(440, 600),
     );
+  }
+
+  double _snappedScrollOffset(double offset) {
+    final dpr = MediaQuery.maybeDevicePixelRatioOf(context) ?? 1.0;
+    return lyricSnapScrollOffset(offset, dpr);
   }
 
   /// 启动 ValueTransition 驱动的滚动 Ticker
@@ -1110,7 +1290,10 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
       final isLineByLine =
           line is SyncLyricLine &&
           config.displayMode == LyricDisplayMode.lineByLine;
-      final transitionHeight = lyricTransitionLayoutHeight(line, isMain: isMain);
+      final transitionHeight = lyricTransitionLayoutHeight(
+        line,
+        isMain: isMain,
+      );
       if (transitionHeight > 0) return transitionHeight;
 
       if (line is SyncLyricLine && !isLineByLine) {
@@ -1421,10 +1604,10 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
           ? measureSyncLine(lines[i] as SyncLyricLine, true)
           : measureLine(lines[i], true);
       heights.add(hAsMain);
-      backgroundVocalHeights.add(measureBackgroundVocalHeight(lines[i]));
       final hAsSub = preciseSyncMeasure
           ? measureSyncLine(lines[i] as SyncLyricLine, false)
           : measureLine(lines[i], false);
+      backgroundVocalHeights.add(measureBackgroundVocalHeight(lines[i]));
       currentOffset += hAsSub;
     }
 
@@ -1624,6 +1807,33 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
     return firstVisible ?? _viewportRange.start;
   }
 
+  double? _staggerTargetOffset(int toIndex) {
+    if (!scrollController.hasClients) return null;
+    final offsets = _cachedOffsets;
+    final heights = _cachedHeights;
+    final fromIndex = _staggerFromIndex;
+    if (offsets == null ||
+        heights == null ||
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= offsets.length ||
+        toIndex >= offsets.length ||
+        fromIndex >= heights.length ||
+        toIndex >= heights.length) {
+      return null;
+    }
+    return _snappedScrollOffset(
+      lyricStaggerScrollTarget(
+        currentOffset: scrollController.offset,
+        fromIndex: fromIndex,
+        toIndex: toIndex,
+        offsets: offsets,
+        heights: heights,
+        alignment: widget.currentLineAlignment,
+      ),
+    );
+  }
+
   double? _targetScrollOffsetFor(int lineIndex) {
     if (!scrollController.hasClients) return null;
     if (_cachedOffsets == null ||
@@ -1635,14 +1845,25 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
     }
     final viewport = scrollController.position.viewportDimension;
     final alignment = widget.currentLineAlignment;
-    final topPadding = widget.centerVertically
-        ? viewport / 2.0
-        : widget.enableEdgeSpacer
-        ? viewport
-        : viewport * alignment;
+    final topPadding = _snappedScrollOffset(
+      lyricListTopPadding(
+        viewportHeight: viewport,
+        centerVertically: widget.centerVertically,
+        enableEdgeSpacer: widget.enableEdgeSpacer,
+        alignment: alignment,
+      ),
+    );
     final lineTop = _cachedOffsets![lineIndex];
     final lineHeight = _cachedHeights![lineIndex];
-    return (topPadding + lineTop + lineHeight / 2) - (viewport * alignment);
+    return _snappedScrollOffset(
+      lyricScrollOffsetToAlignLine(
+        topPadding: topPadding,
+        lineTop: lineTop,
+        lineHeight: lineHeight,
+        viewportHeight: viewport,
+        alignment: alignment,
+      ),
+    );
   }
 
   void _markInitialScrollFinished({
@@ -1701,7 +1922,6 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
       _scrollTransition.jumpTo(to);
       _stopScrollTicker();
       _collapseDepartingBackgroundVocal();
-      // 补偿只给这一帧，避免稍后新挂上的行把弹簧再放一遍。
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_disposed || !mounted) return;
         if (_jumpTriggerId != triggerId || _jumpDeltaY == 0) return;
@@ -1718,14 +1938,14 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
     if (!scrollController.hasClients) return;
     final minExtent = scrollController.position.minScrollExtent;
     final maxExtent = scrollController.position.maxScrollExtent;
-    final to = targetOffset.clamp(minExtent, maxExtent);
-
+    final to = _snappedScrollOffset(targetOffset.clamp(minExtent, maxExtent));
     final from = scrollController.offset;
     final dist = (to - from).abs();
     final forceJump = duration != null && duration.inMilliseconds <= 16;
     final isAnimating = _scrollTransition.isActive;
     final animatingToSameTarget =
-        isAnimating && (to - _scrollTransition.target).abs() < 0.5;
+        isAnimating &&
+        (to - _scrollTransition.target).abs() < lyricScrollSettlePx;
     if (shouldSnapLyricScroll(
       distancePx: dist,
       forceJump: forceJump,
@@ -1750,7 +1970,6 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
       return;
     }
 
-    // 重用现有 transition，避免创建新对象
     _scrollTransition.begin = from;
     final style = context.read<LyricViewController>().renderConfig.staggerStyle;
     _scrollTransition.interpolator = style == LyricStaggerStyle.smooth
@@ -1887,8 +2106,20 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
 
     final useStagger = request.useStagger && !_needsInitialScroll;
     final duration = _needsInitialScroll ? Duration.zero : request.duration;
-    final targetKey = _lineKeys[request.lineIndex];
-    final targetContext = targetKey?.currentContext;
+    if (useStagger) {
+      final staggerTarget =
+          _staggerTargetOffset(request.lineIndex) ??
+          _targetScrollOffsetFor(request.lineIndex);
+      if (staggerTarget != null) {
+        _staggerScrollTo(
+          staggerTarget,
+          clearPendingStagger: request.lineIndex == _mainLine,
+        );
+        _scrollState = LyricScrollState.idle;
+        return;
+      }
+    }
+    final targetContext = _lineKeys[request.lineIndex]?.currentContext;
     if (targetContext != null && targetContext.mounted) {
       RenderBox? targetObject;
       try {
@@ -1898,17 +2129,11 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
           targetObject.hasSize &&
           targetObject.size.height > 0) {
         final viewport = RenderAbstractViewport.of(targetObject);
-        final alignment = widget.currentLineAlignment;
-        final revealed = viewport.getOffsetToReveal(targetObject, alignment);
-        if (useStagger) {
-          _staggerScrollTo(
-            revealed.offset,
-            clearPendingStagger: request.lineIndex == _mainLine,
-          );
-          _scrollState = LyricScrollState.idle;
-        } else {
-          _animateTo(revealed.offset, duration: duration);
-        }
+        final revealed = viewport.getOffsetToReveal(
+          targetObject,
+          widget.currentLineAlignment,
+        );
+        _animateTo(revealed.offset, duration: duration);
         if (request.lineIndex == _mainLine) {
           _markInitialScrollFinished(
             requestedOffset: revealed.offset,
@@ -1919,18 +2144,9 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
       }
     }
 
-    // A cached offset only mounts the target; finish after its real layout.
     final cachedTarget = _targetScrollOffsetFor(request.lineIndex);
     if (cachedTarget != null) {
-      if (useStagger) {
-        _staggerScrollTo(
-          cachedTarget,
-          clearPendingStagger: request.lineIndex == _mainLine,
-        );
-        _scrollState = LyricScrollState.idle;
-      } else {
-        _animateTo(cachedTarget, duration: duration);
-      }
+      _animateTo(cachedTarget, duration: duration);
       return;
     }
 
@@ -2430,6 +2646,7 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
       skipNextAfterDrag: _postDragSkipPending,
     );
     if (shouldStagger) {
+      _staggerFromIndex = previousMainLine;
       _staggerVisibleStartIndex = _firstVisibleLineIndex();
     }
     final viewportStrategy = LyricViewportStrategy(
@@ -2457,6 +2674,7 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
     setState(() {
       _mainLine = renderableMainLine;
       _displayPositionMs = positionMs;
+      _sharedLyricPositionMs.value = positionMs.toDouble();
       _departingBackgroundVocalLines
         ..clear()
         ..addAll(nextDepartingBackgroundVocalLines);
@@ -2550,7 +2768,6 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
           });
         }
 
-        final spacerHeight = constraints.maxHeight / 2.0;
         final viewportHeight = constraints.maxHeight;
         final viewportHeightChanged =
             viewportHeight.isFinite &&
@@ -2568,18 +2785,18 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
             );
           });
         }
-        final extraTopPadding = widget.enableEdgeSpacer ? viewportHeight : 0.0;
-        final extraBottomPadding = widget.enableEdgeSpacer
-            ? viewportHeight
-            : 0.0;
-        final alignTopPadding =
-            (!widget.centerVertically && !widget.enableEdgeSpacer)
-            ? viewportHeight * widget.currentLineAlignment
-            : 0.0;
-        final alignBottomPadding =
-            (!widget.centerVertically && !widget.enableEdgeSpacer)
-            ? viewportHeight * (1.0 - widget.currentLineAlignment)
-            : 0.0;
+        final extraTopPadding = lyricListTopPadding(
+          viewportHeight: viewportHeight,
+          centerVertically: widget.centerVertically,
+          enableEdgeSpacer: widget.enableEdgeSpacer,
+          alignment: widget.currentLineAlignment,
+        );
+        final extraBottomPadding = lyricListBottomPadding(
+          viewportHeight: viewportHeight,
+          centerVertically: widget.centerVertically,
+          enableEdgeSpacer: widget.enableEdgeSpacer,
+          alignment: widget.currentLineAlignment,
+        );
         final userIsDragging = _scrollState == LyricScrollState.userDragging;
         return Stack(
           clipBehavior: Clip.none,
@@ -2641,14 +2858,8 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
                         viewportStrategy.cacheExtent(constraints.maxHeight),
                       ),
                       padding: EdgeInsets.only(
-                        top:
-                            (widget.centerVertically ? spacerHeight : 0) +
-                            extraTopPadding +
-                            alignTopPadding,
-                        bottom:
-                            (widget.centerVertically ? spacerHeight : 0) +
-                            extraBottomPadding +
-                            alignBottomPadding,
+                        top: _snappedScrollOffset(extraTopPadding),
+                        bottom: _snappedScrollOffset(extraBottomPadding),
                       ),
                       itemCount: widget.lyric.lines.length,
                       itemBuilder: (context, i) {
@@ -2683,25 +2894,24 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
                                 _opacityMinClamp,
                                 _opacityMaxClamp,
                               );
-                        final staggerDelay = Duration(
-                          milliseconds:
-                              _lyricViewController
-                                      ?.renderConfig
-                                      .enableStaggeredAnimation ==
-                                  true
-                              ? _lyricViewController
-                                            ?.renderConfig
-                                            .staggerStyle ==
-                                        LyricStaggerStyle.spring
-                                    ? lyricStaggerDelayMs(
-                                        itemIndex: i,
-                                        visibleStartIndex:
-                                            _staggerVisibleStartIndex,
-                                      )
-                                    : ((30 * (dist + 1) * (5 + dist) ~/ 5)
-                                          .clamp(0, _staggerMaxMs))
-                              : 0,
-                        );
+                        final staggerDelay =
+                            _lyricViewController
+                                    ?.renderConfig
+                                    .enableStaggeredAnimation ==
+                                true
+                            ? _lyricViewController?.renderConfig.staggerStyle ==
+                                      LyricStaggerStyle.spring
+                                  ? lyricSpringItemDelay(
+                                      itemIndex: i,
+                                      visibleStartIndex:
+                                          _staggerVisibleStartIndex,
+                                    )
+                                  : Duration(
+                                      milliseconds:
+                                          ((30 * (dist + 1) * (5 + dist) ~/ 5)
+                                              .clamp(0, _staggerMaxMs)),
+                                    )
+                            : Duration.zero;
                         Widget lineWidget = SizedBox(
                           key: _keyForLine(i),
                           child: LyricsLineWidget(

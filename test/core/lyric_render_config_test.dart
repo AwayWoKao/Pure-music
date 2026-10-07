@@ -15,6 +15,10 @@ LyricRenderConfig _config({bool enableBlur = true}) {
 }
 
 void main() {
+  test('inactive lines rest at 0.95 scale', () {
+    expect(_config().inactiveLineScaleMultiplier, 0.95);
+  });
+
   test('blur uses four distance steps and caps far lines', () {
     final config = _config();
     expect(config.blurSigmaForDistance(0), 0.0);

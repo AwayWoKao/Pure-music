@@ -39,6 +39,7 @@ import 'package:pure_music/page/now_playing_page/component/sleep_timer_dialog.da
 import 'package:pure_music/page/now_playing_page/component/pitch_control.dart';
 import 'package:pure_music/page/now_playing_page/component/vertical_lyric_view.dart';
 import 'package:pure_music/page/now_playing_page/component/now_playing_background.dart';
+import 'package:pure_music/page/now_playing_page/now_playing_visibility.dart';
 import 'package:pure_music/page/now_playing_page/component/now_playing_collapsible_chrome.dart';
 import 'package:pure_music/page/now_playing_page/component/now_playing_small_view_switch.dart';
 import 'package:pure_music/core/paths.dart' as app_paths;
@@ -113,6 +114,8 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
   final playbackService = PlayService.instance.playbackService;
   Uint8List? _nowPlayingCoverBytes;
   String? _nowPlayingCoverPath;
+  // 封面字节来源等级：0无 1小封面缩略 2详情封面 3高清缓存，只升不降。
+  int _coverBytesLevel = 0;
   Timer? _coverDebounceTimer;
   Timer? _songChangeTrimTimer;
   Timer? _cursorHideTimer;
@@ -122,7 +125,9 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
   final ValueNotifier<bool> _routeReadyNotifier = ValueNotifier(false);
   bool _lastImmersive = false;
   bool _routeReady = false;
+  bool _sessionShown = true;
   bool _backgroundUsesCachedLargeCover = false;
+  late final Listenable _backgroundListenable;
   Color? _dominantColor;
   List<Color>? _preExtractedPalette;
   String? _palettePath;
@@ -250,8 +255,10 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
     Uint8List? bytes,
     List<Color>? palette,
   ) {
-    if (bytes != null) {
+    // 160px 详情只补小封面的缺，不覆盖高清缓存，也不重复写同级字节。
+    if (bytes != null && _coverBytesLevel < 2) {
       _nowPlayingCoverBytes = bytes;
+      _coverBytesLevel = 2;
     }
     if (palette != null && palette.isNotEmpty) {
       _dominantColor = palette.first;
@@ -267,6 +274,7 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
     }
     if (bytes == null) {
       _nowPlayingCoverBytes = null;
+      _coverBytesLevel = 0;
       _dominantColor = null;
       _preExtractedPalette = null;
       _palettePath = null;
@@ -284,6 +292,8 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
     _nowPlayingCoverPath = path;
     // Keep the previous frame visible until this track's artwork is ready.
     _backgroundUsesCachedLargeCover = false;
+    // 旧字节只当占位，来源等级归零，等这首的封面按等级重新升。
+    _coverBytesLevel = 0;
     _coverDebounceTimer?.cancel();
     _songChangeTrimTimer?.cancel();
     _coverRequestToken++;
@@ -309,6 +319,7 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
     setState(() {
       _nowPlayingCoverPath = null;
       _nowPlayingCoverBytes = null;
+      _coverBytesLevel = 0;
       _dominantColor = null;
       _preExtractedPalette = null;
       _palettePath = null;
@@ -340,12 +351,14 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
     final cachedLargeCover = aud.cachedLargeCover;
     if (cachedLargeCover is MemoryImage) {
       _nowPlayingCoverBytes = cachedLargeCover.bytes;
+      _coverBytesLevel = 3;
       _backgroundUsesCachedLargeCover = true;
       return;
     }
     final smallBytes = aud.smallCoverBytes;
     if (smallBytes != null) {
       _nowPlayingCoverBytes = smallBytes;
+      _coverBytesLevel = 1;
     }
   }
 
@@ -365,6 +378,11 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
     super.initState();
     SleepBlocker.instance.setPageVisible(true);
     SleepBlocker.instance.reevaluate();
+    _backgroundListenable = Listenable.merge([
+      nowPlayingBackgroundModeNotifier,
+      nowPlayingDynamicFlowingLightNotifier,
+      nowPlayingAudioReactiveFlowNotifier,
+    ]);
     playbackService.nowPlayingNotifier.addListener(updateCover);
     nowPlayingViewMode.addListener(_onViewModeChanged);
     updateCover();
@@ -378,8 +396,17 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final shown = NowPlayingVisibility.shownOf(context);
+    if (shown != _sessionShown) {
+      _sessionShown = shown;
+      SleepBlocker.instance.setPageVisible(shown);
+      SleepBlocker.instance.reevaluate();
+    }
     final animation = ModalRoute.of(context)?.animation;
-    if (identical(animation, _routeAnimation)) return;
+    if (identical(animation, _routeAnimation)) {
+      if (shown && _routeReady) _scheduleCoverDetails();
+      return;
+    }
     _routeAnimation?.removeStatusListener(_onRouteAnimationStatus);
     _routeAnimation = animation;
     _routeAnimation?.addStatusListener(_onRouteAnimationStatus);
@@ -414,13 +441,7 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
         children: [
           ColoredBox(color: _neutralBackgroundColor(brightness)),
           ListenableBuilder(
-            listenable: Listenable.merge([
-              nowPlayingBackgroundModeNotifier,
-              nowPlayingDynamicFlowingLightNotifier,
-              nowPlayingAudioReactiveFlowNotifier,
-              _routeReadyNotifier,
-              playbackService.playerStateNotifier,
-            ]),
+            listenable: _backgroundListenable,
             builder: (context, _) => _flowBackground(brightness),
           ),
         ],
@@ -436,8 +457,9 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
         dominantColor: _dominantColor,
         spectrumStream: playbackService.spectrumStream,
         enableAnimation: nowPlayingDynamicFlowingLightNotifier.value,
-        isVisible: _routeReadyNotifier.value,
+        isVisible: _sessionShown,
         playerState: playbackService.playerStateNotifier.value,
+        playerStateListenable: playbackService.playerStateNotifier,
         flowSpeed: 1.0,
         intensity: brightness == Brightness.dark ? 1.0 : 0.9,
         audioReactiveFlow: nowPlayingAudioReactiveFlowNotifier.value,
@@ -503,18 +525,11 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
       listenable: AppSettings.rebuildNotifier,
       builder: (context, _) {
         final useMonet = AppSettings.instance.useMaterialYouForControls;
-        return ValueListenableBuilder<bool>(
-          valueListenable: _routeReadyNotifier,
-          builder: (context, routeReady, child) {
-            return TickerMode(enabled: routeReady, child: child!);
-          },
-          child: IconButtonTheme(
-            data: _playbackIconTheme(scheme, useMonet),
-            child: ChangeNotifierProvider.value(
-              value: PlayService.instance.playbackService,
-              builder: (context, _) =>
-                  _nowPlayingForeground(context, immersive),
-            ),
+        return IconButtonTheme(
+          data: _playbackIconTheme(scheme, useMonet),
+          child: ChangeNotifierProvider.value(
+            value: PlayService.instance.playbackService,
+            builder: (context, _) => _nowPlayingForeground(context, immersive),
           ),
         );
       },
@@ -534,19 +549,19 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
   }
 
   IconButtonThemeData _playbackIconTheme(ColorScheme scheme, bool useMonet) {
+    final foreground = playerThemeForeground(scheme, enabled: useMonet);
+    final overlay = useMonet ? scheme.onSecondaryContainer : foreground;
     return IconButtonThemeData(
       style: ButtonStyle(
-        foregroundColor: useMonet
-            ? WidgetStatePropertyAll(scheme.primary)
-            : null,
+        foregroundColor: WidgetStatePropertyAll(foreground),
         backgroundColor: const WidgetStatePropertyAll(Colors.transparent),
         overlayColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.pressed)) {
-            return scheme.onSecondaryContainer.withValues(alpha: 0.04);
+            return overlay.withValues(alpha: 0.04);
           }
           if (states.contains(WidgetState.hovered) ||
               states.contains(WidgetState.focused)) {
-            return scheme.onSecondaryContainer.withValues(alpha: 0.02);
+            return overlay.withValues(alpha: 0.02);
           }
           return Colors.transparent;
         }),
@@ -692,7 +707,7 @@ class _NowPlayingMoreActionState extends State<_NowPlayingMoreAction> {
         tooltip: '更多',
         onPressed: null,
         icon: const Icon(Symbols.more_vert),
-        color: useMonet ? scheme.primary : scheme.onSurface,
+        color: playerThemeForeground(scheme, enabled: useMonet),
       );
     }
 
@@ -711,7 +726,7 @@ class _NowPlayingMoreActionState extends State<_NowPlayingMoreAction> {
             }
           },
           icon: const Icon(Symbols.more_vert),
-          color: useMonet ? scheme.primary : scheme.onSurface,
+          color: playerThemeForeground(scheme, enabled: useMonet),
         ),
       ),
     );
@@ -944,7 +959,7 @@ class _NowPlayingPlaybackModeSwitchState
   Widget build(BuildContext context) {
     final useMonet = AppSettings.instance.useMaterialYouForControls;
     final scheme = Theme.of(context).colorScheme;
-    final color = useMonet ? scheme.primary : scheme.onSurface;
+    final color = playerThemeForeground(scheme, enabled: useMonet);
     final disabledColor = color.withValues(alpha: 0.38);
     final playbackService = PlayService.instance.playbackService;
 
@@ -1002,7 +1017,10 @@ class _ExclusiveModeSwitch extends StatelessWidget {
       valueListenable: PlayService.instance.playbackService.wasapiExclusive,
       builder: (context, exclusive, _) {
         // 激活态也只跟「主题色控件」：关=浅黑/深白，开才用主题色
-        final foregroundColor = useMonet ? scheme.primary : scheme.onSurface;
+        final foregroundColor = playerThemeForeground(
+          scheme,
+          enabled: useMonet,
+        );
 
         return IconButton(
           tooltip: exclusive ? '关闭独占' : '打开独占',
@@ -1085,7 +1103,7 @@ class _DesktopLyricSwitchState extends State<_DesktopLyricSwitch> {
         height: 20,
         child: CircularProgressIndicator(strokeWidth: 2),
       ),
-      color: useMonet ? scheme.primary : scheme.onSurface,
+      color: playerThemeForeground(scheme, enabled: useMonet),
     );
   }
 
@@ -1107,7 +1125,7 @@ class _DesktopLyricSwitchState extends State<_DesktopLyricSwitch> {
         desktopLyricService.isLocked ? Symbols.lock : Symbols.toast,
         fill: isRunning ? 1 : 0,
       ),
-      color: useMonet ? scheme.primary : scheme.onSurface,
+      color: playerThemeForeground(scheme, enabled: useMonet),
     );
   }
 }
@@ -1226,7 +1244,7 @@ class _NowPlayingVolDspSliderState extends State<_NowPlayingVolDspSlider> {
             }
           },
           icon: const Icon(Symbols.volume_up),
-          color: useMonet ? scheme.primary : scheme.onSurface,
+          color: playerThemeForeground(scheme, enabled: useMonet),
         );
       },
     );
@@ -1314,14 +1332,19 @@ class _NowPlayingVolDspSliderState extends State<_NowPlayingVolDspSlider> {
   }
 
   Widget _systemVolumeSlider(ColorScheme scheme) {
+    final useMonet = AppSettings.instance.useMaterialYouForControls;
     return ValueListenableBuilder(
       valueListenable: dragSystemVol,
       builder: (context, systemVolValue, _) {
         return _volumeSliderStack(
           scheme: scheme,
           value: systemVolValue,
-          color: scheme.secondary,
-          textColor: scheme.onSecondary,
+          color: useMonet
+              ? scheme.secondary
+              : playerThemeForeground(scheme, enabled: false),
+          textColor: useMonet
+              ? scheme.onSecondary
+              : playerThemeOnForeground(scheme, enabled: false),
           showBubble: _showSystemCustomIndicator || _isSystemHovering,
           onHover: (hovering) => setState(() => _isSystemHovering = hovering),
           onChangeStart: (value) {
@@ -1346,6 +1369,7 @@ class _NowPlayingVolDspSliderState extends State<_NowPlayingVolDspSlider> {
   }
 
   Widget _appVolumeSlider(ColorScheme scheme) {
+    final useMonet = AppSettings.instance.useMaterialYouForControls;
     return ListenableBuilder(
       listenable: Listenable.merge([dragVolDsp, playbackService]),
       builder: (context, _) {
@@ -1355,8 +1379,8 @@ class _NowPlayingVolDspSliderState extends State<_NowPlayingVolDspSlider> {
         return _volumeSliderStack(
           scheme: scheme,
           value: currentValue,
-          color: scheme.primary,
-          textColor: scheme.onPrimary,
+          color: playerThemeForeground(scheme, enabled: useMonet),
+          textColor: playerThemeOnForeground(scheme, enabled: useMonet),
           showBubble: _showCustomIndicator || _isHovering,
           onHover: (hovering) => setState(() => _isHovering = hovering),
           onChangeStart: (value) {
@@ -1938,8 +1962,8 @@ class _NowPlayingSliderState extends State<_NowPlayingSlider>
   }
 
   void _syncProgressDriver(PlayerState state) {
-    _isPlaying = state == PlayerState.playing;
     _syncFromNative(force: true);
+    _isPlaying = state == PlayerState.playing;
     if (!_isPlaying) {
       _positionSyncTimer?.cancel();
       _positionSyncTimer = null;
@@ -2025,10 +2049,10 @@ class _NowPlayingSliderState extends State<_NowPlayingSlider>
     final useWavyBar = AppSettings.instance.wavyBarEnabledModes.contains(
       widget.mode,
     );
-    final barColor = useMonetBar ? scheme.primary : scheme.onSurface;
+    final barColor = playerThemeForeground(scheme, enabled: useMonetBar);
     final barGlow = useMonetBar
         ? scheme.primaryContainer
-        : scheme.onSurface.withValues(alpha: 0.3);
+        : playerThemeForeground(scheme, enabled: false).withValues(alpha: 0.3);
 
     return Column(
       mainAxisSize: MainAxisSize.min,

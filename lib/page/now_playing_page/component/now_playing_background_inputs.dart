@@ -1,5 +1,4 @@
-import 'dart:typed_data';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:pure_music/native/bass/bass_player.dart';
 
@@ -11,6 +10,7 @@ class NowPlayingBackgroundInputs {
   final bool enableAnimation;
   final bool isVisible;
   final PlayerState playerState;
+  final ValueListenable<PlayerState>? playerStateListenable;
   final double flowSpeed;
   final double intensity;
   final bool audioReactiveFlow;
@@ -27,6 +27,7 @@ class NowPlayingBackgroundInputs {
     required this.enableAnimation,
     required this.isVisible,
     required this.playerState,
+    this.playerStateListenable,
     this.flowSpeed = 1.0,
     this.intensity = 1.0,
     this.audioReactiveFlow = false,
@@ -35,8 +36,13 @@ class NowPlayingBackgroundInputs {
 
   bool get shouldAnimate => enableAnimation && isVisible && isPlaybackActive;
 
-  bool get isPlaybackActive =>
-      playerState == PlayerState.playing || playerState == PlayerState.stalled;
+  PlayerState get resolvedPlayerState =>
+      playerStateListenable?.value ?? playerState;
+
+  bool get isPlaybackActive {
+    final state = resolvedPlayerState;
+    return state == PlayerState.playing || state == PlayerState.stalled;
+  }
 
   NowPlayingBackgroundInputs copyWith({
     Uint8List? albumCoverBytes,
@@ -45,6 +51,7 @@ class NowPlayingBackgroundInputs {
     bool? enableAnimation,
     bool? isVisible,
     PlayerState? playerState,
+    ValueListenable<PlayerState>? playerStateListenable,
     double? flowSpeed,
     double? intensity,
     bool? audioReactiveFlow,
@@ -57,6 +64,8 @@ class NowPlayingBackgroundInputs {
       enableAnimation: enableAnimation ?? this.enableAnimation,
       isVisible: isVisible ?? this.isVisible,
       playerState: playerState ?? this.playerState,
+      playerStateListenable:
+          playerStateListenable ?? this.playerStateListenable,
       flowSpeed: flowSpeed ?? this.flowSpeed,
       intensity: intensity ?? this.intensity,
       audioReactiveFlow: audioReactiveFlow ?? this.audioReactiveFlow,

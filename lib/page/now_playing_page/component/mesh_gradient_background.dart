@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show ValueListenable;
+import 'package:flutter/foundation.dart' show ValueListenable, listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_shaders/flutter_shaders.dart';
@@ -214,6 +214,7 @@ class _MeshGradientBackgroundInternalState
     super.initState();
     _syncPaletteFromInputs(animate: false);
     _updateColorPool(widget.inputs.preExtractedColors);
+    _bindPlayerStateListenable();
     _syncMeshController();
   }
 
@@ -260,10 +261,32 @@ class _MeshGradientBackgroundInternalState
       _targetPaletteColors = [];
       _isTransitioning = false;
     } else if (!wasVisible && isVisible) {
-      _syncPaletteFromInputs(animate: true);
+      _syncPaletteFromInputs(animate: false);
     }
 
-    _syncMeshController();
+    if (!identical(
+      widget.inputs.playerStateListenable,
+      oldWidget.inputs.playerStateListenable,
+    )) {
+      oldWidget.inputs.playerStateListenable?.removeListener(
+        _onPlayerStateListenable,
+      );
+      _bindPlayerStateListenable();
+    }
+
+    if (oldWidget.inputs.enableAnimation != widget.inputs.enableAnimation ||
+        oldWidget.inputs.isVisible != widget.inputs.isVisible ||
+        oldWidget.inputs.isPlaybackActive != widget.inputs.isPlaybackActive ||
+        !identical(
+          widget.inputs.albumCoverBytes,
+          oldWidget.inputs.albumCoverBytes,
+        ) ||
+        !identical(
+          widget.inputs.preExtractedColors,
+          oldWidget.inputs.preExtractedColors,
+        )) {
+      _syncMeshController();
+    }
   }
 
   void _coverBytesChanged(Uint8List? newBytes) {
@@ -421,6 +444,15 @@ class _MeshGradientBackgroundInternalState
     return const [];
   }
 
+  void _bindPlayerStateListenable() {
+    widget.inputs.playerStateListenable?.addListener(_onPlayerStateListenable);
+  }
+
+  void _onPlayerStateListenable() {
+    if (_disposed || !mounted) return;
+    _syncMeshController();
+  }
+
   void _syncMeshController() {
     final shouldRun =
         widget.inputs.isVisible &&
@@ -494,6 +526,9 @@ class _MeshGradientBackgroundInternalState
   @override
   void dispose() {
     _disposed = true;
+    widget.inputs.playerStateListenable?.removeListener(
+      _onPlayerStateListenable,
+    );
     _stopRotationTimer();
     _meshController.dispose();
     _transitionTicker?.dispose();
@@ -592,47 +627,59 @@ class _SoftMeshGradient extends StatefulWidget {
   State<_SoftMeshGradient> createState() => _SoftMeshGradientState();
 }
 
-class _SoftMeshGradientState extends State<_SoftMeshGradient> {
+class _SoftMeshGradientState extends State<_SoftMeshGradient>
+    with SingleTickerProviderStateMixin {
   static const _shaderAssetPath = MeshGradientBackground.shaderAssetPath;
-  static const Duration _meshFrameInterval = Duration(milliseconds: 42);
   static const double _timeScale = 1.0;
+  // 重绘压到 24fps，时间按真实步进累积。
+  static const double _meshFrameIntervalSeconds =
+      42 / Duration.millisecondsPerSecond;
 
-  Timer? _frameTimer;
+  late final Ticker _ticker;
   late final ValueNotifier<double> _time;
+  late final ValueNotifier<int> _paintEpoch;
+  late final Listenable _repaint;
+  late final _SoftMeshGradientPainter _painter;
+  Duration? _lastElapsed;
+  double _pendingSeconds = 0;
   VoidCallback? _controllerListener;
   bool _tickerModeEnabled = true;
 
-  void _onFrame(Timer _) {
+  void _onTick(Duration elapsed) {
     if (!mounted ||
         (widget.controller != null && !widget.controller!.isAnimating.value)) {
-      _syncFrameTimer();
+      _syncTicker();
       return;
     }
-    _time.value +=
-        _meshFrameInterval.inMicroseconds /
-        Duration.microsecondsPerSecond *
-        _timeScale;
+    final previous = _lastElapsed;
+    _lastElapsed = elapsed;
+    if (previous == null) return;
+    final deltaSeconds =
+        (elapsed - previous).inMicroseconds / Duration.microsecondsPerSecond;
+    if (deltaSeconds <= 0) return;
+    _pendingSeconds += deltaSeconds * _timeScale;
+    if (_pendingSeconds < _meshFrameIntervalSeconds) return;
+    _time.value += _pendingSeconds;
+    _pendingSeconds = 0;
   }
 
-  void _syncFrameTimer() {
+  void _syncTicker() {
     final shouldRun =
         _tickerModeEnabled &&
         (widget.controller == null || widget.controller!.isAnimating.value);
-    if (shouldRun && _frameTimer == null) {
-      _frameTimer = Timer.periodic(_meshFrameInterval, _onFrame);
-    } else if (!shouldRun && _frameTimer != null) {
-      _frameTimer?.cancel();
-      _frameTimer = null;
+    if (shouldRun && !_ticker.isActive) {
+      _lastElapsed = null;
+      _pendingSeconds = 0;
+      _ticker.start();
+    } else if (!shouldRun && _ticker.isActive) {
+      _ticker.stop();
+      _lastElapsed = null;
+      _pendingSeconds = 0;
     }
   }
 
-  void _stopFrameTimer() {
-    _frameTimer?.cancel();
-    _frameTimer = null;
-  }
-
   void _onControllerChanged() {
-    _syncFrameTimer();
+    _syncTicker();
   }
 
   void _bindController() {
@@ -654,8 +701,16 @@ class _SoftMeshGradientState extends State<_SoftMeshGradient> {
   void initState() {
     super.initState();
     _time = ValueNotifier(0);
+    _paintEpoch = ValueNotifier(0);
+    _repaint = Listenable.merge([_time, _paintEpoch]);
+    _ticker = createTicker(_onTick);
+    _painter = _SoftMeshGradientPainter(
+      repaint: _repaint,
+      time: _time,
+      scrimColor: widget.scrimColor,
+    );
     _bindController();
-    _syncFrameTimer();
+    _syncTicker();
   }
 
   @override
@@ -664,7 +719,7 @@ class _SoftMeshGradientState extends State<_SoftMeshGradient> {
     final tickerModeEnabled = TickerMode.valuesOf(context).enabled;
     if (_tickerModeEnabled == tickerModeEnabled) return;
     _tickerModeEnabled = tickerModeEnabled;
-    _syncFrameTimer();
+    _syncTicker();
   }
 
   @override
@@ -674,63 +729,88 @@ class _SoftMeshGradientState extends State<_SoftMeshGradient> {
       _unbindController(oldWidget.controller);
       _bindController();
     }
-    _syncFrameTimer();
+    _syncTicker();
   }
 
   @override
   void dispose() {
     _unbindController(widget.controller);
-    _stopFrameTimer();
+    _ticker.dispose();
     _time.dispose();
+    _paintEpoch.dispose();
     super.dispose();
+  }
+
+  void _syncPainter({
+    required FragmentShader shader,
+    required List<Color> colors,
+    required Color scrimColor,
+  }) {
+    final changed =
+        !identical(_painter.shader, shader) ||
+        _painter.scrimColor != scrimColor ||
+        _painter.colorTransition != widget.colorTransition ||
+        !listEquals(_painter.colors, colors) ||
+        !listEquals(
+          _painter.transitionFromColors,
+          widget.transitionFromColors,
+        ) ||
+        !listEquals(_painter.transitionToColors, widget.transitionToColors);
+    _painter
+      ..shader = shader
+      ..colors = colors
+      ..transitionFromColors = widget.transitionFromColors
+      ..transitionToColors = widget.transitionToColors
+      ..colorTransition = widget.colorTransition
+      ..scrimColor = scrimColor;
+    if (changed) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _paintEpoch.value++;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return ShaderBuilder(assetKey: _shaderAssetPath, (context, shader, child) {
-      return CustomPaint(
-        painter: _SoftMeshGradientPainter(
-          shader: shader,
-          time: _time,
-          colors: widget.colors,
-          transitionFromColors: widget.transitionFromColors,
-          transitionToColors: widget.transitionToColors,
-          colorTransition: widget.colorTransition,
-          scrimColor: widget.scrimColor,
-        ),
-        child: child,
+      _syncPainter(
+        shader: shader,
+        colors: widget.colors,
+        scrimColor: widget.scrimColor,
       );
+      return CustomPaint(painter: _painter, child: child);
     }, child: Container());
   }
 }
 
 class _SoftMeshGradientPainter extends CustomPainter {
   _SoftMeshGradientPainter({
-    required this.shader,
+    required Listenable repaint,
     required this.time,
-    required this.colors,
-    this.transitionFromColors,
-    this.transitionToColors,
-    this.colorTransition,
-    required this.scrimColor,
-  }) : _paint = Paint()
+    required Color scrimColor,
+  }) : scrimColor = scrimColor,
+       _paint = Paint()
          ..colorFilter = ColorFilter.mode(scrimColor, BlendMode.srcOver),
-       super(repaint: time);
+       super(repaint: repaint);
 
-  final FragmentShader shader;
+  FragmentShader? shader;
   final ValueListenable<double> time;
-  final List<Color> colors;
-  final List<Color>? transitionFromColors;
-  final List<Color>? transitionToColors;
-  final ValueListenable<double>? colorTransition;
-  final Color scrimColor;
+  List<Color> colors = const <Color>[];
+  List<Color>? transitionFromColors;
+  List<Color>? transitionToColors;
+  ValueListenable<double>? colorTransition;
+  Color scrimColor;
   final Paint _paint;
 
   @override
   void paint(Canvas canvas, Size size) {
+    final shader = this.shader;
+    if (shader == null || colors.isEmpty) return;
     shader.setFloat(0, size.width);
     shader.setFloat(1, size.height);
     shader.setFloat(2, time.value);
+    _paint.colorFilter = ColorFilter.mode(scrimColor, BlendMode.srcOver);
 
     var i = 3;
     final from = transitionFromColors;
@@ -770,10 +850,10 @@ class _SoftMeshGradientPainter extends CustomPainter {
     return oldDelegate.shader != shader ||
         oldDelegate.time != time ||
         oldDelegate.colorTransition != colorTransition ||
-        oldDelegate.transitionFromColors != transitionFromColors ||
-        oldDelegate.transitionToColors != transitionToColors ||
         oldDelegate.scrimColor != scrimColor ||
-        oldDelegate.colors != colors;
+        !listEquals(oldDelegate.transitionFromColors, transitionFromColors) ||
+        !listEquals(oldDelegate.transitionToColors, transitionToColors) ||
+        !listEquals(oldDelegate.colors, colors);
   }
 
   static double _paletteTransitionCurve(double t) {

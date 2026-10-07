@@ -1,12 +1,14 @@
 import 'dart:math' show cos, exp, max, pi, sin, sqrt;
 
-import 'package:flutter/foundation.dart' show Listenable, ValueListenable;
+import 'package:flutter/foundation.dart'
+    show Listenable, ValueListenable, visibleForTesting;
 import 'package:flutter/material.dart';
 
 import 'package:pure_music/core/app_fonts.dart';
 import 'package:pure_music/core/enums.dart';
 import 'package:pure_music/core/lyric_render_config.dart';
 import 'package:pure_music/core/settings.dart';
+import 'package:pure_music/core/theme.dart';
 import 'package:pure_music/core/zh_converter.dart';
 import 'package:pure_music/lyric/lrc.dart';
 import 'package:pure_music/lyric/lyric.dart';
@@ -94,10 +96,146 @@ double lyricBackgroundHeightFactor({
 @visibleForTesting
 List<double> debugLyricCharYLifts = const [];
 
+@visibleForTesting
+double? debugLyricTranslationY;
+
 double lyricExitLift(double lastLift, double floatProgress) {
   if (lastLift == 0) return 0;
   final t = floatProgress.clamp(0.0, 1.0);
   return lastLift * t;
+}
+
+double lyricGatedLiftPx(double lift, double gate) {
+  if (gate <= 0) return 0;
+  if (gate >= 1) return lift;
+  return lift * gate;
+}
+
+const lyricEffectWarpLead = 0.08;
+const lyricLiftSettleEpsilon = 0.004;
+const lyricGlowHoldFadeMs = 200.0;
+
+double lyricWordProgress({
+  required double nowMs,
+  required double wordStartMs,
+  required double wordEndMs,
+}) {
+  if (nowMs < wordStartMs) return 0.0;
+  if (nowMs >= wordEndMs) return 1.0;
+  final duration = wordEndMs - wordStartMs;
+  if (duration <= 0) return 1.0;
+  return ((nowMs - wordStartMs) / duration).clamp(0.0, 1.0);
+}
+
+double lyricCharWaveProgress({
+  required double wordProgress,
+  required int charIndex,
+  required int charCount,
+}) {
+  const stepRatio = 0.1;
+  final n = charCount < 1 ? 1 : charCount;
+  final waveWidth = 1.0 / (stepRatio * (n - 1) + 1.0);
+  final windowStart = charIndex * stepRatio * waveWidth;
+  return ((wordProgress - windowStart) / waveWidth).clamp(0.0, 1.0);
+}
+
+/// 缩放/辉光仍走字波浪进度，只限制尾加速最多超前实时进度。
+double lyricCappedEffectProgress({
+  required double warpedProgress,
+  required double realProgress,
+}) {
+  if (warpedProgress <= realProgress) return warpedProgress;
+  final capped = (realProgress + lyricEffectWarpLead).clamp(0.0, 1.0);
+  return warpedProgress < capped ? warpedProgress : capped;
+}
+
+double lyricExitScale(double scale, double exitProgress) {
+  final t = exitProgress.clamp(0.0, 1.0);
+  return 1.0 + (scale - 1.0) * t;
+}
+
+double lyricExitGlowAlpha(double alpha, double exitProgress) {
+  return alpha * exitProgress.clamp(0.0, 1.0);
+}
+
+bool lyricVerticalLiftSettled({
+  required double nowMs,
+  required double wordStartMs,
+  required double wordDurationSec,
+  required int syllableCount,
+  required bool softLift,
+  required double liftPeak,
+}) {
+  final n = syllableCount < 1 ? 1 : syllableCount;
+  final lift = lyricVerticalCharLiftPx(
+    nowMs: nowMs,
+    wordStartMs: wordStartMs,
+    wordDurationSec: wordDurationSec,
+    syllableIndex: n - 1,
+    syllableCount: n,
+    softLift: softLift,
+    liftPeak: liftPeak,
+  );
+  return (lift + liftPeak).abs() <= 0.02;
+}
+
+bool lyricLineEffectsNeedFrame({
+  required Iterable<SyncLyricWord> words,
+  required double nowMs,
+  required Duration lineMedianDuration,
+  required bool enableGlow,
+  required bool liftActive,
+  required double liftPeak,
+}) {
+  var index = 0;
+  final count = words.length;
+  var lastWordEndMs = 0.0;
+  var hasScaleGlow = false;
+  for (final word in words) {
+    final start = word.start.inMilliseconds.toDouble();
+    final durationMs = word.length.inMilliseconds.toDouble();
+    final end = start + durationMs;
+    if (end > lastWordEndMs) lastWordEndMs = end;
+    if (nowMs >= start && nowMs <= end) return true;
+    if (liftActive && durationMs > 0) {
+      if (!lyricVerticalLiftSettled(
+        nowMs: nowMs,
+        wordStartMs: start,
+        wordDurationSec: durationMs / 1000.0,
+        syllableCount: lyricSungUnitCount(word.content).clamp(1, 64),
+        softLift: lyricUsesSoftLift(word.content),
+        liftPeak: liftPeak,
+      )) {
+        return true;
+      }
+    }
+    if (enableGlow) {
+      final effect = lyricWordEffect(
+        duration: word.length,
+        lineMedianDuration: lineMedianDuration,
+        isLineEnding: index == count - 1,
+        sungUnitCount: lyricSungUnitCount(word.content),
+      );
+      if (effect != LyricWordEffect.none) {
+        hasScaleGlow = true;
+        final progress = lyricWordProgress(
+          nowMs: nowMs,
+          wordStartMs: start,
+          wordEndMs: end,
+        );
+        if (progress > 0.0 && progress < 1.0) return true;
+      }
+    }
+    index++;
+  }
+  if (enableGlow &&
+      hasScaleGlow &&
+      nowMs >= lastWordEndMs - lyricHighlightCatchUpDurationMs &&
+      nowMs <=
+          lastWordEndMs + lyricHighlightFinishLeadMs + lyricGlowHoldFadeMs) {
+    return true;
+  }
+  return false;
 }
 
 // 汉字和假名用更慢的音节错开，不含谚文。
@@ -118,7 +256,8 @@ double lyricDurationLiftSpring(double tSec, double wordDurationSec) {
       ? 0.001
       : (wordDurationSec > 3.0 ? 3.0 : wordDurationSec);
   final w = 2 * pi / d;
-  return 1 - (1 + w * tSec) * exp(-w * tSec);
+  final value = 1 - (1 + w * tSec) * exp(-w * tSec);
+  return value >= 1 - lyricLiftSettleEpsilon ? 1.0 : value;
 }
 
 double lyricSoftLiftSpring(double tSec) {
@@ -130,7 +269,8 @@ double lyricSoftLiftSpring(double tSec) {
   final wd = omega0 * sqrt(1 - zeta * zeta);
   final decay = exp(-zeta * omega0 * tSec);
   final b = -zeta * omega0 / wd;
-  return 1 + decay * (-cos(wd * tSec) + b * sin(wd * tSec));
+  final value = 1 + decay * (-cos(wd * tSec) + b * sin(wd * tSec));
+  return value >= 1 - lyricLiftSettleEpsilon ? 1.0 : value;
 }
 
 // 按词时长错开抬升，抬满后停住；组内保持仍由行状态负责。
@@ -179,6 +319,7 @@ double lyricCosineLiftPx({
 
 class LyricCharLiftCache {
   List<double> values = const [];
+  List<double> effectProgress = const [];
 }
 
 double lyricHighlightTimeMs({
@@ -249,12 +390,12 @@ double lyricLayoutFontSize({
   return main > sub ? main : sub;
 }
 
-/// 从行顶放大，折开的第二行不会跟着垂直中心被撑开。
+/// 竖直居中缩放，缩小时上下各收一点，行距更均匀。
 Alignment lyricLineScaleAlignment(LyricTextAlign align) {
   return switch (align) {
-    LyricTextAlign.left => Alignment.topLeft,
-    LyricTextAlign.center => Alignment.topCenter,
-    LyricTextAlign.right => Alignment.topRight,
+    LyricTextAlign.left => Alignment.centerLeft,
+    LyricTextAlign.center => Alignment.center,
+    LyricTextAlign.right => Alignment.centerRight,
   };
 }
 
@@ -371,18 +512,18 @@ double _lyricWordEffectStrength(
   return max(absoluteStrength, relativeStrength);
 }
 
-/// 前半鼓起到峰值，中段托住，尾段再收回。
+/// 前半鼓起到峰值，中段托住，尾段按抛物线右半段收回。
 double _lyricEffectParabola(double progress) {
   if (progress <= 0.0 || progress >= 1.0) return 0.0;
   const riseEnd = 0.5;
-  const releaseStart = 0.82;
+  const releaseStart = 0.62;
   if (progress < riseEnd) {
     final t = progress / riseEnd;
     return t * t * (3.0 - 2.0 * t);
   }
   if (progress <= releaseStart) return 1.0;
   final t = (progress - releaseStart) / (1.0 - releaseStart);
-  return 1.0 - t * t * (3.0 - 2.0 * t);
+  return 1.0 - t * t;
 }
 
 Duration lyricMedianWordDuration(List<SyncLyricWord> words) {
@@ -433,6 +574,7 @@ class _CharInfo {
   double yLift;
   final double charProgress;
   final double wordProgress;
+  double effectProgress;
   final int wordIndex;
   final int wordCharIndex;
   final double wordDurationSec; // 词时长（秒），用于逐字效果分档
@@ -445,6 +587,7 @@ class _CharInfo {
     required this.yLift,
     required this.charProgress,
     required this.wordProgress,
+    required this.effectProgress,
     required this.wordIndex,
     required this.wordCharIndex,
     required this.wordDurationSec,
@@ -627,6 +770,7 @@ class LyricsLinePainter extends CustomPainter {
   Duration get lineMedianWordDuration => params.lineMedianWordDuration;
   ValueListenable<double>? get liftDecayListenable =>
       params.liftDecayListenable;
+  ValueListenable<double>? get liftGateListenable => params.liftGateListenable;
 
   // 多声部时按 agent 强制对齐：v1 左对齐，v2 右对齐
   LyricTextAlign get _effectiveTextAlign {
@@ -658,6 +802,7 @@ class LyricsLinePainter extends CustomPainter {
            params.currentTimeListenable,
            params.backgroundVocalVisibilityListenable,
            params.liftDecayListenable,
+           params.liftGateListenable,
            params.blurSigmaListenable,
          ]),
        );
@@ -788,6 +933,18 @@ class LyricsLinePainter extends CustomPainter {
     }
   }
 
+  void _paintStableGlyph({
+    required Canvas canvas,
+    required TextPainter tp,
+    required String char,
+    required TextStyle style,
+    required Offset offset,
+  }) {
+    tp.text = TextSpan(text: char, style: style);
+    tp.layout();
+    tp.paint(canvas, offset);
+  }
+
   static MaskFilter _blurFilter(double sigma) {
     final key = (sigma * 10).roundToDouble() / 10;
     final cached = _blurFilterCache[key];
@@ -885,6 +1042,60 @@ class LyricsLinePainter extends CustomPainter {
         isLineEnding: wordIndex == syncLine.words.length - 1,
         sungUnitCount: lyricSungUnitCount(syncLine.words[wordIndex].content),
       );
+    }
+
+    double? glowHoldFillMs;
+    double? glowHoldWindowStartMs;
+    if (!params.usesAuthoredTiming) {
+      final lw = syncLine.words.last;
+      final lastWordEndMs = (lw.start.inMilliseconds + lw.length.inMilliseconds)
+          .toDouble();
+      final double? deadline = accelerateTailHighlight
+          ? lastWordEndMs + lyricHighlightFinishLeadMs
+          : highlightDeadlineMs;
+      if (deadline != null &&
+          lastWordEndMs >= deadline - lyricHighlightFinishLeadMs) {
+        glowHoldFillMs = deadline - lyricHighlightFinishLeadMs;
+        glowHoldWindowStartMs = deadline - lyricHighlightCatchUpDurationMs;
+      }
+    }
+
+    (double alpha, double hold) glowFor(_WordPaintInfo word) {
+      if (!config.enableGlow ||
+          effectFor(
+                wordIndex: word.first.wordIndex,
+                wordDurationSec: word.wordDurationSec,
+              ) !=
+              LyricWordEffect.scaleAndGlow) {
+        return (0.0, 0.0);
+      }
+      if (word.wordProgress <= 0.0) return (0.0, 0.0);
+      final duration = Duration(
+        microseconds: (word.wordDurationSec * Duration.microsecondsPerSecond)
+            .round(),
+      );
+      final strength = _lyricWordEffectStrength(
+        duration,
+        lineMedianWordDuration,
+      );
+      final base = 0.30 + 0.14 * strength;
+      final fillMs = glowHoldFillMs;
+      final windowStartMs = glowHoldWindowStartMs;
+      if (fillMs != null && windowStartMs != null) {
+        final w = syncLine.words[word.first.wordIndex];
+        final wordEndMs = (w.start.inMilliseconds + w.length.inMilliseconds)
+            .toDouble();
+        if (wordEndMs >= windowStartMs) {
+          final realNow = _effectiveCurrentTimeMs;
+          if (realNow >= fillMs + lyricGlowHoldFadeMs) return (0.0, 0.0);
+          final fade = realNow < fillMs
+              ? 1.0
+              : 1.0 - (realNow - fillMs) / lyricGlowHoldFadeMs;
+          return (base * fade, fade);
+        }
+      }
+      if (word.wordProgress >= 1.0) return (0.0, 0.0);
+      return (base, 0.0);
     }
 
     canvas.save();
@@ -1025,6 +1236,9 @@ class LyricsLinePainter extends CustomPainter {
       syncLine.words,
       _effectiveCurrentTimeMs,
     );
+    final liftGate = isMainVocalActive
+        ? (liftGateListenable?.value ?? 1.0)
+        : 1.0;
 
     for (int wordIndex = 0; wordIndex < syncLine.words.length; wordIndex++) {
       final word = syncLine.words[wordIndex];
@@ -1091,16 +1305,23 @@ class LyricsLinePainter extends CustomPainter {
       // waveWidth = 1.0 / (stepRatio * (charCount - 1) + 1.0)
       // windowStart[i] = i * stepRatio * waveWidth
       // charProgress = (wordProgress - windowStart[i]) / waveWidth
-      const stepRatio = 0.1;
-      final waveWidth = 1.0 / (stepRatio * (wordTotalChars - 1) + 1.0);
-
       final wordProgress = _calcWordProgress(
         currentTimeMs,
         wordStartMs,
         wordEndMs,
       );
+      final realWordProgress = _calcWordProgress(
+        _effectiveCurrentTimeMs,
+        wordStartMs,
+        wordEndMs,
+      );
+      final wordEffect = effectFor(
+        wordIndex: wordIndex,
+        wordDurationSec: wordDurationSec,
+      );
 
       double? prevNonPunctProgress;
+      double? prevNonPunctEffect;
       double? prevNonPunctLift;
       int animIndex = 0;
       var syllableCount = 0;
@@ -1120,9 +1341,11 @@ class LyricsLinePainter extends CustomPainter {
         cursor: layoutCursor,
         onPlace: (i, x, y) {
           final char = convertedChars[i];
-          final windowStart = animIndex * stepRatio * waveWidth;
-          final computedProgress = ((wordProgress - windowStart) / waveWidth)
-              .clamp(0.0, 1.0);
+          final computedProgress = lyricCharWaveProgress(
+            wordProgress: wordProgress,
+            charIndex: animIndex,
+            charCount: wordTotalChars,
+          );
 
           final double charProgress;
           final isPunctuation = _isPunctuation(char);
@@ -1136,24 +1359,46 @@ class LyricsLinePainter extends CustomPainter {
           }
 
           final double yLift;
-          if (!isMainVocalActive ||
-              config.liftStyle == LyricLiftStyle.cosine) {
+          if (!isMainVocalActive || config.liftStyle == LyricLiftStyle.cosine) {
             yLift = 0.0;
           } else if (isPunctuation && prevNonPunctLift != null) {
             yLift = prevNonPunctLift!;
           } else {
-            yLift = lyricVerticalCharLiftPx(
-              nowMs: currentTimeMs,
-              wordStartMs: wordStartMs,
-              wordDurationSec: wordDurationSec,
-              syllableIndex: isPunctuation ? 0 : syllableIndex,
-              syllableCount: syllableCount,
-              softLift: softLift,
-              liftPeak: config.liftPeak,
+            yLift = lyricGatedLiftPx(
+              lyricVerticalCharLiftPx(
+                nowMs: currentTimeMs,
+                wordStartMs: wordStartMs,
+                wordDurationSec: wordDurationSec,
+                syllableIndex: isPunctuation ? 0 : syllableIndex,
+                syllableCount: syllableCount,
+                softLift: softLift,
+                liftPeak: config.liftPeak,
+              ),
+              liftGate,
             );
             if (!isPunctuation) {
               prevNonPunctLift = yLift;
               syllableIndex++;
+            }
+          }
+
+          final double effectProgress;
+          if (isPunctuation && prevNonPunctEffect != null) {
+            effectProgress = prevNonPunctEffect!;
+          } else {
+            final realCharProgress = lyricCharWaveProgress(
+              wordProgress: realWordProgress,
+              charIndex: animIndex,
+              charCount: wordTotalChars,
+            );
+            effectProgress = wordEffect == LyricWordEffect.none
+                ? charProgress
+                : lyricCappedEffectProgress(
+                    warpedProgress: charProgress,
+                    realProgress: realCharProgress,
+                  );
+            if (!isPunctuation) {
+              prevNonPunctEffect = effectProgress;
             }
           }
 
@@ -1166,6 +1411,7 @@ class LyricsLinePainter extends CustomPainter {
               yLift: yLift,
               charProgress: charProgress,
               wordProgress: wordProgress,
+              effectProgress: effectProgress,
               wordIndex: wordIndex,
               wordCharIndex: animIndex,
               wordDurationSec: wordDurationSec,
@@ -1233,6 +1479,7 @@ class LyricsLinePainter extends CustomPainter {
             yLift: original.yLift,
             charProgress: original.charProgress,
             wordProgress: original.wordProgress,
+            effectProgress: original.effectProgress,
             wordIndex: original.wordIndex,
             wordCharIndex: original.wordCharIndex,
             wordDurationSec: original.wordDurationSec,
@@ -1249,6 +1496,9 @@ class LyricsLinePainter extends CustomPainter {
     if (!isMainVocalActive) {
       _applyExitCharLifts(charInfos);
     }
+    final exitMix = isMainVocalActive
+        ? 1.0
+        : (liftDecayListenable?.value ?? 0.0);
 
     // ── Pre-build shared TextPainter + styles ──────────────────────────────
     final tp = obtainTextPainter();
@@ -1300,9 +1550,13 @@ class LyricsLinePainter extends CustomPainter {
         if (paintText) {
           // 按逐字布局坐标画，避免整词 TextSpan 的 kerning 和测量 x 不一致。
           for (final info in wc) {
-            tp.text = TextSpan(text: info.char, style: style);
-            tp.layout();
-            tp.paint(canvas, Offset(info.x, info.y));
+            _paintStableGlyph(
+              canvas: canvas,
+              tp: tp,
+              char: info.char,
+              style: style,
+              offset: Offset(info.x, info.y),
+            );
           }
         }
         return;
@@ -1344,17 +1598,20 @@ class LyricsLinePainter extends CustomPainter {
             );
       for (final info in wc) {
         final paintOffset = Offset(info.x, info.y + info.yLift);
-        final scale = lyricCharacterScale(
-          effect: effect,
-          duration: wordDuration,
-          lineMedianDuration: lineMedianWordDuration,
-          progress: info.charProgress,
+        final scale = lyricExitScale(
+          lyricCharacterScale(
+            effect: effect,
+            duration: wordDuration,
+            lineMedianDuration: lineMedianWordDuration,
+            progress: info.effectProgress,
+          ),
+          exitMix,
         );
-        final needsScale = scale != 1.0;
+        final needsScale = (scale - 1.0).abs() > 0.005;
         if (needsScale) {
           canvas.save();
-          final centerX = info.x + info.width / 2;
-          final baselineY = info.y + info.yLift + lineHeight;
+          final centerX = paintOffset.dx + info.width / 2;
+          final baselineY = paintOffset.dy + lineHeight;
           canvas.translate(centerX, baselineY);
           canvas.scale(scale);
           canvas.translate(-centerX, -baselineY);
@@ -1363,11 +1620,11 @@ class LyricsLinePainter extends CustomPainter {
             nearGlowStyle != null &&
             farGlowPaint != null &&
             farGlowStyle != null) {
-          // 拖尾保持：词尾后已点亮的字继续留光，不再按逐字脉冲归零
-          var pulse = _lyricEffectParabola(info.charProgress);
+          var pulse = _lyricEffectParabola(info.effectProgress);
           if (glowHold > 0.0) {
             pulse = max(pulse, info.charProgress * glowHold);
           }
+          pulse = lyricExitGlowAlpha(pulse, exitMix);
           final adjustedAlpha = resolvedGlowColor!.a * glowAlpha * pulse;
           if (adjustedAlpha > 0.02) {
             farGlowPaint.color = resolvedGlowColor.withValues(
@@ -1385,9 +1642,13 @@ class LyricsLinePainter extends CustomPainter {
           }
         }
         if (paintText) {
-          tp.text = TextSpan(text: info.char, style: style);
-          tp.layout();
-          tp.paint(canvas, paintOffset);
+          _paintStableGlyph(
+            canvas: canvas,
+            tp: tp,
+            char: info.char,
+            style: style,
+            offset: paintOffset,
+          );
         }
         if (needsScale) {
           canvas.restore();
@@ -1434,8 +1695,22 @@ class LyricsLinePainter extends CustomPainter {
       finishWord();
 
       if (!isHighlightActive) {
+        final fadeEffects = config.enableGlow && exitMix > 0.01;
         for (final wc in words) {
-          paintWord(wc, dimStyle, wc.hasLift);
+          if (!fadeEffects) {
+            paintWord(wc, dimStyle, wc.hasLift);
+            continue;
+          }
+          final (glowAlpha, glowHold) = glowFor(wc);
+          paintWord(
+            wc,
+            dimStyle,
+            wc.hasLift,
+            applyScale: true,
+            glowColor: glowAlpha > 0.02 ? playedTextColor : null,
+            glowAlpha: glowAlpha,
+            glowHold: glowHold,
+          );
         }
         continue;
       }
@@ -1486,7 +1761,7 @@ class LyricsLinePainter extends CustomPainter {
       }
       if (reveal <= 0.0) {
         for (final wc in words) {
-          paintWord(wc, dimStyle, false);
+          paintWord(wc, dimStyle, wc.hasLift);
         }
         continue;
       }
@@ -1526,7 +1801,7 @@ class LyricsLinePainter extends CustomPainter {
       }
       if (highlightR <= left) {
         for (final wc in words) {
-          paintWord(wc, dimStyle, false);
+          paintWord(wc, dimStyle, wc.hasLift);
         }
         continue;
       }
@@ -1571,12 +1846,15 @@ class LyricsLinePainter extends CustomPainter {
             : right + 3.0 * fontSize;
         for (final wc in words) {
           for (final info in wc.chars) {
-            info.yLift = lyricCosineLiftPx(
-              charCenter: info.x + info.width / 2,
-              cursorX: clippedHighlightR,
-              lineEndX: lineEndX,
-              fontSize: fontSize,
-              liftPeak: config.liftPeak,
+            info.yLift = lyricGatedLiftPx(
+              lyricCosineLiftPx(
+                charCenter: info.x + info.width / 2,
+                cursorX: clippedHighlightR,
+                lineEndX: lineEndX,
+                fontSize: fontSize,
+                liftPeak: config.liftPeak,
+              ),
+              liftGate,
             );
             if (info.yLift != 0.0) wc.hasLift = true;
           }
@@ -1589,63 +1867,6 @@ class LyricsLinePainter extends CustomPainter {
       }
 
       final glowColor = playedTextColor;
-      // 尾部加速会把行尾若干词压进同一窗口快速点亮，辉光若随各词词尾熄灭
-      // 会连成碎闪；窗口内的词改为保持到高亮铺满点，再一起淡出。
-      const glowHoldFadeMs = 200.0;
-      double? glowHoldFillMs;
-      double? glowHoldWindowStartMs;
-      if (!params.usesAuthoredTiming) {
-        final lw = syncLine.words.last;
-        final lastWordEndMs =
-            (lw.start.inMilliseconds + lw.length.inMilliseconds).toDouble();
-        final double? deadline = accelerateTailHighlight
-            ? lastWordEndMs + lyricHighlightFinishLeadMs
-            : highlightDeadlineMs;
-        if (deadline != null &&
-            lastWordEndMs >= deadline - lyricHighlightFinishLeadMs) {
-          glowHoldFillMs = deadline - lyricHighlightFinishLeadMs;
-          glowHoldWindowStartMs = deadline - lyricHighlightCatchUpDurationMs;
-        }
-      }
-
-      (double alpha, double hold) glowFor(_WordPaintInfo word) {
-        if (!config.enableGlow ||
-            effectFor(
-                  wordIndex: word.first.wordIndex,
-                  wordDurationSec: word.wordDurationSec,
-                ) !=
-                LyricWordEffect.scaleAndGlow) {
-          return (0.0, 0.0);
-        }
-        if (word.wordProgress <= 0.0) return (0.0, 0.0);
-        final duration = Duration(
-          microseconds: (word.wordDurationSec * Duration.microsecondsPerSecond)
-              .round(),
-        );
-        final strength = _lyricWordEffectStrength(
-          duration,
-          lineMedianWordDuration,
-        );
-        final base = 0.30 + 0.14 * strength;
-        final fillMs = glowHoldFillMs;
-        final windowStartMs = glowHoldWindowStartMs;
-        if (fillMs != null && windowStartMs != null) {
-          final w = syncLine.words[word.first.wordIndex];
-          final wordEndMs = (w.start.inMilliseconds + w.length.inMilliseconds)
-              .toDouble();
-          if (wordEndMs >= windowStartMs) {
-            final realNow = _effectiveCurrentTimeMs;
-            if (realNow >= fillMs + glowHoldFadeMs) return (0.0, 0.0);
-            final fade = realNow < fillMs
-                ? 1.0
-                : 1.0 - (realNow - fillMs) / glowHoldFadeMs;
-            return (base * fade, fade);
-          }
-        }
-        if (word.wordProgress >= 1.0) return (0.0, 0.0);
-        return (base, 0.0);
-      }
-
       for (final wc in words) {
         final (glowAlpha, glowHold) = glowFor(wc);
         if (glowAlpha > 0.02) {
@@ -1715,6 +1936,7 @@ class LyricsLinePainter extends CustomPainter {
             textAlign: blockTextAlign,
           );
           tp.layout(minWidth: maxWidth, maxWidth: maxWidth);
+          debugLyricTranslationY = cursorY;
           tp.paint(canvas, Offset(padding.left, cursorY));
           cursorY += tp.height;
           recycleTextPainter(tp);
@@ -2379,11 +2601,11 @@ class LyricsLinePainter extends CustomPainter {
     double wordStartMs,
     double wordEndMs,
   ) {
-    if (currentMs < wordStartMs) return 0.0;
-    if (currentMs >= wordEndMs) return 1.0;
-    final wordDuration = wordEndMs - wordStartMs;
-    if (wordDuration <= 0) return 1.0;
-    return ((currentMs - wordStartMs) / wordDuration).clamp(0.0, 1.0);
+    return lyricWordProgress(
+      nowMs: currentMs,
+      wordStartMs: wordStartMs,
+      wordEndMs: wordEndMs,
+    );
   }
 
   double _highlightTimeMs(
@@ -2444,6 +2666,7 @@ class LyricsLinePainter extends CustomPainter {
     final cache = liftCache;
     if (cache == null) return;
     cache.values = [for (final info in charInfos) info.yLift];
+    cache.effectProgress = [for (final info in charInfos) info.effectProgress];
   }
 
   void _applyExitCharLifts(List<_CharInfo> charInfos) {
@@ -2454,6 +2677,14 @@ class LyricsLinePainter extends CustomPainter {
     final n = charInfos.length < last.length ? charInfos.length : last.length;
     for (var i = 0; i < n; i++) {
       charInfos[i].yLift = lyricExitLift(last[i], progress);
+    }
+    final effects = cache.effectProgress;
+    if (effects.isEmpty) return;
+    final m = charInfos.length < effects.length
+        ? charInfos.length
+        : effects.length;
+    for (var i = 0; i < m; i++) {
+      charInfos[i].effectProgress = effects[i];
     }
   }
 
@@ -2654,7 +2885,7 @@ class LyricsLinePainter extends CustomPainter {
               syncLine.translation != null) {
             final tTp = _buildTextPainter(
               syncLine.translation!,
-              useMaterialYouColor ? scheme.primary : scheme.onSurface,
+              playerThemeForeground(scheme, enabled: useMaterialYouColor),
               translationFontSize,
               translationWeight,
               config.letterSpacing(fontSize: translationFontSize),
@@ -2667,7 +2898,7 @@ class LyricsLinePainter extends CustomPainter {
               syncLine.romanLyric != null) {
             final rTp = _buildTextPainter(
               syncLine.romanLyric!,
-              useMaterialYouColor ? scheme.primary : scheme.onSurface,
+              playerThemeForeground(scheme, enabled: useMaterialYouColor),
               romanFontSize,
               romanWeight,
               config.letterSpacing(fontSize: romanFontSize),
@@ -2690,7 +2921,7 @@ class LyricsLinePainter extends CustomPainter {
                 syncLine.translation != null) {
               final tTp = _buildTextPainter(
                 syncLine.translation!,
-                useMaterialYouColor ? scheme.primary : scheme.onSurface,
+                playerThemeForeground(scheme, enabled: useMaterialYouColor),
                 translationFontSize,
                 translationWeight,
                 config.letterSpacing(fontSize: translationFontSize),
@@ -2703,7 +2934,7 @@ class LyricsLinePainter extends CustomPainter {
                 syncLine.romanLyric != null) {
               final rTp = _buildTextPainter(
                 syncLine.romanLyric!,
-                useMaterialYouColor ? scheme.primary : scheme.onSurface,
+                playerThemeForeground(scheme, enabled: useMaterialYouColor),
                 romanFontSize,
                 romanWeight,
                 config.letterSpacing(fontSize: romanFontSize),

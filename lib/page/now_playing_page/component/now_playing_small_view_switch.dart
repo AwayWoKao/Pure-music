@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:pure_music/component/motion.dart';
 import 'package:pure_music/core/design_tokens.dart';
 import 'package:pure_music/core/settings.dart';
+import 'package:pure_music/core/theme.dart';
 
 /// 未悬停时的图标透明度：能看清去哪一页，又不抢歌词/封面。
 const nowPlayingSmallViewSwitchRestOpacity = 0.56;
@@ -53,9 +54,10 @@ class _NowPlayingSmallViewSwitchState extends State<NowPlayingSmallViewSwitch> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
-    final iconColor = AppSettings.instance.useMaterialYouForControls
-        ? scheme.primary
-        : scheme.onSurface;
+    final iconColor = playerThemeForeground(
+      scheme,
+      enabled: AppSettings.instance.useMaterialYouForControls,
+    );
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4.0),
       child: SizedBox(

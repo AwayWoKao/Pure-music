@@ -22,18 +22,15 @@ LyricRenderConfig _config({double liftPeak = 2}) => LyricRenderConfig(
   liftPeak: liftPeak,
 );
 
-SyncLyricLine _line() => SyncLyricLine(
-  Duration.zero,
-  const Duration(milliseconds: 800),
-  [
-    SyncLyricWord(Duration.zero, const Duration(milliseconds: 400), 'Hello'),
-    SyncLyricWord(
-      const Duration(milliseconds: 400),
-      const Duration(milliseconds: 400),
-      'World',
-    ),
-  ],
-);
+SyncLyricLine _line() =>
+    SyncLyricLine(Duration.zero, const Duration(milliseconds: 800), [
+      SyncLyricWord(Duration.zero, const Duration(milliseconds: 400), 'Hello'),
+      SyncLyricWord(
+        const Duration(milliseconds: 400),
+        const Duration(milliseconds: 400),
+        'World',
+      ),
+    ]);
 
 double _measure(LyricRenderConfig config) {
   return LyricsLinePainter(
@@ -55,23 +52,20 @@ double _measure(LyricRenderConfig config) {
 }
 
 void main() {
-  group('played hold still uses the original whole-line offset', () {
-    test('float 0 stays put, float 1 raises 4px', () {
-      expect(lyricLineFloatOffsetY(0), 0);
-      expect(lyricLineFloatOffsetY(0.5), -2);
-      expect(lyricLineFloatOffsetY(1), -4);
-    });
-
-    test('group hold does not drop when the line finished but group remains', () {
-      expect(
-        lyricLineFloatTarget(
-          mainHighlight: false,
-          isHighlightActive: true,
-          wasLatched: true,
-        ),
-        isTrue,
-      );
-    });
+  group('played hold keeps float latch', () {
+    test(
+      'group hold does not drop when the line finished but group remains',
+      () {
+        expect(
+          lyricLineFloatTarget(
+            mainHighlight: false,
+            isHighlightActive: true,
+            wasLatched: true,
+          ),
+          isTrue,
+        );
+      },
+    );
   });
 
   group('interlude does not reserve height off-screen', () {
@@ -153,6 +147,31 @@ void main() {
       expect(mid, lessThan(0));
       expect(late, closeTo(-2, 0.05));
     });
+
+    test('settled lift is bit-identical while the clock keeps moving', () {
+      final a = lyricVerticalCharLiftPx(
+        nowMs: 5000,
+        wordStartMs: 1000,
+        wordDurationSec: 1,
+        syllableIndex: 0,
+        syllableCount: 1,
+        softLift: true,
+        liftPeak: 2,
+      );
+      final b = lyricVerticalCharLiftPx(
+        nowMs: 5016,
+        wordStartMs: 1000,
+        wordDurationSec: 1,
+        syllableIndex: 0,
+        syllableCount: 1,
+        softLift: true,
+        liftPeak: 2,
+      );
+      expect(a, -2);
+      expect(b, a);
+      expect(lyricSoftLiftSpring(3.0), 1.0);
+      expect(lyricSoftLiftSpring(3.0), lyricSoftLiftSpring(3.016));
+    });
   });
 
   group('cosine formula stays Salt-shaped at 2.0x', () {
@@ -203,6 +222,101 @@ void main() {
     });
   });
 
+  group('scale lift gate threshold', () {
+    test('opens at 90 percent of travel, not at the start', () {
+      expect(
+        lyricScaleReachedLiftGate(start: 0.95, target: 1.0, value: 0.95),
+        isFalse,
+      );
+      expect(
+        lyricScaleReachedLiftGate(start: 0.95, target: 1.0, value: 0.994),
+        isFalse,
+      );
+      expect(
+        lyricScaleReachedLiftGate(start: 0.95, target: 1.0, value: 0.995),
+        isTrue,
+      );
+      expect(
+        lyricScaleReachedLiftGate(start: 0.95, target: 1.0, value: 1.0),
+        isTrue,
+      );
+    });
+
+    test('treats zero travel as already open', () {
+      expect(
+        lyricScaleReachedLiftGate(start: 1.0, target: 1.0, value: 1.0),
+        isTrue,
+      );
+    });
+
+    test('works when shrinking toward the inactive scale', () {
+      expect(
+        lyricScaleReachedLiftGate(start: 1.0, target: 0.95, value: 0.956),
+        isFalse,
+      );
+      expect(
+        lyricScaleReachedLiftGate(start: 1.0, target: 0.95, value: 0.955),
+        isTrue,
+      );
+    });
+  });
+
+  group('lift gate', () {
+    test('gate 0 zeroes lift, gate 1 keeps it', () {
+      expect(lyricGatedLiftPx(-2, 0), 0);
+      expect(lyricGatedLiftPx(-2, 1), -2);
+      expect(lyricGatedLiftPx(-2, 0.5), -1);
+    });
+
+    test('painter lift is 0 when gate is 0, unchanged when gate is 1', () {
+      final gate = ValueNotifier(0.0);
+      void paintWithGate() {
+        LyricsLinePainter(
+          params: LyricPainterParams(
+            line: _line(),
+            currentTimeMs: 600,
+            blurSigma: 0,
+            config: _config(),
+            isMainLine: true,
+            isHighlightActive: true,
+            isMainVocalActive: true,
+            accelerateTailHighlight: false,
+            useMaterialYouColor: false,
+            opacity: 1,
+            highlightDeadlineMs: 800,
+            lineMedianWordDuration: Duration.zero,
+            liftGateListenable: gate,
+          ),
+          scheme: const ColorScheme.dark(),
+        ).paint(Canvas(PictureRecorder()), const Size(400, 140));
+      }
+
+      paintWithGate();
+      expect(debugLyricCharYLifts, isNotEmpty);
+      expect(debugLyricCharYLifts, everyElement(0));
+
+      gate.value = 1;
+      paintWithGate();
+      expect(debugLyricCharYLifts.first, lessThan(0));
+    });
+  });
+
+  group('scale anchor is vertically centered', () {
+    test('alignment is center and measureHeight is unchanged', () {
+      final height = _measure(_config());
+      expect(
+        lyricLineScaleAlignment(LyricTextAlign.left),
+        Alignment.centerLeft,
+      );
+      expect(lyricLineScaleAlignment(LyricTextAlign.center), Alignment.center);
+      expect(
+        lyricLineScaleAlignment(LyricTextAlign.right),
+        Alignment.centerRight,
+      );
+      expect(_measure(_config()), height);
+    });
+  });
+
   test('catch-up still uses springs instead of filling to peak', () {
     final line = _line();
     LyricsLinePainter(
@@ -227,6 +341,53 @@ void main() {
     expect(
       debugLyricCharYLifts.first.abs(),
       greaterThan(debugLyricCharYLifts.last.abs()),
+    );
+  });
+
+  test('fully sung lift does not change from frame to frame', () {
+    final line = SyncLyricLine(
+      Duration.zero,
+      const Duration(milliseconds: 2000),
+      [SyncLyricWord(Duration.zero, const Duration(milliseconds: 800), '你好')],
+    );
+    void paintAt(double nowMs) {
+      LyricsLinePainter(
+        params: LyricPainterParams(
+          line: line,
+          currentTimeMs: nowMs,
+          blurSigma: 0,
+          config: _config(),
+          isMainLine: true,
+          isHighlightActive: true,
+          isMainVocalActive: true,
+          accelerateTailHighlight: false,
+          useMaterialYouColor: false,
+          opacity: 1,
+          lineMedianWordDuration: const Duration(milliseconds: 800),
+        ),
+        scheme: const ColorScheme.dark(),
+      ).paint(Canvas(PictureRecorder()), const Size(400, 140));
+    }
+
+    paintAt(4000);
+    final first = List<double>.from(debugLyricCharYLifts);
+    paintAt(4016);
+    expect(debugLyricCharYLifts, first);
+    expect(first, everyElement(-2));
+  });
+
+  test('settled line does not request another frame', () {
+    final line = _line();
+    expect(
+      lyricLineEffectsNeedFrame(
+        words: line.words,
+        nowMs: 4000,
+        lineMedianDuration: const Duration(milliseconds: 400),
+        enableGlow: true,
+        liftActive: true,
+        liftPeak: 2,
+      ),
+      isFalse,
     );
   });
 }

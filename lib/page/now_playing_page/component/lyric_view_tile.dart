@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import 'package:pure_music/core/enums.dart';
+import 'package:pure_music/core/theme.dart';
 import 'package:pure_music/lyric/lrc.dart';
 import 'package:pure_music/lyric/lyric.dart';
 import 'package:pure_music/native/bass/bass_player.dart';
@@ -86,6 +87,28 @@ double lyricTransitionEnterFactor(double progress, double enterFraction) {
   );
 }
 
+bool lyricTransitionSkipEnter({
+  required int startMs,
+  required int lengthMs,
+  required double positionMs,
+}) {
+  if (startMs != 0 || lengthMs <= 0) return false;
+  return positionMs >= 0 && positionMs < lengthMs;
+}
+
+double lyricTransitionHeightFactor({
+  required double progress,
+  required double enterFraction,
+  required double exitFraction,
+  required double exitEnd,
+  bool skipEnter = false,
+}) {
+  final enter = skipEnter
+      ? 1.0
+      : lyricTransitionEnterFactor(progress, enterFraction);
+  return enter * lyricTransitionCollapseFactor(progress, exitFraction, exitEnd);
+}
+
 /// 出场窗口内行高整体收起，progress 到 exitEnd 时归零，交接无跳变。
 double lyricTransitionCollapseFactor(
   double progress,
@@ -160,6 +183,7 @@ class _LyricTransitionTileState extends State<LyricTransitionTile> {
       widget.lrcLine,
       widget.syncLine,
       widget.enableBreathing,
+      widget.positionMs,
     );
   }
 
@@ -173,6 +197,7 @@ class _LyricTransitionTileState extends State<LyricTransitionTile> {
         widget.lrcLine,
         widget.syncLine,
         widget.enableBreathing,
+        widget.positionMs,
       );
     }
     if (widget.positionMs != null &&
@@ -224,19 +249,26 @@ class _LyricTransitionTileState extends State<LyricTransitionTile> {
       );
     }
 
-    return ListenableBuilder(
-      listenable: controller,
-      builder: (context, _) {
-        final progress = controller.progress.clamp(0.0, 1.0);
-        // 时间窗未开始时高度为 0，随后按进场窗口展开，退场窗口收起。
-        final collapse = !widget.animateVisibilityWithProgress
-            ? 1.0
-            : lyricTransitionEnterFactor(progress, controller.enterFraction) *
-                  lyricTransitionCollapseFactor(
-                    progress,
-                    controller.exitFraction,
-                    controller.exitEndFraction,
-                  );
+    final painter = LyricTransitionPainter(
+      scheme,
+      controller,
+      alignment: align,
+      useMaterialYouColor: widget.useMaterialYouColor,
+      animateVisibilityWithProgress: widget.animateVisibilityWithProgress,
+    );
+    if (!widget.animateVisibilityWithProgress) {
+      return Padding(
+        padding: EdgeInsets.symmetric(vertical: widget.verticalPadding),
+        child: SizedBox(
+          width: double.infinity,
+          height: transitionTileHeight,
+          child: CustomPaint(painter: painter),
+        ),
+      );
+    }
+    return ValueListenableBuilder<double>(
+      valueListenable: controller.heightFactor,
+      builder: (context, collapse, _) {
         return Padding(
           padding: EdgeInsets.symmetric(
             vertical: widget.verticalPadding * collapse,
@@ -244,16 +276,7 @@ class _LyricTransitionTileState extends State<LyricTransitionTile> {
           child: SizedBox(
             width: double.infinity,
             height: transitionTileHeight * collapse,
-            child: CustomPaint(
-              painter: LyricTransitionPainter(
-                scheme,
-                controller,
-                alignment: align,
-                useMaterialYouColor: widget.useMaterialYouColor,
-                animateVisibilityWithProgress:
-                    widget.animateVisibilityWithProgress,
-              ),
-            ),
+            child: CustomPaint(painter: painter),
           ),
         );
       },
@@ -291,11 +314,18 @@ class LyricTransitionPainter extends CustomPainter {
     final exitFraction = controller.exitFraction;
     final exitEnd = controller.exitEndFraction;
     final enterOpacity = animateVisibilityWithProgress
-        ? lyricTransitionEnterOpacity(progress, enterFraction)
+        ? (controller.skipEnter
+              ? 1.0
+              : lyricTransitionEnterOpacity(progress, enterFraction))
         : 1.0;
     final collapse = animateVisibilityWithProgress
-        ? lyricTransitionEnterFactor(progress, enterFraction) *
-              lyricTransitionCollapseFactor(progress, exitFraction, exitEnd)
+        ? lyricTransitionHeightFactor(
+            progress: progress,
+            enterFraction: enterFraction,
+            exitFraction: exitFraction,
+            exitEnd: exitEnd,
+            skipEnter: controller.skipEnter,
+          )
         : 1.0;
     final alphaBase = animateVisibilityWithProgress
         ? _alphaBase
@@ -348,7 +378,7 @@ class LyricTransitionPainter extends CustomPainter {
             .clamp(0, 255);
     final transitionColor = useMaterialYouColor
         ? scheme.onSecondaryContainer
-        : scheme.onSurface;
+        : playerThemeForeground(scheme, enabled: false);
     circlePaint1.color = transitionColor.withAlpha(a1);
     circlePaint2.color = transitionColor.withAlpha(a2);
     circlePaint3.color = transitionColor.withAlpha(a3);
@@ -571,6 +601,8 @@ class LyricTransitionTileController extends ChangeNotifier {
 
   /// 退场结束点：行尾前 lyricWordPreSwitchMs + 余量，保证切行定位测量时行高已收完。
   double exitEndFraction = 1.0;
+  bool skipEnter = false;
+  final ValueNotifier<double> heightFactor = ValueNotifier(0);
 
   double sizeFactor = 0;
   double k = 1;
@@ -583,8 +615,11 @@ class LyricTransitionTileController extends ChangeNotifier {
     this.lrcLine,
     this.syncLine,
     bool enableBreathing = true,
+    double? initialPositionMs,
   ]) {
     _enableBreathing = enableBreathing;
+    final startMs =
+        lrcLine?.start.inMilliseconds ?? syncLine!.start.inMilliseconds;
     final lengthMs =
         (lrcLine?.length.inMilliseconds ?? syncLine!.length.inMilliseconds)
             .toDouble();
@@ -593,6 +628,24 @@ class LyricTransitionTileController extends ChangeNotifier {
     exitEndFraction =
         ((lengthMs - lyricWordPreSwitchMs - _exitSettleMarginMs) / lengthMs)
             .clamp(0.0, 1.0);
+    final positionMs =
+        initialPositionMs ??
+        PlayService.instance.playbackService.position * 1000.0;
+    skipEnter = lyricTransitionSkipEnter(
+      startMs: startMs,
+      lengthMs: lengthMs.toInt(),
+      positionMs: positionMs,
+    );
+    final initialProgress = lengthMs <= 0
+        ? 1.0
+        : ((positionMs - startMs).clamp(0.0, lengthMs) / lengthMs);
+    heightFactor.value = lyricTransitionHeightFactor(
+      progress: initialProgress,
+      enterFraction: enterFraction,
+      exitFraction: exitFraction,
+      exitEnd: exitEndFraction,
+      skipEnter: skipEnter,
+    );
     _register();
   }
 
@@ -639,6 +692,7 @@ class LyricTransitionTileController extends ChangeNotifier {
     // 防止除零：lengthInMs 可能因数据异常为 0
     if (lengthInMs <= 0) {
       progress = 1.0;
+      if (heightFactor.value != 0) heightFactor.value = 0;
       notifyListeners();
       _unregister();
       return;
@@ -648,6 +702,16 @@ class LyricTransitionTileController extends ChangeNotifier {
       _register();
     }
     progress = max(sinceStart, 0) / lengthInMs;
+    final nextHeight = lyricTransitionHeightFactor(
+      progress: progress.clamp(0.0, 1.0),
+      enterFraction: enterFraction,
+      exitFraction: exitFraction,
+      exitEnd: exitEndFraction,
+      skipEnter: skipEnter,
+    );
+    if ((nextHeight - heightFactor.value).abs() > 0.001) {
+      heightFactor.value = nextHeight;
+    }
     notifyListeners();
 
     if (progress >= 1) {
@@ -665,7 +729,12 @@ class LyricTransitionTileController extends ChangeNotifier {
     _disposed = true;
 
     _unregister();
+    heightFactor.dispose();
 
     super.dispose();
   }
 }
+
+@visibleForTesting
+int debugLyricTransitionControllerCount() =>
+    _TransitionControllerManager.instance._controllers.length;

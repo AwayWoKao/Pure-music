@@ -1360,11 +1360,10 @@ class LyricService extends ChangeNotifier {
       }
       showLyricWritePrompt(
         title: nowPlaying.title,
-        message: hasEmbedded
-            ? '文件里已有歌词，用网上这首覆盖吗？'
-            : '写入标签？',
+        message: hasEmbedded ? '文件里已有歌词，用网上这首覆盖吗？' : '写入标签？',
         confirmLabel: hasEmbedded ? '覆盖' : '写入',
-        onWrite: () => _writeLyricTextToTag(audioPath, lrcText, notifyUser: true),
+        onWrite: () =>
+            _writeLyricTextToTag(audioPath, lrcText, notifyUser: true),
         onDismiss: () => _handlePromptDismiss(audioPath),
       );
     });
@@ -1385,12 +1384,7 @@ class LyricService extends ChangeNotifier {
         .catchError((e, trace) {
           _lyricWritePromptHistory.markWriteFailed(audioPath);
           if (notifyUser) {
-            log.lyric.error(
-              'legacy',
-              '写入歌词标签失败',
-              error: e,
-              stackTrace: trace,
-            );
+            log.lyric.error('legacy', '写入歌词标签失败', error: e, stackTrace: trace);
             showTextOnSnackBar('写入标签失败，请查看日志', variant: ToastVariant.error);
           } else {
             log.lyric.error('legacy', '自动写入歌词标签失败: $e');

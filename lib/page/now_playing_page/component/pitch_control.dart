@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:pure_music/core/design_tokens.dart';
 import 'package:pure_music/core/settings.dart';
+import 'package:pure_music/core/theme.dart';
 import 'package:pure_music/play_service/play_service.dart';
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
@@ -38,7 +39,7 @@ class _NowPlayingPitchControlState extends State<NowPlayingPitchControl> {
           },
           tooltip: '音调',
           icon: const Icon(Symbols.music_note),
-          color: useMonet ? scheme.primary : scheme.onSurface,
+          color: playerThemeForeground(scheme, enabled: useMonet),
         );
       },
       menuChildren: [
@@ -128,7 +129,7 @@ class _NowPlayingPitchPanelState extends State<NowPlayingPitchPanel> {
               Text(
                 '保持音调',
                 style: TextStyle(
-                  color: scheme.onSurface,
+                  color: playerThemeForeground(scheme, enabled: useMonet),
                   fontWeight: AppType.weightSemibold,
                 ),
               ),
@@ -140,7 +141,7 @@ class _NowPlayingPitchPanelState extends State<NowPlayingPitchPanel> {
                   });
                   AppSettings.instance.saveSettings();
                 },
-                activeThumbColor: useMonet ? scheme.primary : null,
+                activeThumbColor: playerThemeForeground(scheme, enabled: useMonet),
               ),
             ],
           ),
@@ -161,7 +162,7 @@ class _NowPlayingPitchPanelState extends State<NowPlayingPitchPanel> {
                       Text(
                         '变调',
                         style: TextStyle(
-                          color: scheme.onSurface,
+                          color: playerThemeForeground(scheme, enabled: useMonet),
                           fontWeight: AppType.weightSemibold,
                         ),
                       ),
@@ -201,7 +202,7 @@ class _NowPlayingPitchPanelState extends State<NowPlayingPitchPanel> {
                               }
                             : null,
                     icon: const Icon(Symbols.remove),
-                    color: useMonet ? scheme.primary : scheme.onSurface,
+                    color: playerThemeForeground(scheme, enabled: useMonet),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                   ),
@@ -241,8 +242,8 @@ class _NowPlayingPitchPanelState extends State<NowPlayingPitchPanel> {
                                 child: IgnorePointer(
                                   child: _CustomValueIndicator(
                                     value: pitchValue,
-                                    color: scheme.primary,
-                                    textColor: scheme.onPrimary,
+                                    color: playerThemeForeground(scheme, enabled: useMonet),
+                                    textColor: playerThemeOnForeground(scheme, enabled: useMonet),
                                   ),
                                 ),
                               ),
@@ -262,7 +263,7 @@ class _NowPlayingPitchPanelState extends State<NowPlayingPitchPanel> {
                               }
                             : null,
                     icon: const Icon(Symbols.add),
-                    color: useMonet ? scheme.primary : scheme.onSurface,
+                    color: playerThemeForeground(scheme, enabled: useMonet),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                   ),
@@ -286,7 +287,7 @@ class _NowPlayingPitchPanelState extends State<NowPlayingPitchPanel> {
                       Text(
                         '变速',
                         style: TextStyle(
-                          color: scheme.onSurface,
+                          color: playerThemeForeground(scheme, enabled: useMonet),
                           fontWeight: AppType.weightSemibold,
                         ),
                       ),
@@ -326,7 +327,7 @@ class _NowPlayingPitchPanelState extends State<NowPlayingPitchPanel> {
                               }
                             : null,
                     icon: const Icon(Symbols.remove),
-                    color: useMonet ? scheme.primary : scheme.onSurface,
+                    color: playerThemeForeground(scheme, enabled: useMonet),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                   ),
@@ -366,8 +367,8 @@ class _NowPlayingPitchPanelState extends State<NowPlayingPitchPanel> {
                                 child: IgnorePointer(
                                   child: _CustomValueIndicator(
                                     value: rateValue,
-                                    color: scheme.primary,
-                                    textColor: scheme.onPrimary,
+                                    color: playerThemeForeground(scheme, enabled: useMonet),
+                                    textColor: playerThemeOnForeground(scheme, enabled: useMonet),
                                     isInteger: false,
                                   ),
                                 ),
@@ -388,7 +389,7 @@ class _NowPlayingPitchPanelState extends State<NowPlayingPitchPanel> {
                               }
                             : null,
                     icon: const Icon(Symbols.add),
-                    color: useMonet ? scheme.primary : scheme.onSurface,
+                    color: playerThemeForeground(scheme, enabled: useMonet),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                   ),
@@ -429,18 +430,23 @@ class _PitchValuePill extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
 
+    final useMonet = AppSettings.instance.useMaterialYouForControls;
     return Container(
       height: 26,
       padding: const EdgeInsets.symmetric(horizontal: 10),
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: scheme.primaryContainer,
+        color: useMonet
+            ? scheme.primaryContainer
+            : playerThemeForeground(scheme, enabled: false).withValues(alpha: 0.18),
         borderRadius: AppRadius.mdCircular,
       ),
       child: Text(
         _formatPitchValue(value),
         style: TextStyle(
-          color: scheme.onPrimaryContainer,
+          color: useMonet
+              ? scheme.onPrimaryContainer
+              : playerThemeForeground(scheme, enabled: false),
           fontSize: AppType.caption,
           fontWeight: AppType.weightSemibold,
         ),
@@ -462,7 +468,7 @@ class _PitchResetButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final useMonet = AppSettings.instance.useMaterialYouForControls;
-    final foreground = useMonet ? scheme.primary : scheme.onSurfaceVariant;
+    final foreground = playerThemeForeground(scheme, enabled: useMonet);
     final style = TextButton.styleFrom(
       backgroundColor: scheme.surfaceContainerHighest.withValues(alpha: 0.55),
       foregroundColor: foreground,
@@ -505,18 +511,23 @@ class _RateValuePill extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
 
+    final useMonet = AppSettings.instance.useMaterialYouForControls;
     return Container(
       height: 26,
       padding: const EdgeInsets.symmetric(horizontal: 10),
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: scheme.primaryContainer,
+        color: useMonet
+            ? scheme.primaryContainer
+            : playerThemeForeground(scheme, enabled: false).withValues(alpha: 0.18),
         borderRadius: AppRadius.mdCircular,
       ),
       child: Text(
         _formatRateValue(value),
         style: TextStyle(
-          color: scheme.onPrimaryContainer,
+          color: useMonet
+              ? scheme.onPrimaryContainer
+              : playerThemeForeground(scheme, enabled: false),
           fontSize: AppType.caption,
           fontWeight: AppType.weightSemibold,
         ),
@@ -538,7 +549,7 @@ class _RateResetButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final useMonet = AppSettings.instance.useMaterialYouForControls;
-    final foreground = useMonet ? scheme.primary : scheme.onSurfaceVariant;
+    final foreground = playerThemeForeground(scheme, enabled: useMonet);
     final style = TextButton.styleFrom(
       backgroundColor: scheme.surfaceContainerHighest.withValues(alpha: 0.55),
       foregroundColor: foreground,

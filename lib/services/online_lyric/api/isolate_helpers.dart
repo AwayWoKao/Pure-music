@@ -14,6 +14,12 @@ const _kgDownloadLrcUrl = 'https://lyrics.kugou.com/download';
 const _neSearchUrl = 'https://music.163.com/api/cloudsearch/pc';
 const _neLrcUrl = 'https://music.163.com/api/song/lyric';
 const _qmSearchUrl = 'https://u.y.qq.com/cgi-bin/musicu.fcg';
+const _qmMusicuHosts = ['u.y.qq.com', 'shu6.y.qq.com'];
+const _qmBrowserHeaders = {
+  'User-Agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
+  'Referer': 'https://y.qq.com/',
+};
 const _musicApiHeaders = {
   'User-Agent':
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/138.0.0.0 Safari/537.36',
@@ -62,6 +68,37 @@ Future<void> _runCancelableEntry<T>(
 Duration _effectiveTimeout(Duration? requested, Duration fallback) {
   if (requested == null) return fallback;
   return requested < fallback ? requested : fallback;
+}
+
+// 多门并行，谁先有结果用谁，避免单一域名被风控后整源不可用。
+Future<T> _qqFirstNonEmpty<T>({
+  required List<Future<T>> tasks,
+  required bool Function(T value) hasValue,
+  required T empty,
+}) {
+  if (tasks.isEmpty) return Future<T>.value(empty);
+  final completer = Completer<T>();
+  var remaining = tasks.length;
+  for (final task in tasks) {
+    unawaited(
+      task
+          .then((value) {
+            if (completer.isCompleted) return;
+            if (hasValue(value)) {
+              completer.complete(value);
+              return;
+            }
+            remaining--;
+            if (remaining == 0) completer.complete(empty);
+          })
+          .catchError((Object _) {
+            if (completer.isCompleted) return;
+            remaining--;
+            if (remaining == 0) completer.complete(empty);
+          }),
+    );
+  }
+  return completer.future;
 }
 
 String _kgNormalizeCover(String url) =>
@@ -273,9 +310,11 @@ Map<String, dynamic>? _kgNormalizeFallbackItem(
       'singername',
       'UNKNOWN',
     ),
-    'album_name': albumName ??
+    'album_name':
+        albumName ??
         _kgField(item, useFallbackShape, 'AlbumName', 'album_name'),
-    'duration': int.tryParse(
+    'duration':
+        int.tryParse(
           _kgField(item, useFallbackShape, 'Duration', 'duration', '0'),
         ) ??
         0,
@@ -551,9 +590,59 @@ Future<Map<String, String?>> neLyricIsolate({
 }
 
 Future<List<dynamic>> _qqSearchInIsolate(Map<String, dynamic> params) async {
-  final body = await _qqSearchRequestBody(params);
-  if (body == null || body.isEmpty) return [];
-  return _qqSearchParseBody(body);
+  return _qqFirstNonEmpty<List<dynamic>>(
+    tasks: [
+      for (final host in _qmMusicuHosts)
+        _qqDesktopSearchRequestBody(
+          params,
+          host: host,
+        ).then(_qqSearchParseBody),
+      _qqWebSearchRequestBody(params).then(_qqSearchParseBody),
+      _qqSearchRequestBody(params).then(_qqSearchParseBody),
+    ],
+    hasValue: (value) => value.isNotEmpty,
+    empty: const [],
+  );
+}
+
+Future<String?> _qqDesktopSearchRequestBody(
+  Map<String, dynamic> params, {
+  required String host,
+}) async {
+  return _httpPost(
+    'https://$host/cgi-bin/musicu.fcg',
+    jsonEncode({
+      'comm': {'ct': '19', 'cv': '1873', 'uin': '0'},
+      'req_0': {
+        'method': 'DoSearchForQQMusicDesktop',
+        'module': 'music.search.SearchCgiService',
+        'param': {
+          'grp': 1,
+          'num_per_page': params['limit'],
+          'page_num': params['offset'],
+          'query': params['text'],
+          'search_type': 0,
+        },
+      },
+    }),
+    {
+            ..._qmBrowserHeaders,
+      'Origin': 'https://y.qq.com',
+      'Cookie': 'tmeLoginType=-1',
+      'Content-Type': 'application/json',
+    },
+  );
+}
+
+Future<String?> _qqWebSearchRequestBody(Map<String, dynamic> params) async {
+  return _httpGet('https://c.y.qq.com/soso/fcgi-bin/search_for_qq_cp', {
+    'w': '${params['text']}',
+    'format': 'json',
+    'inCharset': 'utf8',
+    'outCharset': 'utf8',
+    'p': '${params['offset']}',
+    'n': '${params['limit']}',
+  }, _qmBrowserHeaders);
 }
 
 Future<String?> _qqSearchRequestBody(Map<String, dynamic> params) async {
@@ -589,22 +678,18 @@ Future<String?> _qqSearchRequestBody(Map<String, dynamic> params) async {
         },
       },
     }),
-    {
-      'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
-      'Host': 'u.y.qq.com',
-      'Content-Type': 'text/plain; charset=utf-8',
-    },
+    {      ..._qmBrowserHeaders, 'Content-Type': 'text/plain; charset=utf-8'},
   );
   return body;
 }
 
-List<dynamic> _qqSearchParseBody(String body) {
+List<dynamic> _qqSearchParseBody(String? body) {
+  if (body == null || body.isEmpty) return [];
   try {
     final Map<String, dynamic> data = jsonDecode(body);
-    final songList = data['req_0']?['data']?['body']?['item_song'];
-    if (songList is! List) return [];
-    return songList.map((item) {
+    final songList = _qqSearchRawSongs(data);
+    if (songList == null) return [];
+    return songList.whereType<Map>().map((item) {
       final singerList = item['singer'] as List?;
       String? singer;
       if (singerList != null && singerList.isNotEmpty) {
@@ -613,16 +698,26 @@ List<dynamic> _qqSearchParseBody(String body) {
             .where((n) => n != null)
             .join('、');
       }
-      final albumMid = item['album']?['mid']?.toString() ?? '';
+      final album = item['album'];
+      final albumMid =
+          item['albummid']?.toString() ??
+          (album is Map ? album['mid']?.toString() ?? '' : '');
+      final albumName =
+          item['albumname']?.toString() ??
+          (album is Map ? album['name']?.toString() ?? '' : '');
       final picUrl = albumMid.isNotEmpty
           ? 'https://y.gtimg.cn/music/photo_new/T002R800x800M000$albumMid.jpg'
           : '';
+      final title = item['title']?.toString() ?? item['songname']?.toString();
+      final name = item['name']?.toString();
       return {
-        'id': item['id']?.toString() ?? '',
-        'mid': item['mid']?.toString() ?? '',
-        'title': item['title'] ?? 'UNKNOWN',
+        'id': (item['id'] ?? item['songid'])?.toString() ?? '',
+        'mid': (item['mid'] ?? item['songmid'])?.toString() ?? '',
+        'title': (title != null && title.isNotEmpty)
+            ? title
+            : (name != null && name.isNotEmpty ? name : 'UNKNOWN'),
         'artist': singer ?? 'UNKNOWN',
-        'album': item['album']?['name']?.toString() ?? '',
+        'album': albumName,
         'interval': int.tryParse(item['interval']?.toString() ?? '0') ?? 0,
         'picUrl': picUrl,
       };
@@ -630,6 +725,23 @@ List<dynamic> _qqSearchParseBody(String body) {
   } catch (_) {
     return [];
   }
+}
+
+List<dynamic>? _qqSearchRawSongs(Map<String, dynamic> data) {
+  for (final key in const ['req_0', 'req_1', 'music.search.SearchCgiService']) {
+    final body = data[key]?['data']?['body'];
+    if (body is! Map) continue;
+    final itemSong = body['item_song'];
+    if (itemSong is List && itemSong.isNotEmpty) return itemSong;
+    final song = body['song'];
+    if (song is Map) {
+      final list = song['list'];
+      if (list is List && list.isNotEmpty) return list;
+    }
+  }
+  final webList = data['data']?['song']?['list'];
+  if (webList is List && webList.isNotEmpty) return webList;
+  return null;
 }
 
 Future<List<dynamic>> qqSearchIsolate({
@@ -676,67 +788,77 @@ Future<Map<String, String?>?> _qqLyricFromPlayLyric({
   final titleB64 = base64Encode(utf8.encode(title));
   final albumB64 = base64Encode(utf8.encode(album ?? ''));
   final singerB64 = base64Encode(utf8.encode(artist ?? ''));
-  final body = await _httpPost(
-    _qmSearchUrl,
-    jsonEncode({
-      'comm': {
-        'ct': '11',
-        'cv': '1003006',
-        'v': '1003006',
-        'os_ver': '15',
-        'phonetype': '24122RKC7C',
-        'tmeAppID': 'qqmusiclight',
-        'nettype': 'NETWORK_WIFI',
-      },
-      'req_0': {
-        'method': 'GetPlayLyricInfo',
-        'module': 'music.musichallSong.PlayLyricInfo',
-        'param': {
-          'songID': id,
-          'songName': titleB64,
-          'albumName': albumB64,
-          'singerName': singerB64,
-          'crypt': 1,
-          'qrc': 1,
-          'trans': 1,
-          'roma': 1,
-          'cv': 2111,
-          'ct': 19,
-          'lrc_t': 0,
-          'qrc_t': 0,
-          'roma_t': 0,
-          'trans_t': 0,
-          'type': 0,
-          'interval': durationSec,
-        },
-      },
-    }),
-    {
-      'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
-      'Host': 'u.y.qq.com',
-      'Content-Type': 'text/plain; charset=utf-8',
+  final payload = jsonEncode({
+    'comm': {
+      'ct': '11',
+      'cv': '1003006',
+      'v': '1003006',
+      'os_ver': '15',
+      'phonetype': '24122RKC7C',
+      'tmeAppID': 'qqmusiclight',
+      'nettype': 'NETWORK_WIFI',
     },
+    'req_0': {
+      'method': 'GetPlayLyricInfo',
+      'module': 'music.musichallSong.PlayLyricInfo',
+      'param': {
+        'songID': id,
+        'songName': titleB64,
+        'albumName': albumB64,
+        'singerName': singerB64,
+        'crypt': 1,
+        'qrc': 1,
+        'trans': 1,
+        'roma': 1,
+        'cv': 2111,
+        'ct': 19,
+        'lrc_t': 0,
+        'qrc_t': 0,
+        'roma_t': 0,
+        'trans_t': 0,
+        'type': 0,
+        'interval': durationSec,
+      },
+    },
+  });
+  final headers = {
+          ..._qmBrowserHeaders,
+    'Origin': 'https://y.qq.com',
+    'Cookie': 'tmeLoginType=-1',
+    'Content-Type': 'application/json',
+  };
+  return _qqFirstNonEmpty<Map<String, String?>?>(
+    tasks: [
+      for (final host in _qmMusicuHosts)
+        _httpPost(
+          'https://$host/cgi-bin/musicu.fcg',
+          payload,
+          headers,
+        ).then(_qqParsePlayLyricBody),
+    ],
+    hasValue: (value) => value != null,
+    empty: null,
   );
+}
 
-  if (body != null) {
-    try {
-      final Map<String, dynamic> data = jsonDecode(body);
-      final lyricData = data['req_0']?['data'];
-      if (lyricData != null) {
-        final encLyric = lyricData['lyric']?.toString() ?? '';
-        final encTrans = lyricData['trans']?.toString() ?? '';
-        final encRoma = lyricData['roma']?.toString() ?? '';
-        if (encLyric.isNotEmpty) {
-          return {
-            'encryptedLyric': encLyric,
-            'encryptedTrans': encTrans.isNotEmpty ? encTrans : null,
-            'roma': encRoma.isNotEmpty ? encRoma : null,
-          };
-        }
-      }
-    } catch (_) {}
-  }
+Map<String, String?>? _qqParsePlayLyricBody(String? body) {
+  if (body == null || body.isEmpty) return null;
+  try {
+    final Map<String, dynamic> data = jsonDecode(body);
+    for (final key in const ['req_0', 'req_1', 'request']) {
+      final lyricData = data[key]?['data'];
+      if (lyricData is! Map) continue;
+      final encLyric = lyricData['lyric']?.toString() ?? '';
+      if (encLyric.isEmpty) continue;
+      final encTrans = lyricData['trans']?.toString() ?? '';
+      final encRoma = lyricData['roma']?.toString() ?? '';
+      return {
+        'encryptedLyric': encLyric,
+        'encryptedTrans': encTrans.isNotEmpty ? encTrans : null,
+        'roma': encRoma.isNotEmpty ? encRoma : null,
+      };
+    }
+  } catch (_) {}
   return null;
 }
 
@@ -749,7 +871,7 @@ Future<Map<String, String?>> _qqLyricFromDownloadFallback(int id) async {
       'lrctype': '4',
       'musicid': id.toString(),
     },
-    null,
+    _qmBrowserHeaders,
   );
   if (fbBody == null || fbBody.isEmpty) {
     return {'encryptedLyric': null, 'encryptedTrans': null, 'roma': null};

@@ -20,6 +20,8 @@ const String CONCERT_PAGE = '/concert';
 const String NOW_PLAYING_PAGE = '/nowplaying';
 
 const String STATS_PAGE = '/stats';
+const String STATS_ARTIST_DETAIL_PAGE = '/stats/artist';
+const String STATS_ALBUM_DETAIL_PAGE = '/stats/album';
 
 const String SETTINGS_PAGE = '/settings';
 const String SETTINGS_ISSUE_PAGE = '/settings/issue';

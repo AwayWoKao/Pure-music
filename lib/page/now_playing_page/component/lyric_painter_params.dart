@@ -29,6 +29,7 @@ class LyricPainterParams {
   final double? highlightDeadlineMs;
   final Duration lineMedianWordDuration;
   final ValueListenable<double>? liftDecayListenable;
+  final ValueListenable<double>? liftGateListenable;
 
   const LyricPainterParams({
     required this.line,
@@ -52,6 +53,7 @@ class LyricPainterParams {
     this.highlightDeadlineMs,
     required this.lineMedianWordDuration,
     this.liftDecayListenable,
+    this.liftGateListenable,
   });
 
   @override
@@ -80,7 +82,8 @@ class LyricPainterParams {
         other.opacity == opacity &&
         other.highlightDeadlineMs == highlightDeadlineMs &&
         other.lineMedianWordDuration == lineMedianWordDuration &&
-        other.liftDecayListenable == liftDecayListenable;
+        other.liftDecayListenable == liftDecayListenable &&
+        other.liftGateListenable == liftGateListenable;
   }
 
   @override
@@ -109,6 +112,7 @@ class LyricPainterParams {
       highlightDeadlineMs,
       lineMedianWordDuration,
       liftDecayListenable,
+      liftGateListenable,
     ),
   );
 }

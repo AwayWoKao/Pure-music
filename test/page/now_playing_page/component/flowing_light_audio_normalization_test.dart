@@ -178,6 +178,33 @@ void main() {
     expect(first.high, lessThan(first.mid));
   });
 
+  test(
+    'resume gap keeps the previous envelope until audible spectrum returns',
+    () {
+      expect(
+        audioReactiveFlowShouldHoldEnvelope(
+          awaitingPlaybackSpectrum: true,
+          incoming: AudioReactiveFlowResponse.zero,
+        ),
+        isTrue,
+      );
+      expect(
+        audioReactiveFlowShouldHoldEnvelope(
+          awaitingPlaybackSpectrum: true,
+          incoming: const AudioReactiveFlowResponse(0.4, 0.2, 0.1),
+        ),
+        isFalse,
+      );
+      expect(
+        audioReactiveFlowShouldHoldEnvelope(
+          awaitingPlaybackSpectrum: false,
+          incoming: AudioReactiveFlowResponse.zero,
+        ),
+        isFalse,
+      );
+    },
+  );
+
   test('artwork layers carry the cover color over the neutral fallback', () {
     expect(flowingLightArtworkOpacityCeiling(), greaterThan(0.92));
   });
@@ -386,26 +413,30 @@ void main() {
       );
     }
 
-    final flowingOpacity = find.descendant(
+    final flowingPaint = find.descendant(
       of: find.byType(FlowingLightBackground),
-      matching: find.byType(AnimatedOpacity),
+      matching: find.byType(CustomPaint),
     );
 
     try {
       await tester.pumpWidget(buildSubject(PlayerState.playing));
       await _pumpAsyncWork(tester);
       expect(spectrum.hasListener, isTrue);
-      expect(tester.widget<AnimatedOpacity>(flowingOpacity).opacity, 1);
+      expect(flowingPaint, findsOneWidget);
 
       await tester.pumpWidget(buildSubject(PlayerState.paused));
       await tester.pump();
       expect(spectrum.hasListener, isFalse);
-      expect(tester.widget<AnimatedOpacity>(flowingOpacity).opacity, 1);
+      expect(flowingPaint, findsOneWidget);
 
       await tester.pumpWidget(buildSubject(PlayerState.playing));
       await tester.pump();
       expect(spectrum.hasListener, isTrue);
-      expect(tester.widget<AnimatedOpacity>(flowingOpacity).opacity, 1);
+      expect(flowingPaint, findsOneWidget);
+
+      spectrum.add(Float32List.fromList([0, 0, 0, 0]));
+      await tester.pump();
+      expect(flowingPaint, findsOneWidget);
       expect(tester.takeException(), isNull);
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());
@@ -436,18 +467,73 @@ void main() {
       );
     }
 
+    final flowingPaint = find.descendant(
+      of: find.byType(FlowingLightBackground),
+      matching: find.byType(CustomPaint),
+    );
+
     try {
       await tester.pumpWidget(buildSubject(tickerModeEnabled: false));
       await _pumpAsyncWork(tester);
       expect(spectrum.hasListener, isFalse);
+      expect(flowingPaint, findsOneWidget);
 
       await tester.pumpWidget(buildSubject(tickerModeEnabled: true));
       await tester.pump();
       expect(spectrum.hasListener, isTrue);
+      expect(flowingPaint, findsOneWidget);
 
       await tester.pumpWidget(buildSubject(tickerModeEnabled: false));
       await tester.pump();
       expect(spectrum.hasListener, isFalse);
+      expect(flowingPaint, findsOneWidget);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    }
+  });
+
+  testWidgets('hiding then showing keeps artwork visible', (tester) async {
+    final spectrum = StreamController<Float32List>.broadcast();
+    addTearDown(spectrum.close);
+    final cover = await _createCoverPng();
+
+    Widget buildSubject({required bool isVisible}) {
+      return MaterialApp(
+        home: FlowingLightBackground(
+          inputs: NowPlayingBackgroundInputs(
+            albumCoverBytes: cover,
+            spectrumStream: spectrum.stream,
+            enableAnimation: true,
+            isVisible: isVisible,
+            playerState: PlayerState.playing,
+            audioReactiveFlow: true,
+          ),
+        ),
+      );
+    }
+
+    final flowingPaint = find.descendant(
+      of: find.byType(FlowingLightBackground),
+      matching: find.byType(CustomPaint),
+    );
+
+    try {
+      await tester.pumpWidget(buildSubject(isVisible: true));
+      await _pumpAsyncWork(tester);
+      expect(spectrum.hasListener, isTrue);
+      expect(flowingPaint, findsOneWidget);
+
+      await tester.pumpWidget(buildSubject(isVisible: false));
+      await tester.pump();
+      expect(spectrum.hasListener, isFalse);
+      expect(flowingPaint, findsOneWidget);
+
+      await tester.pumpWidget(buildSubject(isVisible: true));
+      await tester.pump();
+      expect(spectrum.hasListener, isTrue);
+      expect(flowingPaint, findsOneWidget);
+      expect(tester.takeException(), isNull);
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
@@ -476,22 +562,16 @@ void main() {
         of: find.byType(FlowingLightBackground),
         matching: find.byType(CustomPaint),
       );
-      final flowingOpacity = find.descendant(
-        of: find.byType(FlowingLightBackground),
-        matching: find.byType(AnimatedOpacity),
-      );
 
       try {
         await tester.pumpWidget(buildSubject(cover));
         await _pumpAsyncWork(tester);
         expect(flowingPaint, findsOneWidget);
-        expect(tester.widget<AnimatedOpacity>(flowingOpacity).opacity, 1);
 
         await tester.pumpWidget(buildSubject(Uint8List.fromList([1, 2, 3])));
         await _pumpAsyncWork(tester);
         await tester.pump(const Duration(milliseconds: 600));
-        expect(flowingPaint, findsOneWidget);
-        expect(tester.widget<AnimatedOpacity>(flowingOpacity).opacity, 0);
+        expect(flowingPaint, findsNothing);
       } finally {
         await tester.pumpWidget(const SizedBox.shrink());
         await tester.pump();

@@ -37,6 +37,17 @@ Color _contrastingTextColor(Color background) {
   return background.computeLuminance() > 0.179 ? Colors.black : Colors.white;
 }
 
+/// 播放页主题色开关：开着用主题色，关着用黑白，不用被染色的字色。
+Color playerThemeForeground(ColorScheme scheme, {required bool enabled}) {
+  if (enabled) return scheme.primary;
+  return scheme.brightness == Brightness.dark ? Colors.white : Colors.black;
+}
+
+Color playerThemeOnForeground(ColorScheme scheme, {required bool enabled}) {
+  if (enabled) return scheme.onPrimary;
+  return scheme.brightness == Brightness.dark ? Colors.black : Colors.white;
+}
+
 ColorScheme _buildIndependentColorScheme(Color accent, Brightness brightness) {
   final isDark = brightness == Brightness.dark;
   final surfaces = _independentSurfaces(isDark);
