@@ -905,11 +905,7 @@ class _UniPageState<T> extends State<UniPage<T>> {
     return SidebarGridTransition(
       controller: tableScrollController,
       physics: listMotion ? const SmoothScrollPhysics() : null,
-      padding: EdgeInsets.only(
-        top: widget.contentTopInset,
-        bottom: 96.0,
-        right: 20,
-      ),
+      padding: const EdgeInsets.only(top: 5.0, bottom: 96.0, right: 20),
       gridDelegate: widget.gridDelegate ?? gridDelegate,
       revision: (widget.contentRevision, currSortMethod, currSortOrder),
       itemCount: widget.contentList.length,
