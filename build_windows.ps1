@@ -5,7 +5,8 @@ param(
     [string]$Version = "",
     [ValidateSet(0, 1, 2, 3, 4, 5)]
     [int]$Mode = 0,
-    [switch]$NonInteractive
+    [switch]$NonInteractive,
+    [switch]$Clean
 )
 
 try { chcp 65001 | Out-Null } catch {}
@@ -117,6 +118,69 @@ function Get-InnoSetupCompilerPath() {
     $command = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
     if ($command) { return $command.Source }
     return $null
+}
+
+function Get-BandizipCliPath() {
+    foreach ($candidate in @(
+        "D:\App\Bandizip\bz.exe",
+        "C:\Program Files\Bandizip\bz.exe",
+        "C:\Program Files (x86)\Bandizip\bz.exe"
+    )) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+    }
+    $command = Get-Command "bz.exe" -ErrorAction SilentlyContinue
+    if ($command) { return $command.Source }
+    return $null
+}
+
+function Set-CompileParallelism() {
+    $logical = [Environment]::ProcessorCount
+    if ($logical -lt 1) { $logical = 4 }
+    # Cap parallel jobs so 16GB machines do not thrash.
+    $jobCount = [Math]::Max(2, [Math]::Min(6, $logical - 4))
+    $env:CARGO_BUILD_JOBS = "$jobCount"
+    $env:CMAKE_BUILD_PARALLEL_LEVEL = "$jobCount"
+    Write-Host ("Compile parallelism: jobs={0} (logical={1})" -f $jobCount, $logical) -ForegroundColor Gray
+}
+
+function Optimize-FlutterIconFonts([string]$appDir) {
+    $assetsDir = Join-Path $appDir "data\flutter_assets"
+    $manifestPath = Join-Path $assetsDir "FontManifest.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { return }
+
+    $removedBytes = [int64]0
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $kept = @()
+    foreach ($entry in @($manifest)) {
+        if ($entry.family -match "MaterialSymbols(Rounded|Sharp)$") {
+            foreach ($font in @($entry.fonts)) {
+                $rel = [string]$font.asset
+                if ([string]::IsNullOrWhiteSpace($rel)) { continue }
+                $filePath = Join-Path $assetsDir ($rel -replace "/", "\")
+                if (Test-Path -LiteralPath $filePath -PathType Leaf) {
+                    $removedBytes += (Get-Item -LiteralPath $filePath).Length
+                    Remove-Item -LiteralPath $filePath -Force
+                }
+            }
+            continue
+        }
+        $kept += $entry
+    }
+    if ($kept.Count -eq 0) { return }
+    $parts = @()
+    foreach ($entry in $kept) {
+        $fontParts = @()
+        foreach ($font in @($entry.fonts)) {
+            $asset = ([string]$font.asset).Replace("\", "\\").Replace('"', '\"')
+            $fontParts += ('{{"asset":"{0}"}}' -f $asset)
+        }
+        $family = ([string]$entry.family).Replace("\", "\\").Replace('"', '\"')
+        $parts += ('{{"family":"{0}","fonts":[{1}]}}' -f $family, ($fontParts -join ","))
+    }
+    Write-Utf8NoBom $manifestPath ("[{0}]" -f ($parts -join ","))
+    if ($removedBytes -gt 0) {
+        Write-Host ("Removed unused icon fonts: {0:N1} MB" -f ($removedBytes / 1MB)) -ForegroundColor Gray
+    }
 }
 
 function Assert-PathWithin([string]$path, [string]$parent) {
@@ -300,16 +364,24 @@ function Invoke-Build([string]$version, [bool]$isPortable) {
         Update-BuildVersionFiles $version
     }
 
+    Set-CompileParallelism
+
     Invoke-Step "flutter build windows" {
-        $pluginSymlinkDir = Join-Path $PSScriptRoot "windows\flutter\ephemeral\.plugin_symlinks"
-        if (Test-Path $pluginSymlinkDir) {
-            Assert-PathWithin $pluginSymlinkDir $PSScriptRoot
-            Remove-Item -LiteralPath $pluginSymlinkDir -Recurse -Force -ErrorAction SilentlyContinue
+        if ($Clean) {
+            Write-Host "Clean build requested; removing previous Windows build cache." -ForegroundColor Yellow
+            $pluginSymlinkDir = Join-Path $PSScriptRoot "windows\flutter\ephemeral\.plugin_symlinks"
+            if (Test-Path $pluginSymlinkDir) {
+                Assert-PathWithin $pluginSymlinkDir $PSScriptRoot
+                Remove-Item -LiteralPath $pluginSymlinkDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            $buildDir = Join-Path $PSScriptRoot "build\windows"
+            if (Test-Path $buildDir) {
+                Assert-PathWithin $buildDir $PSScriptRoot
+                Remove-Item -LiteralPath $buildDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
-        $buildDir = Join-Path $PSScriptRoot "build\windows"
-        if (Test-Path $buildDir) {
-            Assert-PathWithin $buildDir $PSScriptRoot
-            Remove-Item -LiteralPath $buildDir -Recurse -Force -ErrorAction SilentlyContinue
+        else {
+            Write-Host "Incremental build (pass -Clean to wipe build\windows)." -ForegroundColor Gray
         }
 
         $flutterArgs = @(
@@ -317,6 +389,7 @@ function Invoke-Build([string]$version, [bool]$isPortable) {
             "windows",
             "--release",
             "--no-pub",
+            "--tree-shake-icons",
             "--dart-define=APP_VERSION=$version",
             "--dart-define=PORTABLE_BUILD=$($isPortable.ToString().ToLowerInvariant())"
         )
@@ -399,6 +472,10 @@ function New-AppPackage([string]$artifactRoot, [string]$version) {
         Invoke-RoboCopy $desktopLyricSrc $desktopLyricDest
     }
 
+    Invoke-Step "strip unused icon fonts" {
+        Optimize-FlutterIconFonts $finalAppDir
+    }
+
     return $finalAppDir
 }
 
@@ -470,8 +547,13 @@ function Set-PortableSupportHidden([string]$artifactRoot) {
     $directory.Attributes = $directory.Attributes -bor [System.IO.FileAttributes]::Hidden
 }
 
-function Set-ZipPortableSupportHidden([string]$zipPath) {
+function Add-ZipCompressionTypes() {
+    Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
+}
+
+function Set-ZipPortableSupportHidden([string]$zipPath) {
+    Add-ZipCompressionTypes
     $zip = [System.IO.Compression.ZipFile]::Open(
         $zipPath,
         [System.IO.Compression.ZipArchiveMode]::Update
@@ -543,7 +625,6 @@ function New-PortablePackage([string]$version, [bool]$buildFirst, [bool]$makeZip
             }
         }
         Write-PortableIntegrityFiles $artifactRoot $version
-        Set-PortableSupportHidden $artifactRoot
 
         Invoke-Step "validate portable package" {
             Test-KeyFiles $finalAppDir
@@ -561,13 +642,29 @@ function New-PortablePackage([string]$version, [bool]$buildFirst, [bool]$makeZip
 
         if ($makeZip) {
             Invoke-Step "create portable archive" {
-                Add-Type -AssemblyName System.IO.Compression.FileSystem
-                [System.IO.Compression.ZipFile]::CreateFromDirectory(
-                    $artifactRoot,
-                    $publishedZip,
-                    [System.IO.Compression.CompressionLevel]::Optimal,
-                    $false
-                )
+                $bz = Get-BandizipCliPath
+                if ($bz) {
+                    Push-Location $artifactRoot
+                    try {
+                        & $bz c -y -l:9 -r -fmt:zip $publishedZip *
+                        if ($LASTEXITCODE -ne 0) {
+                            throw "Bandizip failed with exit code $LASTEXITCODE."
+                        }
+                    }
+                    finally { Pop-Location }
+                }
+                else {
+                    Add-ZipCompressionTypes
+                    [System.IO.Compression.ZipFile]::CreateFromDirectory(
+                        $artifactRoot,
+                        $publishedZip,
+                        [System.IO.Compression.CompressionLevel]::Optimal,
+                        $false
+                    )
+                }
+                if (-not (Test-Path -LiteralPath $publishedZip -PathType Leaf)) {
+                    throw "Portable zip was not created: $publishedZip"
+                }
                 Set-ZipPortableSupportHidden $publishedZip
                 $hash = (Get-FileHash -LiteralPath $publishedZip -Algorithm SHA256).Hash.ToLowerInvariant()
                 Write-Utf8NoBom $publishedChecksum (
@@ -576,7 +673,7 @@ function New-PortablePackage([string]$version, [bool]$buildFirst, [bool]$makeZip
             }
         }
 
-        # 文件监视器可能锁定项目目录下新建目录的重命名，复制后由 finally 清理暂存目录。
+        # Copy first, then hide .update. Hidden folders are skipped by Copy-Item.
         Copy-Item -LiteralPath $artifactRoot -Destination $publishedRoot -Recurse -Force
         Set-PortableSupportHidden $publishedRoot
     }

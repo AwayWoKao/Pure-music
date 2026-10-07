@@ -44,6 +44,7 @@ CloseApplications=yes
 RestartApplications=no
 Compression=lzma2/max
 SolidCompression=yes
+LZMAUseSeparateProcess=yes
 SetupLogging=yes
 
 [Languages]
