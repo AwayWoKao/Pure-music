@@ -878,11 +878,7 @@ class _UniPageState<T> extends State<UniPage<T>> {
     return ListView.builder(
       controller: listScrollController,
       physics: listMotion ? const SmoothScrollPhysics() : null,
-      padding: EdgeInsets.only(
-        top: widget.contentTopInset,
-        bottom: 96.0,
-        right: 20,
-      ),
+      padding: const EdgeInsets.only(bottom: 96.0, right: 20),
       itemCount: widget.contentList.length,
       itemExtent: 64,
       itemBuilder: itemBuilder,
