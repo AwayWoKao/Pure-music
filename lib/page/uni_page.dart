@@ -867,11 +867,7 @@ class _UniPageState<T> extends State<UniPage<T>> {
         controller: listScrollController,
         itemExtent: 64,
         itemCount: widget.contentList.length,
-        padding: EdgeInsets.only(
-          top: widget.contentTopInset,
-          bottom: 96.0,
-          right: 20,
-        ),
+        padding: const EdgeInsets.only(bottom: 96.0, right: 20),
         itemBuilder: itemBuilder,
       );
     }
