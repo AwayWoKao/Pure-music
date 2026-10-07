@@ -332,8 +332,6 @@ class UniPage<T> extends StatefulWidget {
   final Object? contentRevision;
   final bool contentIsPrepared;
 
-  /// 内容区顶部留白，避免悬停放大时首行封面被视口裁切。
-  final double contentTopInset;
 
   /// 是否启用堆叠滚动效果（平滑滚轮始终启用）。
   final bool enableStackedEffect;
