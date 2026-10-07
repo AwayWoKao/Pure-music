@@ -39,9 +39,9 @@
   <img src="screenshot/深色沉浸模式.png" width="48%" alt="深色沉浸模式">
 </p>
 <p align="center">
-  <img src="screenshot/深色竖屏.png" height="420" alt="深色竖屏">
-  <img src="screenshot/深色竖屏歌词.png" height="420" alt="深色竖屏歌词">
-  <img src="screenshot/深色竖屏沉浸模式.png" height="420" alt="深色竖屏沉浸模式">
+  <img src="screenshot/深色竖屏.png" width="240" height="420" alt="深色竖屏">
+  <img src="screenshot/深色竖屏歌词.png" width="240" height="420" alt="深色竖屏歌词">
+  <img src="screenshot/深色竖屏沉浸模式.png" width="240" height="420" alt="深色竖屏沉浸模式">
 </p>
 
 **浅色**
@@ -51,13 +51,23 @@
   <img src="screenshot/浅色播放页.png" width="48%" alt="浅色播放页">
 </p>
 <p align="center">
+  <img src="screenshot/浅色网格播放页.png" width="48%" alt="浅色网格播放页">
   <img src="screenshot/浅色专辑页.png" width="48%" alt="浅色专辑页">
+</p>
+<p align="center">
   <img src="screenshot/浅色沉浸模式.png" width="48%" alt="浅色沉浸模式">
 </p>
 <p align="center">
-  <img src="screenshot/浅色竖屏.png" height="420" alt="浅色竖屏">
-  <img src="screenshot/浅色竖屏歌词.png" height="420" alt="浅色竖屏歌词">
-  <img src="screenshot/浅色竖屏沉浸模式.png" height="420" alt="浅色竖屏沉浸模式">
+  <img src="screenshot/浅色竖屏.png" width="240" height="420" alt="浅色竖屏">
+  <img src="screenshot/浅色竖屏歌词.png" width="240" height="420" alt="浅色竖屏歌词">
+  <img src="screenshot/浅色竖屏沉浸模式.png" width="240" height="420" alt="浅色竖屏沉浸模式">
+</p>
+
+**列表视图**
+
+<p align="center">
+  <img src="screenshot/浅色列表.png" width="48%" alt="浅色列表">
+  <img src="screenshot/深色列表.png" width="48%" alt="深色列表">
 </p>
 
 **曲库**
@@ -67,17 +77,33 @@
   <img src="screenshot/文件夹页.png" width="32%" alt="文件夹页">
   <img src="screenshot/统计页.png" width="32%" alt="统计页">
 </p>
+<p align="center">
+  <img src="screenshot/专辑详情.png" width="80%" alt="专辑详情">
+</p>
+
+**演出模式**
+
+<p align="center">
+  <img src="screenshot/演出模式.png" width="80%" alt="演出模式">
+</p>
+
+**歌曲详情**
+
+<p align="center">
+  <img src="screenshot/歌曲详情.png" width="48%" alt="歌曲详情">
+  <img src="screenshot/内嵌歌词.png" width="48%" alt="内嵌歌词">
+</p>
 
 **桌面歌词**
 
 <p align="center">
-  <img src="screenshot/左对齐主题色歌词.png" height="150" alt="左对齐主题色歌词">
+  <img src="screenshot/左对齐主题色歌词.png" width="720" height="198" alt="左对齐主题色歌词">
 </p>
 <p align="center">
-  <img src="screenshot/居中主题色歌词信息歌词.png" height="150" alt="居中主题色歌词">
+  <img src="screenshot/居中主题色歌词信息歌词.png" width="720" height="198" alt="居中主题色歌词">
 </p>
 <p align="center">
-  <img src="screenshot/右对齐主题色歌词.png" height="150" alt="右对齐主题色歌词">
+  <img src="screenshot/右对齐主题色歌词.png" width="720" height="198" alt="右对齐主题色歌词">
 </p>
 
 **其他**
@@ -86,7 +112,7 @@
   <img src="screenshot/SMTC.png" width="55%" alt="SMTC">
 </p>
 <p align="center">
-  <img src="screenshot/内嵌数据编辑.png" width="80%" alt="内嵌编辑页面">
+  <img src="screenshot/内嵌数据编辑.png" width="80%" alt="内嵌数据编辑">
 </p>
 
 ---
