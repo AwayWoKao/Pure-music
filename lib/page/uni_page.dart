@@ -302,7 +302,6 @@ class UniPage<T> extends StatefulWidget {
     this.gridDelegate,
     this.contentRevision,
     this.contentIsPrepared = false,
-    this.contentTopInset = 0.0,
     this.enableStackedEffect = true,
     this.actionPlacement = PageActionPlacement.besideTitle,
   });
