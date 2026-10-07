@@ -162,6 +162,8 @@ class _AlbumsPageState extends State<AlbumsPage> {
                 multiSelectController: _multiSelectController,
                 view: view,
               ),
+          // 顶部留白，避免悬停放大时首行封面被视口裁切。
+          contentTopInset: 5.0,
           gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
             maxCrossAxisExtent: 180,
             childAspectRatio: 0.75,

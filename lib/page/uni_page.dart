@@ -302,6 +302,7 @@ class UniPage<T> extends StatefulWidget {
     this.gridDelegate,
     this.contentRevision,
     this.contentIsPrepared = false,
+    this.contentTopInset = 0.0,
     this.enableStackedEffect = true,
     this.actionPlacement = PageActionPlacement.besideTitle,
   });
@@ -331,6 +332,9 @@ class UniPage<T> extends StatefulWidget {
   final SliverGridDelegate? gridDelegate;
   final Object? contentRevision;
   final bool contentIsPrepared;
+
+  /// 内容区顶部留白，避免悬停放大时首行封面被视口裁切。
+  final double contentTopInset;
 
   /// 是否启用堆叠滚动效果（平滑滚轮始终启用）。
   final bool enableStackedEffect;
@@ -864,14 +868,22 @@ class _UniPageState<T> extends State<UniPage<T>> {
         controller: listScrollController,
         itemExtent: 64,
         itemCount: widget.contentList.length,
-        padding: const EdgeInsets.only(bottom: 96.0, right: 20),
+        padding: EdgeInsets.only(
+          top: widget.contentTopInset,
+          bottom: 96.0,
+          right: 20,
+        ),
         itemBuilder: itemBuilder,
       );
     }
     return ListView.builder(
       controller: listScrollController,
       physics: listMotion ? const SmoothScrollPhysics() : null,
-      padding: const EdgeInsets.only(bottom: 96.0, right: 20),
+      padding: EdgeInsets.only(
+        top: widget.contentTopInset,
+        bottom: 96.0,
+        right: 20,
+      ),
       itemCount: widget.contentList.length,
       itemExtent: 64,
       itemBuilder: itemBuilder,
@@ -897,14 +909,22 @@ class _UniPageState<T> extends State<UniPage<T>> {
             (widget.gridDelegate ?? gridDelegate)
                 as SliverGridDelegateWithMaxCrossAxisExtent,
         itemCount: widget.contentList.length,
-        padding: const EdgeInsets.only(bottom: 96.0, right: 20),
+        padding: EdgeInsets.only(
+          top: widget.contentTopInset,
+          bottom: 96.0,
+          right: 20,
+        ),
         itemBuilder: itemBuilder,
       );
     }
     return SidebarGridTransition(
       controller: tableScrollController,
       physics: listMotion ? const SmoothScrollPhysics() : null,
-      padding: const EdgeInsets.only(bottom: 96.0, right: 20),
+      padding: EdgeInsets.only(
+        top: widget.contentTopInset,
+        bottom: 96.0,
+        right: 20,
+      ),
       gridDelegate: widget.gridDelegate ?? gridDelegate,
       revision: (widget.contentRevision, currSortMethod, currSortOrder),
       itemCount: widget.contentList.length,
