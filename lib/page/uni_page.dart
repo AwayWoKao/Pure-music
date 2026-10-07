@@ -908,11 +908,7 @@ class _UniPageState<T> extends State<UniPage<T>> {
             (widget.gridDelegate ?? gridDelegate)
                 as SliverGridDelegateWithMaxCrossAxisExtent,
         itemCount: widget.contentList.length,
-        padding: EdgeInsets.only(
-          top: widget.contentTopInset,
-          bottom: 96.0,
-          right: 20,
-        ),
+        padding: const EdgeInsets.only(top: 5.0, bottom: 96.0, right: 20),
         itemBuilder: itemBuilder,
       );
     }
