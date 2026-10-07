@@ -73,6 +73,7 @@ nul
 
 # Temporary files
 _tmp_*.py
+_patch_*.py
 *.swp
 *.swo
 *~
