@@ -18,21 +18,18 @@ SyncLyricLine _line(int start, int end, {String agent = 'v1'}) {
 }
 
 void main() {
-  test(
-    'background overlap retains its parent without extending main singing',
-    () {
-      final first = _line(0, 2000)
-        ..bgText = '声'
-        ..bgStart = const Duration(milliseconds: 2000)
-        ..bgEnd = const Duration(milliseconds: 6000);
-      final timeline = TtmlTimeline(Ttml([first, _line(3000, 5000)]));
-      final update = timeline.snapshotAt(3000)!;
-      expect(update.mainActiveIndices, [1]);
-      expect(update.backgroundActiveIndices, [0]);
-      expect(update.layoutIndices, [0, 1]);
-      expect(update.primaryIndex, 0);
-    },
-  );
+  test('background overlap does not keep a finished main line in layout', () {
+    final first = _line(0, 2000)
+      ..bgText = '声'
+      ..bgStart = const Duration(milliseconds: 2000)
+      ..bgEnd = const Duration(milliseconds: 6000);
+    final timeline = TtmlTimeline(Ttml([first, _line(3000, 5000)]));
+    final update = timeline.snapshotAt(3000)!;
+    expect(update.mainActiveIndices, [1]);
+    expect(update.backgroundActiveIndices, [0]);
+    expect(update.layoutIndices, [1]);
+    expect(update.primaryIndex, 1);
+  });
 
   test('parallel retention is independent of agent and short overlap', () {
     for (final agent in ['v1', 'v2']) {
@@ -47,7 +44,7 @@ void main() {
   });
 
   test(
-    'a new row removes only expired groups and keeps singing backgrounds',
+    'a new row collapses a finished main line even if its background is singing',
     () {
       final second = _line(500, 3500, agent: 'v2')
         ..bgText = '声'
@@ -58,10 +55,10 @@ void main() {
       );
       expect(timeline.snapshotAt(4000)!.layoutIndices, [0, 1]);
       final update = timeline.snapshotAt(6500)!;
-      expect(update.layoutIndices, [1, 2]);
+      expect(update.layoutIndices, [2]);
       expect(update.mainActiveIndices, [2]);
       expect(update.backgroundActiveIndices, [1]);
-      expect(update.primaryIndex, 1);
+      expect(update.primaryIndex, 2);
     },
   );
 }

@@ -25,64 +25,68 @@ void main() {
     }
   });
 
-  test('background visibility follows its authored time window', () {
-    for (final time in [14301.0, 14400.0]) {
+  test(
+    'background visibility follows its authored start then holds with the main line',
+    () {
+      for (final time in [14301.0, 14400.0]) {
+        expect(
+          lyricBackgroundHeightFactor(
+            currentTimeMs: time,
+            startMs: 14457,
+            endMs: 15143,
+            isMainLine: true,
+          ),
+          0.0,
+        );
+      }
       expect(
         lyricBackgroundHeightFactor(
-          currentTimeMs: time,
+          currentTimeMs: 14800,
           startMs: 14457,
           endMs: 15143,
           isMainLine: true,
         ),
+        greaterThan(0.0),
+      );
+      expect(
+        lyricBackgroundHeightFactor(
+          currentTimeMs: 15253,
+          startMs: 14457,
+          endMs: 15143,
+          isMainLine: true,
+        ),
+        1.0,
+      );
+      expect(
+        lyricBackgroundHeightFactor(
+          currentTimeMs: 15543,
+          startMs: 14457,
+          endMs: 15143,
+          isMainLine: true,
+        ),
+        1.0,
+      );
+      expect(
+        lyricBackgroundHeightFactor(
+          currentTimeMs: 15253,
+          startMs: 14457,
+          endMs: 15143,
+          isMainLine: false,
+        ),
         0.0,
       );
-    }
-    expect(
-      lyricBackgroundHeightFactor(
-        currentTimeMs: 14800,
-        startMs: 14457,
-        endMs: 15143,
-        isMainLine: true,
-      ),
-      greaterThan(0.0),
-    );
-    expect(
-      lyricBackgroundHeightFactor(
-        currentTimeMs: 15253,
-        startMs: 14457,
-        endMs: 15143,
-        isMainLine: true,
-      ),
-      greaterThan(0.0),
-    );
-    expect(
-      lyricBackgroundHeightFactor(
-        currentTimeMs: 15253,
-        startMs: 14457,
-        endMs: 15143,
-        isMainLine: true,
-      ),
-      lessThan(1.0),
-    );
-    expect(
-      lyricBackgroundHeightFactor(
-        currentTimeMs: 15543,
-        startMs: 14457,
-        endMs: 15143,
-        isMainLine: true,
-      ),
-      0.0,
-    );
-    expect(
-      lyricBackgroundHeightFactor(
-        currentTimeMs: 15253,
-        startMs: 14457,
-        endMs: 15143,
-        isMainLine: false,
-      ),
-      0.0,
-    );
-  });
+      expect(
+        lyricBackgroundHeightFactor(
+          currentTimeMs: 15543,
+          startMs: 14457,
+          endMs: 15143,
+          isMainLine: true,
+          exitVisibility: 0.4,
+        ),
+        0.4,
+      );
+    },
+  );
 
   test('each background exit finishes using its own elapsed time', () {
     expect(lyricBackgroundExitVisibility(0), 1.0);

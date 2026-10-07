@@ -96,6 +96,16 @@ bool lyricTransitionSkipEnter({
   return positionMs >= 0 && positionMs < lengthMs;
 }
 
+/// 手动点到间奏窗外时，不要把行高瞬间打成 0，沿退场时长收完。
+bool lyricTransitionShouldAnimateSeekCollapse({
+  required double previousHeight,
+  required int sinceStartMs,
+  required int lengthMs,
+}) {
+  if (previousHeight <= 0.001 || lengthMs <= 0) return false;
+  return sinceStartMs > lengthMs || sinceStartMs < 0;
+}
+
 double lyricTransitionHeightFactor({
   required double progress,
   required double enterFraction,
@@ -173,8 +183,10 @@ class LyricTransitionTile extends StatefulWidget {
   State<LyricTransitionTile> createState() => _LyricTransitionTileState();
 }
 
-class _LyricTransitionTileState extends State<LyricTransitionTile> {
+class _LyricTransitionTileState extends State<LyricTransitionTile>
+    with SingleTickerProviderStateMixin {
   late LyricTransitionTileController controller;
+  AnimationController? _seekCollapse;
 
   @override
   void initState() {
@@ -192,6 +204,7 @@ class _LyricTransitionTileState extends State<LyricTransitionTile> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.lrcLine != widget.lrcLine ||
         oldWidget.syncLine != widget.syncLine) {
+      _stopSeekCollapse();
       controller.dispose();
       controller = LyricTransitionTileController(
         widget.lrcLine,
@@ -202,12 +215,68 @@ class _LyricTransitionTileState extends State<LyricTransitionTile> {
     }
     if (widget.positionMs != null &&
         widget.positionMs != oldWidget.positionMs) {
-      controller.updatePositionMs(widget.positionMs!);
+      _handlePositionMs(widget.positionMs!);
     }
+  }
+
+  void _handlePositionMs(double positionMs) {
+    final startMs =
+        widget.lrcLine?.start.inMilliseconds ??
+        widget.syncLine!.start.inMilliseconds;
+    final lengthMs =
+        widget.lrcLine?.length.inMilliseconds ??
+        widget.syncLine!.length.inMilliseconds;
+    final sinceStartMs = (positionMs - startMs).round();
+    if (lyricTransitionShouldAnimateSeekCollapse(
+      previousHeight: controller.heightFactor.value,
+      sinceStartMs: sinceStartMs,
+      lengthMs: lengthMs,
+    )) {
+      _startSeekCollapse();
+      controller.updatePositionMs(positionMs, holdHeight: true);
+      return;
+    }
+    if (sinceStartMs >= 0 && sinceStartMs <= lengthMs) {
+      _stopSeekCollapse();
+    }
+    controller.updatePositionMs(positionMs);
+  }
+
+  void _startSeekCollapse() {
+    if (_seekCollapse != null) return;
+    final from = controller.heightFactor.value;
+    if (from <= 0.001) {
+      controller.heightFactor.value = 0;
+      return;
+    }
+    final seekCollapse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 500),
+    );
+    _seekCollapse = seekCollapse;
+    final anim = CurvedAnimation(
+      parent: seekCollapse,
+      curve: Curves.easeInCubic,
+    );
+    seekCollapse.addListener(() {
+      controller.heightFactor.value = from * (1.0 - anim.value);
+    });
+    seekCollapse.addStatusListener((status) {
+      if (status != AnimationStatus.completed) return;
+      controller.heightFactor.value = 0;
+      controller.releaseHeightHold();
+    });
+    seekCollapse.forward();
+  }
+
+  void _stopSeekCollapse() {
+    _seekCollapse?.dispose();
+    _seekCollapse = null;
   }
 
   @override
   void dispose() {
+    _stopSeekCollapse();
     controller.dispose();
     super.dispose();
   }
@@ -223,8 +292,10 @@ class _LyricTransitionTileState extends State<LyricTransitionTile> {
       LyricTextAlign.right => Alignment.centerRight,
     };
 
-    // 由播放进度控制可见性时，结束后立即隐藏
-    if (widget.animateVisibilityWithProgress && controller.progress >= 1) {
+    // 行高收到 0 后再卸掉，seek 跳出时间窗时还能把退场播完。
+    if (widget.animateVisibilityWithProgress &&
+        controller.heightFactor.value <= 0.001 &&
+        _seekCollapse == null) {
       return const SizedBox.shrink();
     }
 
@@ -610,6 +681,7 @@ class LyricTransitionTileController extends ChangeNotifier {
   bool _disposed = false;
   bool _isPlaying = false;
   bool _registered = false;
+  bool _holdHeight = false;
 
   LyricTransitionTileController([
     this.lrcLine,
@@ -702,25 +774,35 @@ class LyricTransitionTileController extends ChangeNotifier {
       _register();
     }
     progress = max(sinceStart, 0) / lengthInMs;
-    final nextHeight = lyricTransitionHeightFactor(
-      progress: progress.clamp(0.0, 1.0),
-      enterFraction: enterFraction,
-      exitFraction: exitFraction,
-      exitEnd: exitEndFraction,
-      skipEnter: skipEnter,
-    );
-    if ((nextHeight - heightFactor.value).abs() > 0.001) {
-      heightFactor.value = nextHeight;
+    if (!_holdHeight) {
+      final nextHeight = lyricTransitionHeightFactor(
+        progress: progress.clamp(0.0, 1.0),
+        enterFraction: enterFraction,
+        exitFraction: exitFraction,
+        exitEnd: exitEndFraction,
+        skipEnter: skipEnter,
+      );
+      if ((nextHeight - heightFactor.value).abs() > 0.001) {
+        heightFactor.value = nextHeight;
+      }
     }
     notifyListeners();
 
-    if (progress >= 1) {
+    if (progress >= 1 && !_holdHeight && heightFactor.value <= 0.001) {
       _unregister();
     }
   }
 
-  void updatePositionMs(double positionMs) {
+  void updatePositionMs(double positionMs, {bool holdHeight = false}) {
+    _holdHeight = holdHeight;
     _updateProgress(positionMs / 1000.0);
+  }
+
+  void releaseHeightHold() {
+    _holdHeight = false;
+    if (progress >= 1 && heightFactor.value <= 0.001) {
+      _unregister();
+    }
   }
 
   @override

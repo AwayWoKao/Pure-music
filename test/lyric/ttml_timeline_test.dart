@@ -53,9 +53,9 @@ void main() {
       final overlap = timeline.snapshotAt(310550)!;
       expect(overlap.mainActiveIndices, [second]);
       expect(overlap.backgroundActiveIndices, [first]);
-      expect(overlap.layoutIndices, [first, second]);
-      expect(overlap.primaryIndex, first);
-      expect(timeline.snapshotAt(318000)!.layoutIndices, [first, third]);
+      expect(overlap.layoutIndices, [second]);
+      expect(overlap.primaryIndex, second);
+      expect(timeline.snapshotAt(318000)!.layoutIndices, [third]);
       final parent = parsed.lines[first] as SyncLyricLine;
       expect(
         (parent.words.last.start + parent.words.last.length).inMilliseconds,
@@ -91,8 +91,8 @@ void main() {
     expect(timeline.snapshotAt(15000)!.backgroundActiveIndices, [delayed]);
     expect(timeline.snapshotAt(40281)!.layoutIndices, [older, newer]);
     expect(timeline.snapshotAt(40281)!.mainActiveIndices, [older, newer]);
-    expect(timeline.snapshotAt(231030)!.layoutIndices, [tail, incoming]);
-    expect(timeline.snapshotAt(231030)!.primaryIndex, tail);
+    expect(timeline.snapshotAt(231030)!.layoutIndices, [incoming]);
+    expect(timeline.snapshotAt(231030)!.primaryIndex, incoming);
   });
 
   test('same-agent background overlap retains the first displayed row', () {
@@ -109,12 +109,12 @@ void main() {
     final firstOverlap = timeline.snapshotAt(310550)!;
     expect(firstOverlap.mainActiveIndices, [1]);
     expect(firstOverlap.backgroundActiveIndices, [0]);
-    expect(firstOverlap.layoutIndices, [0, 1]);
-    expect(firstOverlap.primaryIndex, 0);
-    expect(timeline.snapshotAt(314000)!.layoutIndices, [0, 1]);
-    expect(timeline.snapshotAt(318000)!.layoutIndices, [0, 2]);
-    expect(timeline.snapshotAt(318410)!.primaryIndex, 0);
-    expect(timeline.snapshotAt(321690)!.layoutIndices, [2, 3]);
+    expect(firstOverlap.layoutIndices, [1]);
+    expect(firstOverlap.primaryIndex, 1);
+    expect(timeline.snapshotAt(314000)!.layoutIndices, [1]);
+    expect(timeline.snapshotAt(318000)!.layoutIndices, [2]);
+    expect(timeline.snapshotAt(318410)!.primaryIndex, 2);
+    expect(timeline.snapshotAt(321690)!.layoutIndices, [3]);
     expect(timeline.snapshotAt(324662)!.layoutIndices, [3, 4]);
     expect(timeline.snapshotAt(340899)!.layoutIndices, isEmpty);
     expect(timeline.nextBoundaryAfter(340899), isNull);
@@ -134,7 +134,7 @@ void main() {
     expect(timeline.nextBoundaryAfter(14301), 14457);
     expect(timeline.snapshotAt(15000)!.backgroundActiveIndices, [0]);
     expect(timeline.snapshotAt(15000)!.primaryIndex, 0);
-    expect(timeline.snapshotAt(16839)!.layoutIndices, [1, 2]);
+    expect(timeline.snapshotAt(16839)!.layoutIndices, [2]);
   });
 
   test('short overlap is not removed by a pre-switch threshold', () {

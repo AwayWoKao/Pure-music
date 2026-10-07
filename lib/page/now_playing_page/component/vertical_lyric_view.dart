@@ -371,6 +371,37 @@ int lyricLineVisualDistance({
   return (index - mainLine).abs();
 }
 
+/// 并行已经很多、或组高度超出预算时，先收已有 bg，把位置让给主行。
+@visibleForTesting
+Set<int> lyricBackgroundLinesToEvict({
+  required Set<int> groupLines,
+  required Set<int> mainActiveLines,
+  required Set<int> backgroundLines,
+  required double Function(int index) lineHeight,
+  double? heightBudget,
+  int crowdedCount = 3,
+}) {
+  if (groupLines.length < 2) return const <int>{};
+  final withBg = groupLines.where(backgroundLines.contains).toList()..sort();
+  if (withBg.isEmpty) return const <int>{};
+  final crowded = groupLines.length >= crowdedCount;
+  final overBudget =
+      heightBudget != null &&
+      groupLines.fold<double>(
+            0.0,
+            (total, index) => total + lineHeight(index),
+          ) >
+          heightBudget;
+  if (!crowded && !overBudget) return const <int>{};
+  final keep = mainActiveLines.isEmpty
+      ? groupLines.reduce(max)
+      : mainActiveLines.reduce(max);
+  return {
+    for (final index in withBg)
+      if (index != keep) index,
+  };
+}
+
 class _LyricOffsetCacheKey {
   const _LyricOffsetCacheKey({
     required this.lyric,
@@ -1123,7 +1154,7 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
             return;
           }
           setState(() {
-            _discardDepartingBackgroundVocal();
+            _finishDepartingBackgroundVocal();
           });
         });
   }
@@ -1140,6 +1171,29 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
       ..stop()
       ..reset();
     _departingBackgroundVocalLines.clear();
+  }
+
+  void _finishDepartingBackgroundVocal() {
+    final keep = _departingBackgroundVocalLines.intersection(
+      _parallelGroupLines,
+    );
+    if (keep.isEmpty) {
+      _discardDepartingBackgroundVocal();
+      return;
+    }
+    for (final index in _backgroundExitValues.keys.toList()) {
+      if (keep.contains(index)) {
+        _backgroundExitValues[index]!.value = 0;
+        continue;
+      }
+      _backgroundExitValues.remove(index)!.dispose();
+      _backgroundExitStartedMs.remove(index);
+    }
+    _departingBackgroundVocalLines
+      ..clear()
+      ..addAll(keep);
+    _backgroundVocalExitController.stop();
+    _backgroundVocalExitController.value = 1;
   }
 
   double _backgroundVocalFactorForLine(int index) {
@@ -1163,6 +1217,9 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
   void _prepareBackgroundExitValues(Set<int> next) {
     _backgroundVocalExitGeneration++;
     _backgroundVocalExitController.stop();
+    final previousNow = _backgroundExitClock.isRunning
+        ? _backgroundExitClock.elapsedMilliseconds
+        : 0;
     for (final index in _backgroundExitValues.keys.toList()) {
       if (!next.contains(index)) {
         _backgroundExitValues.remove(index)!.dispose();
@@ -1175,8 +1232,17 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
         ..reset();
       return;
     }
-    _backgroundExitClock.start();
+    if (!_backgroundExitClock.isRunning) {
+      _backgroundExitClock.start();
+    }
     final now = _backgroundExitClock.elapsedMilliseconds;
+    if (previousNow != now) {
+      for (final index in _backgroundExitStartedMs.keys.toList()) {
+        if (!_backgroundExitValues.containsKey(index)) continue;
+        final elapsed = previousNow - _backgroundExitStartedMs[index]!;
+        _backgroundExitStartedMs[index] = now - elapsed;
+      }
+    }
     for (final index in next) {
       if (_backgroundExitValues.containsKey(index)) continue;
       final startVisibility = _backgroundVocalFactorForLine(index);
@@ -2606,26 +2672,33 @@ class _VerticalLyricScrollViewState extends State<_VerticalLyricScrollView>
     }
     final previousMainLine = _mainLine;
     final mainLineChanged = previousMainLine != renderableMainLine;
-    final retained = update.usesAuthoredTiming
-        ? nextGroupLines
-        : nextBackgroundActiveLines;
-    final previousRetained = update.usesAuthoredTiming
-        ? _parallelGroupLines
-        : _backgroundActiveLyricLines;
-    final nextDepartingBackgroundVocalLines =
-        resetVoiceLayout
-              ? <int>{}
-              : <int>{
-                  ..._departingBackgroundVocalLines,
-                  ...previousRetained.difference(retained).where((index) {
-                    final line = lines[index];
-                    return line is SyncLyricLine &&
-                        (line.bgWords.isNotEmpty ||
-                            line.bgText?.isNotEmpty == true ||
-                            line.bg != null);
-                  }),
-                }
-          ..removeAll(retained);
+    bool hasBackgroundVocal(int index) {
+      final line = lines[index];
+      return line is SyncLyricLine && lyricLineHasBackgroundVocal(line);
+    }
+
+    final leftGroupBg = _parallelGroupLines
+        .difference(nextGroupLines)
+        .where(hasBackgroundVocal);
+    final crowdedBg = update.usesAuthoredTiming
+        ? lyricBackgroundLinesToEvict(
+            groupLines: nextGroupLines,
+            mainActiveLines: nextMainActiveLines,
+            backgroundLines: {
+              for (final index in nextGroupLines)
+                if (hasBackgroundVocal(index)) index,
+            },
+            lineHeight: _lineHeightFor,
+            heightBudget: _parallelLineHeightBudget(),
+          )
+        : const <int>{};
+    final nextDepartingBackgroundVocalLines = resetVoiceLayout
+        ? <int>{}
+        : <int>{
+            ..._departingBackgroundVocalLines.where(nextGroupLines.contains),
+            ...leftGroupBg,
+            ...crowdedBg,
+          };
     final startBackgroundVocalExit = !setEquals(
       _departingBackgroundVocalLines,
       nextDepartingBackgroundVocalLines,

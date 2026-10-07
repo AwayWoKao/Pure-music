@@ -104,6 +104,31 @@ void main() {
     expect(active, greaterThan(0));
   });
 
+  test(
+    'background vocal height holds after its authored end while the main line is current',
+    () {
+      final active = _measureHeight(
+        currentTimeMs: 11000.0,
+        isMainLine: true,
+        isHighlightActive: true,
+        isBackgroundActive: true,
+      );
+      final afterAuthoredEnd = _measureHeight(
+        currentTimeMs: 11600.0,
+        isMainLine: true,
+        isHighlightActive: true,
+      );
+      final stillCurrent = _measureHeight(
+        currentTimeMs: _afterBackgroundMs,
+        isMainLine: true,
+        isHighlightActive: true,
+      );
+
+      expect(afterAuthoredEnd, closeTo(active, 0.5));
+      expect(stillCurrent, closeTo(active, 0.5));
+    },
+  );
+
   test('background vocal height collapses over the exit window', () {
     final active = _measureHeight(
       currentTimeMs: 11000.0,
@@ -111,15 +136,27 @@ void main() {
       isHighlightActive: true,
       isBackgroundActive: true,
     );
-    final collapsing = _measureHeight(
-      currentTimeMs: 11600.0,
-      isMainLine: true,
-      isHighlightActive: true,
-    );
+    final collapsing = LyricsLinePainter(
+      params: LyricPainterParams(
+        line: _backgroundVocalLine(),
+        currentTimeMs: 11600.0,
+        blurSigma: 0.0,
+        config: _config,
+        isMainLine: true,
+        isHighlightActive: true,
+        isBackgroundActive: false,
+        accelerateTailHighlight: false,
+        useMaterialYouColor: false,
+        opacity: 1.0,
+        lineMedianWordDuration: Duration.zero,
+        backgroundVocalVisibilityListenable: ValueNotifier(0.45),
+      ),
+      scheme: _scheme,
+    ).measureHeight(_lineWidth, reserveBackgroundVocalHeight: true);
     final collapsed = _measureHeight(
       currentTimeMs: _afterBackgroundMs,
-      isMainLine: true,
-      isHighlightActive: true,
+      isMainLine: false,
+      isHighlightActive: false,
     );
 
     expect(collapsing, lessThan(active));

@@ -592,10 +592,8 @@ class _LyricsLineWidgetState extends State<LyricsLineWidget>
       return false;
     }
     final now = target.positionListenable?.value ?? _currentTimeMs;
-    final end = lyricBackgroundEndMs(line);
-    if (now >= end &&
-        now < end + lyricBackgroundVocalExitDuration.inMilliseconds) {
-      return true;
+    if (target.backgroundVocalVisibilityListenable != null) {
+      return false;
     }
     return lyricLineEffectsNeedFrame(
       words: [...line.words, ...line.bgWords],

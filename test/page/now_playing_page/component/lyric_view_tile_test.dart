@@ -69,6 +69,44 @@ void main() {
     expect(lyricTransitionLayoutHeight(line, isMain: true), 0);
   });
 
+  testWidgets('seek past an interlude keeps height until collapse finishes', (
+    tester,
+  ) async {
+    final line = SyncLyricLine(
+      Duration.zero,
+      const Duration(seconds: 8),
+      const [],
+    );
+    Widget tile(double positionMs) {
+      return MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 280,
+              child: LyricTransitionTile(
+                syncLine: line,
+                positionMs: positionMs,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    await tester.pumpWidget(tile(4000));
+    expect(
+      tester.getSize(find.byType(LyricTransitionTile)).height,
+      transitionTileHeight,
+    );
+    await tester.pumpWidget(tile(12000));
+    expect(
+      tester.getSize(find.byType(LyricTransitionTile)).height,
+      greaterThan(0),
+    );
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(tester.getSize(find.byType(LyricTransitionTile)).height, 0);
+  });
+
   testWidgets('interlude height collapses after it ends', (tester) async {
     final line = SyncLyricLine(
       Duration.zero,
@@ -168,5 +206,32 @@ void main() {
     );
     await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
     expect(debugLyricTransitionControllerCount(), 0);
+  });
+
+  test('seek past an interlude asks for a collapse animation', () {
+    expect(
+      lyricTransitionShouldAnimateSeekCollapse(
+        previousHeight: 1,
+        sinceStartMs: 12000,
+        lengthMs: 8000,
+      ),
+      isTrue,
+    );
+    expect(
+      lyricTransitionShouldAnimateSeekCollapse(
+        previousHeight: 1,
+        sinceStartMs: 8000,
+        lengthMs: 8000,
+      ),
+      isFalse,
+    );
+    expect(
+      lyricTransitionShouldAnimateSeekCollapse(
+        previousHeight: 0,
+        sinceStartMs: 12000,
+        lengthMs: 8000,
+      ),
+      isFalse,
+    );
   });
 }

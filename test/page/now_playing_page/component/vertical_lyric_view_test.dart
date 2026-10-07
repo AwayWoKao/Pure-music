@@ -804,4 +804,43 @@ void main() {
       isFalse,
     );
   });
+
+  test('crowded parallel groups evict older background lines first', () {
+    expect(
+      lyricBackgroundLinesToEvict(
+        groupLines: {2, 3, 4},
+        mainActiveLines: {4},
+        backgroundLines: {2, 3, 4},
+        lineHeight: (_) => 80,
+        heightBudget: 400,
+      ),
+      {2, 3},
+    );
+  });
+
+  test(
+    'two parallel lines keep background unless the height budget is exceeded',
+    () {
+      expect(
+        lyricBackgroundLinesToEvict(
+          groupLines: {1, 2},
+          mainActiveLines: {2},
+          backgroundLines: {1, 2},
+          lineHeight: (_) => 80,
+          heightBudget: 400,
+        ),
+        isEmpty,
+      );
+      expect(
+        lyricBackgroundLinesToEvict(
+          groupLines: {1, 2},
+          mainActiveLines: {2},
+          backgroundLines: {1, 2},
+          lineHeight: (_) => 80,
+          heightBudget: 100,
+        ),
+        {1},
+      );
+    },
+  );
 }

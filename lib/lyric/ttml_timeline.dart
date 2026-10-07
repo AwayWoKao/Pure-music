@@ -163,16 +163,9 @@ class _VoiceTiming {
         true,
       );
     }
-    final windows = [main, background]
-        .whereType<_TimeWindow>()
-        .where((window) => window.end > window.start)
-        .toList();
-    final display = windows.isEmpty
-        ? null
-        : _TimeWindow(
-            windows.map((window) => window.start).reduce(min),
-            windows.map((window) => window.end).reduce(max),
-          );
+    // 布局只跟主行：bg 是主行附件，下一句主行接手时本行连 bg 一起收。
+    // 没有主词的 bg 行仍用 bg 窗口占位，避免整行消失。
+    final display = main ?? background;
     return _VoiceTiming(main, background, display, false);
   }
 

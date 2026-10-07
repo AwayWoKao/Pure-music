@@ -82,15 +82,13 @@ double lyricBackgroundHeightFactor({
 }) {
   if (exitVisibility != null) return exitVisibility.clamp(0.0, 1.0);
   if (endMs <= startMs) return 0.0;
-  final hosted =
-      isMainLine || isBackgroundActive || isBackgroundVisible == true;
+  // 显示跟主行：主行还在当前组时，不按 bg 自己的结束时间提前收。
+  // TTML 用 isBackgroundVisible；其他格式没有组标记时，当前主行也可托住。
+  final hosted = isMainLine || isBackgroundVisible == true;
   if (!hosted || currentTimeMs < startMs) return 0.0;
-  if (currentTimeMs < endMs) {
-    return Curves.easeOutBack.transform(
-      ((currentTimeMs - startMs) / _bgEntryDuration).clamp(0.0, 1.0),
-    );
-  }
-  return lyricBackgroundExitVisibility(currentTimeMs - endMs);
+  return Curves.easeOutBack.transform(
+    ((currentTimeMs - startMs) / _bgEntryDuration).clamp(0.0, 1.0),
+  );
 }
 
 @visibleForTesting
@@ -1984,13 +1982,13 @@ class LyricsLinePainter extends CustomPainter {
 
         final bgUnplayedColor = _applyOpacity(
           useMaterialYouColor
-              ? scheme.onSurface.withValues(alpha: 0.20)
-              : neutralBase.withValues(alpha: 0.15),
+              ? scheme.onSurface.withValues(alpha: 0.28)
+              : neutralBase.withValues(alpha: 0.22),
         );
         final bgPlayedColor = _applyOpacity(
           useMaterialYouColor
               ? scheme.primary.withValues(alpha: 0.80)
-              : neutralBase.withValues(alpha: 0.55),
+              : neutralBase.withValues(alpha: 0.62),
         );
 
         void paintBgLine(String text, double size, Color color) {
